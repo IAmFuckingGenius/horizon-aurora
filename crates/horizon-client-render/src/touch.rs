@@ -25,6 +25,7 @@ mod editor;
 pub use custom::{COLORS, CustomButton, MAX_KEYS, Shape, choices as key_choices};
 pub use editor::{Act, Editor, Layer, Panel, Slider, Target};
 pub mod layout;
+pub mod profiles;
 mod utility;
 pub use layout::{Control, Mode, Settings, Show};
 pub use utility::{Utility, UtilityLayout};
@@ -1883,6 +1884,68 @@ mod tests {
         assert_eq!(touch.settings.custom_buttons.len(), 1);
         touch.cancel_editor();
         assert!(touch.settings.custom_buttons.is_empty());
+    }
+    #[test]
+    fn a_layout_saved_under_a_name_comes_back_and_a_pasted_code_can_be_undone() {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-editor-layouts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+        t.open_editor();
+        t.editor.as_mut().unwrap().profiles_dir = dir.clone();
+        t.settings.layouts[0][Control::Jump as usize].center = [0.4, 0.4];
+        act(&mut t, Act::SaveNew);
+        assert!(t.editor_typing());
+        assert!(
+            t.take_text_request().is_some(),
+            "the keyboard opens with a name"
+        );
+        // Replace the suggested name.
+        for _ in 0..40 {
+            t.editor_type("", true, false);
+        }
+        t.editor_type("Строю", false, false);
+        t.editor_type("", false, true);
+        let e = t.editor.as_ref().unwrap();
+        assert_eq!(e.profiles.len(), 1);
+        assert_eq!(e.profiles[0].name, "Строю");
+        t.settings.layouts[0][Control::Jump as usize].center = [0.9, 0.9];
+        act(&mut t, Act::LoadProfile(0));
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            [0.4, 0.4]
+        );
+        act(&mut t, Act::CopyCode);
+        let code = t.take_clipboard_out().unwrap();
+        t.settings.layouts[0][Control::Jump as usize].center = [0.1, 0.1];
+        act(&mut t, Act::PasteCode);
+        assert!(t.take_clipboard_request());
+        t.editor_paste(Some(format!("my layout: {code} have fun")));
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            [0.4, 0.4]
+        );
+        act(&mut t, Act::Undo);
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            [0.1, 0.1]
+        );
+        t.editor_paste(Some("hello".into()));
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            [0.1, 0.1]
+        );
+        act(&mut t, Act::Open(Panel::DeleteProfile(0)));
+        assert_eq!(
+            t.editor.as_ref().unwrap().profiles.len(),
+            1,
+            "deleting asks first"
+        );
+        act(&mut t, Act::ConfirmDelete(0));
+        assert!(t.editor.as_ref().unwrap().profiles.is_empty());
+        t.cancel_editor();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn a_dragged_control_snaps_to_its_neighbours_centre_line() {

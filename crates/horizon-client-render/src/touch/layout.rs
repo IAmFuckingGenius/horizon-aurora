@@ -243,7 +243,7 @@ pub struct Settings {
 }
 // Append new buttons without resetting a player's existing ten-button layout, and keep
 // the known controls of a file written by a newer version with more controls or schemes.
-fn deserialize_layouts<'de, D: serde::Deserializer<'de>>(
+pub(super) fn deserialize_layouts<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<[[Placement; 14]; 3], D::Error> {
     let rows = Vec::<Vec<Placement>>::deserialize(deserializer)?;
@@ -259,7 +259,9 @@ fn deserialize_layouts<'de, D: serde::Deserializer<'de>>(
     }
     Ok(layouts)
 }
-fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[u8; 14], D::Error> {
+pub(super) fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<[u8; 14], D::Error> {
     let old = Vec::<u8>::deserialize(d)?;
     if old.len() < 12 {
         return Err(serde::de::Error::custom(

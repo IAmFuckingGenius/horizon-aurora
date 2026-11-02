@@ -37,6 +37,8 @@ pub enum Panel {
     More,
     /// Asks before resetting the layout.
     Reset,
+    /// Asks before deleting the saved layout at this index.
+    DeleteProfile(usize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slider {
@@ -89,6 +91,22 @@ pub enum Act {
     CopyToSchemes,
     /// A panel's background: taps there do nothing, drags scroll it.
     Sheet,
+    /// Starts naming a new saved layout.
+    SaveNew,
+    /// Saves the layout under the name being typed.
+    NameOk,
+    NameCancel,
+    /// Reopens the keyboard for the name being typed.
+    NameField,
+    /// Puts the saved layout at this index on the screen.
+    LoadProfile(usize),
+    /// Saves the current layout over the saved one at this index.
+    UpdateProfile(usize),
+    ConfirmDelete(usize),
+    /// Copies the current layout's code to the clipboard.
+    CopyCode,
+    /// Reads a layout code from the clipboard.
+    PasteCode,
 }
 /// A finger on a panel.
 #[derive(Clone, Copy, Debug)]
@@ -141,6 +159,19 @@ pub struct Editor {
     pub hint: bool,
     /// Saving failed: Done can be tried again.
     pub save_failed: bool,
+    /// The saved layouts, read when the editor opens and after each change.
+    pub profiles: Vec<profiles::LayoutProfile>,
+    /// Where saved layouts live (the game folder's `horizon-touch-layouts`).
+    pub profiles_dir: std::path::PathBuf,
+    /// The name of a new saved layout being typed.
+    pub naming: Option<String>,
+    /// A short message (a lang key's text) and when it appeared.
+    pub toast: Option<(String, std::time::Instant)>,
+    /// Text for the clipboard (the game takes it).
+    pub clipboard_out: Option<String>,
+    /// The editor wants the clipboard's text (the game answers with
+    /// [`TouchControls::editor_paste`]).
+    pub clipboard_request: bool,
     original: Settings,
     undo: Vec<Settings>,
     redo: Vec<Settings>,
@@ -200,6 +231,12 @@ impl TouchControls {
             hide_keyboard: false,
             hint: true,
             save_failed: false,
+            profiles: profiles::list(std::path::Path::new(profiles::DIR)),
+            profiles_dir: profiles::DIR.into(),
+            naming: None,
+            toast: None,
+            clipboard_out: None,
+            clipboard_request: false,
             original: self.settings.clone(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -231,34 +268,103 @@ impl TouchControls {
     pub fn editor_typing(&self) -> bool {
         self.editor.as_ref().is_some_and(|e| e.typing)
     }
-    /// Text typed into the custom button's label; `backspace` deletes a character
-    /// and `enter` finishes.
+    /// Text typed into the custom button's label or a new layout's name;
+    /// `backspace` deletes a character and `enter` finishes.
     pub fn editor_type(&mut self, text: &str, backspace: bool, enter: bool) {
-        let Some(e) = self.editor.as_mut() else {
+        let Some(mut e) = self.editor.take() else {
             return;
         };
-        if !e.typing {
-            return;
-        }
-        let Some(Target::Custom(i)) = e.selected else {
-            e.typing = false;
-            return;
-        };
-        let Some(button) = self.settings.custom_buttons.get_mut(i) else {
-            return;
-        };
-        if backspace {
-            button.label.pop();
-        }
-        for c in text.chars().filter(|c| !c.is_control()) {
-            if button.label.chars().count() < 24 {
-                button.label.push(c);
+        if e.typing {
+            if let Some(name) = e.naming.as_mut() {
+                if backspace {
+                    name.pop();
+                }
+                for c in text.chars().filter(|c| !c.is_control()) {
+                    if name.chars().count() < profiles::NAME_LIMIT {
+                        name.push(c);
+                    }
+                }
+                if enter {
+                    e.typing = false;
+                    e.hide_keyboard = true;
+                    self.save_named(&mut e);
+                }
+            } else if let Some(Target::Custom(i)) = e.selected
+                && let Some(button) = self.settings.custom_buttons.get_mut(i)
+            {
+                if backspace {
+                    button.label.pop();
+                }
+                for c in text.chars().filter(|c| !c.is_control()) {
+                    if button.label.chars().count() < 24 {
+                        button.label.push(c);
+                    }
+                }
+                if enter {
+                    e.typing = false;
+                    e.hide_keyboard = true;
+                }
+            } else {
+                e.typing = false;
             }
         }
-        if enter {
-            e.typing = false;
-            e.hide_keyboard = true;
+        self.editor = Some(e);
+    }
+    /// Text for the clipboard, once.
+    pub fn take_clipboard_out(&mut self) -> Option<String> {
+        self.editor.as_mut()?.clipboard_out.take()
+    }
+    /// Whether the editor asked for the clipboard's text, once.
+    pub fn take_clipboard_request(&mut self) -> bool {
+        self.editor
+            .as_mut()
+            .is_some_and(|e| std::mem::take(&mut e.clipboard_request))
+    }
+    /// The clipboard's text, answering a paste: a layout code puts that layout on
+    /// the screen (undo takes it back).
+    pub fn editor_paste(&mut self, text: Option<String>) {
+        let Some(mut e) = self.editor.take() else {
+            return;
+        };
+        match text.as_deref().map(profiles::LayoutProfile::from_code) {
+            Some(Ok(profile)) => {
+                Self::snapshot(&self.settings, &mut e);
+                profile.apply(&mut self.settings);
+                self.check_selection(&mut e);
+                Self::toast(&mut e, "pasted");
+            }
+            Some(Err(reason)) => {
+                log::info!("Touch layout: paste failed: {reason}");
+                Self::toast(&mut e, "paste_failed");
+            }
+            None => Self::toast(&mut e, "paste_empty"),
         }
+        self.editor = Some(e);
+    }
+    fn toast(e: &mut Editor, key: &str) {
+        e.toast = Some((
+            crate::lang::get(&format!("horizon.touch.editor.{key}")),
+            std::time::Instant::now(),
+        ));
+    }
+    /// Saves the current layout under the typed name.
+    fn save_named(&mut self, e: &mut Editor) {
+        let Some(name) = e.naming.take() else {
+            return;
+        };
+        let name = profiles::clean_name(&name);
+        if name.is_empty() {
+            return;
+        }
+        let profile = profiles::LayoutProfile::capture(&self.settings, &name);
+        match profiles::save(&e.profiles_dir, &profile) {
+            Ok(_) => Self::toast(e, "saved"),
+            Err(error) => {
+                log::warn!("Touch layout: saving {name:?} failed: {error}");
+                Self::toast(e, "save_layout_failed");
+            }
+        }
+        e.profiles = profiles::list(&e.profiles_dir);
     }
     /// A key pressed on a physical keyboard while the key picker is open fills
     /// the slot being picked.
@@ -729,6 +835,7 @@ impl TouchControls {
             Act::Close => {
                 e.panel = match e.panel {
                     Panel::Keys { .. } if e.selected.is_some() => Panel::Props,
+                    Panel::DeleteProfile(_) => Panel::More,
                     _ => {
                         e.selected = None;
                         Panel::None
@@ -934,6 +1041,64 @@ impl TouchControls {
                     _ => {}
                 }
             }
+            Act::SaveNew => {
+                let base = crate::lang::get("horizon.touch.editor.layout_default_name");
+                let name = profiles::free_name(&e.profiles_dir, &base);
+                e.text_request = Some(name.clone());
+                e.naming = Some(name);
+                e.typing = true;
+            }
+            Act::NameField => {
+                if let Some(name) = &e.naming {
+                    e.text_request = Some(name.clone());
+                    e.typing = true;
+                }
+            }
+            Act::NameOk => {
+                if e.typing {
+                    e.typing = false;
+                    e.hide_keyboard = true;
+                }
+                self.save_named(e);
+            }
+            Act::NameCancel => {
+                e.naming = None;
+                if e.typing {
+                    e.typing = false;
+                    e.hide_keyboard = true;
+                }
+            }
+            Act::LoadProfile(i) => {
+                if let Some(profile) = e.profiles.get(i).cloned() {
+                    Self::snapshot(&self.settings, e);
+                    profile.apply(&mut self.settings);
+                    self.check_selection(e);
+                    Self::toast(e, "loaded");
+                }
+            }
+            Act::UpdateProfile(i) => {
+                if let Some(name) = e.profiles.get(i).map(|p| p.name.clone()) {
+                    e.naming = Some(name);
+                    self.save_named(e);
+                }
+            }
+            Act::ConfirmDelete(i) => {
+                if let Some(profile) = e.profiles.get(i) {
+                    if let Err(error) = profiles::delete(&e.profiles_dir, &profile.name) {
+                        log::warn!("Touch layout: deleting failed: {error}");
+                    }
+                    e.profiles = profiles::list(&e.profiles_dir);
+                    Self::toast(e, "deleted");
+                }
+                e.panel = Panel::More;
+            }
+            Act::CopyCode => {
+                let name = crate::lang::get("horizon.touch.editor.layout_shared_name");
+                e.clipboard_out =
+                    Some(profiles::LayoutProfile::capture(&self.settings, &name).to_code());
+                Self::toast(e, "copied");
+            }
+            Act::PasteCode => e.clipboard_request = true,
             Act::ResetLayout => {
                 Self::snapshot(&self.settings, e);
                 let mode = self.settings.mode.index();

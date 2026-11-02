@@ -31,6 +31,12 @@ struct Frame {
     guides: (Vec<f32>, Vec<f32>),
     /// Slider values: size, opacity, width, scale.
     values: [f32; 4],
+    /// The saved layouts' names and custom-button counts.
+    profiles: Vec<(String, usize)>,
+    /// The new layout's name being typed.
+    naming: Option<String>,
+    /// A short message to show now.
+    toast: Option<String>,
 }
 /// What drawing a panel reports back: its scrolling viewport and how far it scrolls.
 #[derive(Default)]
@@ -101,6 +107,17 @@ pub fn draw(touch: &mut TouchControls, b: &mut HudBatch, a: &HudAtlas, density: 
         can_undo: e.can_undo(),
         can_redo: e.can_redo(),
         guides: e.guides.clone(),
+        profiles: e
+            .profiles
+            .iter()
+            .map(|p| (p.name.clone(), p.custom_buttons.len()))
+            .collect(),
+        naming: e.naming.clone(),
+        toast: e
+            .toast
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < std::time::Duration::from_millis(2600))
+            .map(|(text, _)| text.clone()),
         values: [
             touch.slider_value(&e, Slider::Size),
             touch.slider_value(&e, Slider::Opacity),
@@ -208,7 +225,9 @@ fn draw_frame(k: &mut Kit<Act>, touch: &TouchControls, f: &Frame) -> Sheet {
         (h * 0.3 - 28.0).max(8.0)
     };
     toolbar(k, f, free, bar_y);
-    if f.hint && !has_sheet {
+    if let Some(text) = &f.toast {
+        toast(k, w, h, text, false);
+    } else if f.hint && !has_sheet {
         toast(k, w, h, &t("hint"), false);
     } else if f.save_failed {
         toast(k, w, h, &t("save_failed"), true);
@@ -219,6 +238,18 @@ fn draw_frame(k: &mut Kit<Act>, touch: &TouchControls, f: &Frame) -> Sheet {
     }
     if f.panel == Panel::Reset {
         confirm_reset(k, w, h);
+    }
+    if let Panel::DeleteProfile(i) = f.panel {
+        let name = f.profiles.get(i).map_or("", |p| p.0.as_str());
+        confirm(
+            k,
+            w,
+            h,
+            &t("delete_layout_title"),
+            &t("delete_layout_text").replace("%s", name),
+            &t("delete"),
+            Act::ConfirmDelete(i),
+        );
     }
     out
 }
@@ -1203,8 +1234,158 @@ fn keys(k: &mut Kit<Act>, slot: usize, raw: bool, x: f32, y: f32, w: f32) -> f32
     }
 }
 
+/// Saved layouts: save the current one under a name, put one on the screen,
+/// overwrite or delete it, and share one as a code through the clipboard.
+fn layouts(k: &mut Kit<Act>, f: &Frame, x: f32, y: f32, w: f32) -> f32 {
+    let mut y = section(k, x, y, &t("layouts"));
+    if let Some(name) = &f.naming {
+        k.field(
+            [x, y, w, 44.0],
+            Some("notes"),
+            name,
+            &t("layout_name"),
+            Act::NameField,
+            f.typing,
+        );
+        y += 52.0;
+        let half = (w - 8.0) / 2.0;
+        k.button(
+            [x, y, half, 44.0],
+            Style::Primary,
+            Some(Icon::Pixel("check")),
+            &t("save"),
+            Some(Act::NameOk),
+        );
+        k.button(
+            [x + half + 8.0, y, half, 44.0],
+            Style::Secondary,
+            None,
+            &t("cancel"),
+            Some(Act::NameCancel),
+        );
+        y += 56.0;
+    } else {
+        k.button(
+            [x, y, w, 44.0],
+            Style::Secondary,
+            Some(Icon::Pixel("plus")),
+            &t("save_layout"),
+            Some(Act::SaveNew),
+        );
+        y += 52.0;
+    }
+    if f.profiles.is_empty() {
+        y += k.paragraph(
+            Face::Body,
+            12.0,
+            15.0,
+            x,
+            y,
+            w,
+            usize::MAX,
+            col::MUTED,
+            &t("layouts_empty"),
+        ) + 10.0;
+    }
+    for (i, (name, customs)) in f.profiles.iter().enumerate() {
+        let r = [x, y, w, 52.0];
+        kit::plate(k.ui, r, 1, col::CONTROL, col::CONTROL_RING);
+        let buttons = 3.0 * 40.0 + 2.0 * 6.0 + 6.0;
+        let text_w = w - 14.0 - buttons - 8.0;
+        k.text_fit(
+            Face::BodySemiBold,
+            14.0,
+            17.0,
+            x + 14.0,
+            y + 8.0,
+            text_w,
+            col::INK,
+            name,
+        );
+        let detail = t("layout_buttons").replace("%s", &customs.to_string());
+        k.text_fit(
+            Face::Body,
+            11.0,
+            14.0,
+            x + 14.0,
+            y + 28.0,
+            text_w,
+            col::MUTED,
+            &detail,
+        );
+        let mut bx = x + w - 6.0 - 40.0;
+        icon_button(
+            k,
+            [bx, y + 6.0, 40.0, 40.0],
+            Icon::Pixel("trash"),
+            Act::Open(Panel::DeleteProfile(i)),
+            true,
+            false,
+        );
+        bx -= 46.0;
+        icon_button(
+            k,
+            [bx, y + 6.0, 40.0, 40.0],
+            Icon::Pixel("download"),
+            Act::UpdateProfile(i),
+            true,
+            false,
+        );
+        bx -= 46.0;
+        icon_button(
+            k,
+            [bx, y + 6.0, 40.0, 40.0],
+            Icon::Pixel("check"),
+            Act::LoadProfile(i),
+            true,
+            true,
+        );
+        y += 58.0;
+    }
+    y += k.paragraph(
+        Face::Body,
+        12.0,
+        15.0,
+        x,
+        y,
+        w,
+        usize::MAX,
+        col::MUTED,
+        &t("layouts_hint"),
+    ) + 10.0;
+    let half = (w - 8.0) / 2.0;
+    k.button(
+        [x, y, half, 44.0],
+        Style::Secondary,
+        Some(Icon::Sprite(kit::COPY)),
+        &t("copy_code"),
+        Some(Act::CopyCode),
+    );
+    k.button(
+        [x + half + 8.0, y, half, 44.0],
+        Style::Secondary,
+        Some(Icon::Pixel("download")),
+        &t("paste_code"),
+        Some(Act::PasteCode),
+    );
+    y += 52.0;
+    y += k.paragraph(
+        Face::Body,
+        12.0,
+        15.0,
+        x,
+        y,
+        w,
+        usize::MAX,
+        col::MUTED,
+        &t("code_hint"),
+    ) + 16.0;
+    y
+}
+
 fn more(k: &mut Kit<Act>, touch: &TouchControls, f: &Frame, x: f32, y: f32, w: f32) -> f32 {
-    let mut y = y;
+    let mut y = layouts(k, f, x, y, w);
+    y = section(k, x, y, &t("editor_options"));
     let scheme = crate::lang::get("horizon.touch.editor.scheme").replace(
         "%s",
         &crate::lang::get(&format!(
@@ -1282,30 +1463,47 @@ fn more(k: &mut Kit<Act>, touch: &TouchControls, f: &Frame, x: f32, y: f32, w: f
 }
 
 fn confirm_reset(k: &mut Kit<Act>, w: f32, h: f32) {
+    confirm(
+        k,
+        w,
+        h,
+        &t("reset_title"),
+        &t("reset_text"),
+        &t("reset_confirm"),
+        Act::ResetLayout,
+    );
+}
+
+/// A question over a scrim, with Cancel and a red confirming button.
+#[allow(clippy::too_many_arguments)]
+fn confirm(k: &mut Kit<Act>, w: f32, h: f32, title: &str, text: &str, yes: &str, act: Act) {
     kit::fill(k.ui, 0.0, 0.0, w, h, col::SCRIM);
     k.hit([0.0, 0.0, w, h], Act::Sheet);
     let dw = (w - 32.0).min(400.0);
-    let text = t("reset_text");
-    let lines = k.wrap_max(Face::Body, 14.0, &text, dw - 40.0, usize::MAX);
-    let dh = 20.0 + 24.0 + 12.0 + lines.len() as f32 * 19.0 + 20.0 + 44.0 + 20.0;
-    let (x, y) = ((w - dw) / 2.0, (h - dh) / 2.0);
+    let title_lines = k.wrap_max(Face::BodyBold, 18.0, title, dw - 40.0, usize::MAX);
+    let lines = k.wrap_max(Face::Body, 14.0, text, dw - 40.0, usize::MAX);
+    let title_h = title_lines.len().max(1) as f32 * 24.0;
+    let dh = 20.0 + title_h + 12.0 + lines.len() as f32 * 19.0 + 20.0 + 44.0 + 20.0;
+    let (x, y) = ((w - dw) / 2.0, ((h - dh) / 2.0).max(8.0));
     k.panel([x, y, dw, dh], false);
-    k.ui.text_line(
-        Face::BodyBold,
-        18.0,
-        24.0,
-        x + 20.0,
-        y + 20.0,
-        col::INK,
-        &t("reset_title"),
-    );
+    for (i, line) in title_lines.iter().enumerate() {
+        k.ui.text_line(
+            Face::BodyBold,
+            18.0,
+            24.0,
+            x + 20.0,
+            y + 20.0 + i as f32 * 24.0,
+            col::INK,
+            line,
+        );
+    }
     for (i, line) in lines.iter().enumerate() {
         k.ui.text_line(
             Face::Body,
             14.0,
             19.0,
             x + 20.0,
-            y + 56.0 + i as f32 * 19.0,
+            y + 32.0 + title_h + i as f32 * 19.0,
             col::INK_SOFT,
             line,
         );
@@ -1323,8 +1521,8 @@ fn confirm_reset(k: &mut Kit<Act>, w: f32, h: f32) {
         [x + 28.0 + half, by, half, 44.0],
         Style::Danger,
         None,
-        &t("reset_confirm"),
-        Some(Act::ResetLayout),
+        yes,
+        Some(act),
     );
 }
 

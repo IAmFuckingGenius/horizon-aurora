@@ -16246,6 +16246,13 @@ impl Game<'_> {
                 if self.pad.touch.take_hide_keyboard() {
                     crate::platform::hide();
                 }
+                if let Some(text) = self.pad.touch.take_clipboard_out() {
+                    crate::platform::clipboard_set(&text);
+                }
+                if self.pad.touch.take_clipboard_request() {
+                    let text = crate::platform::clipboard_get();
+                    self.pad.touch.editor_paste(text);
+                }
                 if self.pad.touch.editor.is_none() {
                     self.settings.touch = self.pad.touch.settings.clone();
                     if crate::platform::active() {
