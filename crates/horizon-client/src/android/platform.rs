@@ -266,6 +266,8 @@ pub fn clipboard_get() -> Option<String> {
     })
 }
 
+/// The launcher turns with the phone and honours Android's rotation lock
+/// (`SCREEN_ORIENTATION_USER`); the game uses the player's orientation.
 pub fn set_orientation(orientation: crate::catalog::Orientation) {
     with_context(|env, activity| {
         env.call_method(

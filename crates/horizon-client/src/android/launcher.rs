@@ -68,6 +68,7 @@ pub(super) struct Launcher {
     /// server or straight into a world.
     launch_target: LaunchTarget,
     view: view::ViewState,
+    fling: Option<gesture::Fling>,
 }
 
 #[derive(Clone, Default, PartialEq)]
@@ -90,9 +91,6 @@ impl Launcher {
             }
         });
         let mut catalog = Catalog::new(&home);
-        if crate::diagnostics::previous_unclean(&home) {
-            catalog.status = crate::diagnostics::summary(&home);
-        }
         horizon_client::android_runtime::graphics_startup::configure(home.clone());
         if horizon_client::android_runtime::graphics_startup::recover(&home) {
             catalog.config.renderer = crate::catalog::RendererMode::OpenGl;
@@ -134,6 +132,7 @@ impl Launcher {
             diagnostic_export: None,
             launch_target: LaunchTarget::Title,
             view: view::ViewState::default(),
+            fling: None,
         }
     }
 
@@ -181,14 +180,35 @@ impl Launcher {
             events.exit();
         }
     }
+    /// The launcher is full screen in landscape and keeps Android's status and
+    /// navigation bars in portrait, laid out between them; the game follows the
+    /// player's full-screen and aspect choices.
     pub(super) fn configure_screen(&self) {
+        let game = self.game.is_some();
+        let landscape = self
+            .window
+            .as_ref()
+            .map(|w| {
+                let size = w.outer_size();
+                size.width > size.height
+            })
+            .or(self.view.landscape)
+            .unwrap_or(false);
+        let (immersive, status_bar) = if game {
+            (self.catalog.config.screen.immersive, false)
+        } else {
+            (landscape, !landscape)
+        };
         crate::native_ime::configure_screen(
-            self.catalog.config.screen.immersive,
+            immersive,
             self.catalog.config.screen.avoid_cutout,
+            status_bar,
         );
-        winit::platform::android::set_native_content_aspect(
-            self.catalog.config.screen.aspect.ratio(),
-        );
+        winit::platform::android::set_native_content_aspect(if game {
+            self.catalog.config.screen.aspect.ratio()
+        } else {
+            [0, 0]
+        });
     }
     fn fail(&mut self, error: impl std::fmt::Display) {
         log::error!("{error}");
@@ -198,6 +218,8 @@ impl Launcher {
     }
 
     fn open(&mut self, events: &ActiveEventLoop) -> Result<()> {
+        // The launcher keeps the orientation chosen in its settings, as the game
+        // does: landscape unless the player picked another.
         crate::platform::set_orientation(self.catalog.config.orientation);
         self.configure_screen();
         crate::display::set_scale(self.catalog.config.render_scale);
@@ -393,6 +415,20 @@ impl Launcher {
                 gpu_batching: self.catalog.config.renderer == crate::catalog::RendererMode::Vulkan,
             };
             crate::document_store::set_game_active(true);
+            // The game starts in the player's orientation (landscape by default,
+            // whichever way the launcher was held) and screen mode. Android
+            // stretches the last frame while it turns: make it a plain one, not
+            // the portrait launcher squeezed sideways.
+            self.draw_blank();
+            crate::platform::set_orientation(self.catalog.config.orientation);
+            crate::native_ime::configure_screen(
+                self.catalog.config.screen.immersive,
+                self.catalog.config.screen.avoid_cutout,
+                false,
+            );
+            winit::platform::android::set_native_content_aspect(
+                self.catalog.config.screen.aspect.ratio(),
+            );
             let game = match crate::game_launch::start(request) {
                 Ok(game) => game,
                 Err(error) => {
@@ -464,8 +500,15 @@ impl ApplicationHandler for Launcher {
         if crate::documents::handle_event(&event) {
             return;
         }
-        if matches!(event, WindowEvent::Resized(_)) {
+        if let WindowEvent::Resized(size) = &event {
             let _ = crate::native_ime::viewport_bottom();
+            // Turning the phone switches the launcher between full screen
+            // (landscape) and Android's bars (portrait).
+            let landscape = size.width > size.height;
+            if self.game.is_none() && self.view.landscape != Some(landscape) {
+                self.view.landscape = Some(landscape);
+                self.configure_screen();
+            }
         }
         if matches!(event, WindowEvent::Focused(true)) {
             self.configure_screen();
@@ -654,11 +697,36 @@ impl ApplicationHandler for Launcher {
             }
         }
 
+        // A list sliding after a throw keeps moving at display rate; otherwise
+        // ten frames a second are enough for the sky and progress.
+        let mut sliding = false;
+        if let Some(fling) = &mut self.fling {
+            if let Some(distance) = fling.step() {
+                let (scroll, maximum) = if fling.chooser {
+                    let maximum = self.chooser.as_ref().map_or(0.0, |c| c.viewport()[2]);
+                    (self.chooser.as_mut().map(|c| &mut c.scroll), maximum)
+                } else {
+                    (
+                        Some(&mut self.catalog.scroll),
+                        self.list_view.map_or(0.0, |v| v[2]),
+                    )
+                };
+                if let Some(scroll) = scroll {
+                    let next = (*scroll + distance).clamp(0.0, maximum);
+                    // Hitting either end stops the slide.
+                    sliding = next != *scroll && next > 0.0 && next < maximum;
+                    *scroll = next;
+                }
+            }
+            if !sliding {
+                self.fling = None;
+            }
+        }
         if let Some(window) = &self.window {
             window.request_redraw();
         }
         events.set_control_flow(ControlFlow::WaitUntil(
-            Instant::now() + Duration::from_millis(100),
+            Instant::now() + Duration::from_millis(if sliding { 16 } else { 100 }),
         ));
     }
     fn exiting(&mut self, events: &ActiveEventLoop) {

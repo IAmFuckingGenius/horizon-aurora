@@ -33,7 +33,8 @@ enum Command {
     Capture(bool),
     Bounds,
     ImportDocument,
-    Screen(bool, bool),
+    /// Immersive, avoid the cutout, show the status bar.
+    Screen(bool, bool, bool),
 }
 struct Ui {
     vm: JavaVM,
@@ -244,7 +245,13 @@ impl Ui {
         }
         Ok(())
     }
-    fn apply_screen(&self, env: &mut JNIEnv<'_>, immersive: bool) -> jni::errors::Result<()> {
+    fn apply_screen(
+        &self,
+        env: &mut JNIEnv<'_>,
+        immersive: bool,
+        status_bar: bool,
+    ) -> jni::errors::Result<()> {
+        let status_bar = status_bar && !immersive;
         let window = env
             .call_method(&self.activity, "getWindow", "()Landroid/view/Window;", &[])?
             .l()?;
@@ -295,9 +302,14 @@ impl Ui {
                     "(I)V",
                     &[JValue::Int(2)],
                 )?;
-                // Status bars stay hidden in both modes. This preference only
-                // changes navigation buttons / the gesture bar, never the IME.
-                env.call_method(&controller, "hide", "(I)V", &[JValue::Int(1)])?;
+                // The launcher shows the status bar; the game keeps it hidden. The
+                // full-screen preference changes the navigation bar, never the IME.
+                env.call_method(
+                    &controller,
+                    if status_bar { "show" } else { "hide" },
+                    "(I)V",
+                    &[JValue::Int(1)],
+                )?;
                 env.call_method(
                     &controller,
                     if immersive { "hide" } else { "show" },
@@ -310,17 +322,31 @@ impl Ui {
                 decor,
                 "setSystemUiVisibility",
                 "(I)V",
-                &[JValue::Int(if immersive { 0x1706 } else { 0x0004 })],
+                &[JValue::Int(if immersive {
+                    0x1706
+                } else if status_bar {
+                    0
+                } else {
+                    0x0004
+                })],
             )?;
         }
+        // The theme starts full screen (FLAG_FULLSCREEN); lift it while the status
+        // bar should show.
+        env.call_method(
+            &window,
+            if status_bar { "clearFlags" } else { "addFlags" },
+            "(I)V",
+            &[JValue::Int(0x400)],
+        )?;
         Ok(())
     }
     fn apply(&self, env: &mut JNIEnv<'_>, c: Command) -> jni::errors::Result<()> {
         match c {
-            Command::Screen(immersive, avoid) => {
+            Command::Screen(immersive, avoid, status_bar) => {
                 self.avoid_cutout.store(avoid, Ordering::Release);
                 self.immersive.store(immersive, Ordering::Release);
-                if let Err(error) = self.apply_screen(env, immersive) {
+                if let Err(error) = self.apply_screen(env, immersive, status_bar) {
                     let _ = env.exception_clear();
                     log::warn!("Android screen preferences: {error}");
                 }
@@ -485,13 +511,16 @@ impl Ui {
                             let sdk = env
                                 .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
                                 .i()?;
+                            // WindowInsets.Type.systemBars(): status, navigation and
+                            // caption bars, so nothing is drawn under the clock or the
+                            // navigation buttons.
                             if !self.immersive.load(Ordering::Acquire) && sdk >= 30 {
                                 let navigation = env
                                     .call_method(
                                         &insets,
                                         "getInsets",
                                         "(I)Landroid/graphics/Insets;",
-                                        &[JValue::Int(2)],
+                                        &[JValue::Int(7)],
                                     )?
                                     .l()?;
                                 for (i, field) in
@@ -711,9 +740,10 @@ pub fn pick_document() -> bool {
     true
 }
 
-pub fn configure_screen(immersive: bool, avoid_cutout: bool) {
+/// `status_bar`: the launcher shows Android's status bar; the game does not.
+pub fn configure_screen(immersive: bool, avoid_cutout: bool, status_bar: bool) {
     if let Some(ui) = UI.get() {
-        ui.enqueue(Command::Screen(immersive, avoid_cutout));
+        ui.enqueue(Command::Screen(immersive, avoid_cutout, status_bar));
     }
 }
 pub fn refresh_bounds() {

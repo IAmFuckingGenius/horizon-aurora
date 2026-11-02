@@ -144,14 +144,14 @@ impl Launcher {
                     false,
                 ));
                 (
-                    "Client resolution",
-                    "Small screens retain a usable menu size.",
+                    "Game resolution",
+                    "The share of the screen's resolution the game draws at. Lower runs faster but looks blurrier; menus keep a usable size.",
                     choices,
                 )
             }
             Kind::Orientation => (
                 "Screen orientation",
-                "Applies to the launcher and game. Does not change touch bindings.",
+                "The launcher and the game use this orientation.",
                 crate::catalog::Orientation::ALL
                     .into_iter()
                     .map(|mode| {
@@ -166,7 +166,7 @@ impl Launcher {
             ),
             Kind::Renderer => (
                 "Rendering mode",
-                "Uses the system GPU driver. Applies on the next game launch.",
+                "How the game draws through your phone's graphics driver. Applies the next time you press Play.",
                 vec![
                     (
                         "OpenGL ES / experimental".into(),
@@ -287,25 +287,49 @@ impl Chooser {
         let dw = (w - 32.0).min(460.0);
         let inner = dw - 32.0;
         let confirm = self.choices.len() <= 2 && self.choices.iter().all(|c| c.1.is_empty());
-        // The whole help when it fits; a long one ends in an ellipsis, never mid-word.
-        let help = k.wrap_max(
-            Face::BodyMedium,
-            13.0,
-            t(self.help),
-            inner,
-            if h < 420.0 { 3 } else { 5 },
-        );
-        let head = 14.0
-            + 24.0
-            + 6.0
-            + help.len() as f32 * 18.85
-            + if self.device.is_some() { 20.0 } else { 0.0 }
-            + 10.0;
-        let row_h = |detail: &str| if detail.is_empty() { 48.0 } else { 56.0 };
+        // The whole help, never cut: in a chooser it scrolls with the options.
+        let help: Vec<String> = k
+            .wrap(Face::BodyMedium, 13.0, t(self.help), inner)
+            .into_iter()
+            .filter(|l| !l.is_empty())
+            .collect();
+        let help_h =
+            help.len() as f32 * 18.85 + if self.device.is_some() { 20.0 } else { 0.0 } + 10.0;
+        let head = 14.0 + 24.0 + 6.0 + help_h;
+        // Each option's name and description, wrapped in full; its row grows.
+        let tw = inner - 44.0 - 12.0;
+        let layout: Vec<(Vec<String>, Vec<String>, f32)> = self
+            .choices
+            .iter()
+            .map(|(label, detail, _, _)| {
+                let label = k.wrap_max(
+                    Face::BodySemiBold,
+                    15.0,
+                    &super::text::t_dyn(label),
+                    tw,
+                    usize::MAX,
+                );
+                let detail = k.wrap_max(
+                    Face::Body,
+                    12.0,
+                    &super::text::t_dyn(detail),
+                    tw,
+                    usize::MAX,
+                );
+                let text = label.len().max(1) as f32 * 18.0
+                    + if detail.is_empty() {
+                        0.0
+                    } else {
+                        2.0 + detail.len() as f32 * 14.0
+                    };
+                let rh = (text + 18.0).max(if detail.is_empty() { 48.0 } else { 56.0 });
+                (label, detail, rh)
+            })
+            .collect();
         let options: f32 = if confirm {
             0.0
         } else {
-            self.choices.iter().map(|c| row_h(&c.1) + 6.0).sum::<f32>()
+            layout.iter().map(|l| l.2 + 6.0).sum::<f32>()
         };
         // Confirmations end in buttons; choosers close from their header.
         let foot = if confirm { 8.0 + 48.0 + 14.0 } else { 14.0 };
@@ -332,6 +356,11 @@ impl Chooser {
             );
         }
         let mut cy = y + 44.0;
+        let help_top = cy;
+        let clip = k.mark();
+        if !confirm {
+            cy -= self.scroll;
+        }
         for line in &help {
             k.text(
                 Face::BodyMedium,
@@ -383,16 +412,15 @@ impl Chooser {
             self.view = [0.0; 3];
             return;
         }
-        let top = cy;
+        let top = help_top;
         let bottom = y + dh - 14.0;
-        let maximum = (options - (bottom - top)).max(0.0);
+        let maximum = (help_h + options - (bottom - top)).max(0.0);
         self.scroll = self.scroll.clamp(0.0, maximum);
         self.view = [top, bottom, maximum];
         self.rows.clear();
-        let mut oy = top - self.scroll;
-        let clip = k.mark();
-        for (label, detail, action, selected) in &self.choices {
-            let rh = row_h(detail);
+        let mut oy = cy;
+        for ((_, _, action, selected), (label, detail, rh)) in self.choices.iter().zip(&layout) {
+            let rh = *rh;
             let r = [x + 16.0, oy, inner, rh];
             self.rows.push((r, *action));
             if oy + rh > top && oy < bottom {
@@ -423,41 +451,29 @@ impl Chooser {
                 if *selected {
                     kit::fill(k.ui, rx + 6.0, ry + 6.0, 8.0, 8.0, col::ACCENT_HI);
                 }
-                let tw = inner - 44.0 - 12.0;
-                let label = &super::text::t_dyn(label);
-                let detail = &super::text::t_dyn(detail);
-                if detail.is_empty() {
-                    k.text_fit(
+                let text = label.len().max(1) as f32 * 18.0
+                    + if detail.is_empty() {
+                        0.0
+                    } else {
+                        2.0 + detail.len() as f32 * 14.0
+                    };
+                let mut ty = oy + (rh - text) / 2.0;
+                for line in label {
+                    k.text(
                         Face::BodySemiBold,
                         15.0,
                         18.0,
                         r[0] + 44.0,
-                        oy + 15.0,
-                        tw,
+                        ty,
                         col::INK,
-                        label,
+                        line,
                     );
-                } else {
-                    k.text_fit(
-                        Face::BodySemiBold,
-                        15.0,
-                        18.0,
-                        r[0] + 44.0,
-                        oy + 9.0,
-                        tw,
-                        col::INK,
-                        label,
-                    );
-                    k.text_fit(
-                        Face::Body,
-                        12.0,
-                        14.0,
-                        r[0] + 44.0,
-                        oy + 29.0,
-                        tw,
-                        col::MUTED,
-                        detail,
-                    );
+                    ty += 18.0;
+                }
+                ty += 2.0;
+                for line in detail {
+                    k.text(Face::Body, 12.0, 14.0, r[0] + 44.0, ty, col::MUTED, line);
+                    ty += 14.0;
                 }
                 k.hit(r, *action);
             }

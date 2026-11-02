@@ -56,6 +56,10 @@ pub struct Config {
     pub device: crate::device_preferences::Settings,
     pub shader_source: crate::shader_catalog::Origin,
     pub mod_source: crate::shader_catalog::Origin,
+    /// Portrait Home: show the last-world card (with quick join). Off by default.
+    pub home_last_world: bool,
+    /// Portrait Home: hide the profile picker above Play (shown by default).
+    pub home_hide_profile: bool,
 }
 
 pub use horizon_client::android_gamepad::InputMode as InputHost;

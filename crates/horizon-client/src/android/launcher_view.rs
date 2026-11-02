@@ -44,6 +44,8 @@ pub(super) struct ViewState {
     /// The first byte count and time seen in the download stage, for its speed.
     pub install_rate: Option<(Instant, u64)>,
     pub free: Option<(Instant, u64)>,
+    /// The orientation the screen mode was last set for.
+    pub landscape: Option<bool>,
 }
 impl Default for ViewState {
     fn default() -> Self {
@@ -59,6 +61,7 @@ impl Default for ViewState {
             last_error: None,
             install_rate: None,
             free: None,
+            landscape: None,
         }
     }
 }
@@ -150,6 +153,8 @@ fn short_count(n: u64) -> String {
     format!("{text}{suffix}")
 }
 
+/// Width of the pager: two 48 dp buttons around the page label.
+const PAGER_W: f32 = 188.0;
 /// The four destinations of the rail.
 const NAV: [(Page, &str, &str); 4] = [
     (Page::Play, "home", "Home"),
@@ -230,7 +235,7 @@ impl Launcher {
         if self.catalog.status != self.view.last_status {
             self.view.last_status = self.catalog.status.clone();
             if !addons && !self.catalog.status.is_empty() {
-                self.toast(self.catalog.status.clone(), String::new(), false);
+                self.toast(t_dyn(&self.catalog.status), String::new(), false);
             }
         }
         let installed = horizon_client::official_install::ready(&self.home);
@@ -303,21 +308,25 @@ impl Launcher {
         };
         let max = (mw - 32.0).min(520.0);
         let text_w = max - 16.0 - 24.0 - 12.0 - 16.0;
-        let title = k.ui.fit_text(Face::BodyBold, 14.0, &toast.title, text_w);
+        // Long titles wrap instead of ending in an ellipsis mid-sentence.
+        let title = k.wrap_max(Face::BodyBold, 14.0, &toast.title, text_w, 3);
         let detail = k.wrap_max(Face::BodyMedium, 12.0, &toast.detail, text_w, 3);
-        let content = k
-            .measure(Face::BodyBold, 14.0, &title)
-            .max(
-                detail
-                    .iter()
-                    .map(|l| k.measure(Face::BodyMedium, 12.0, l))
-                    .fold(0.0, f32::max),
-            )
+        let content = title
+            .iter()
+            .map(|l| k.measure(Face::BodyBold, 14.0, l))
+            .chain(detail.iter().map(|l| k.measure(Face::BodyMedium, 12.0, l)))
+            .fold(0.0, f32::max)
             .min(text_w);
+        let title_h = title.len().max(1) as f32 * 16.8;
         let tw = 16.0 + 24.0 + 12.0 + content + 16.0;
-        let th = (28.0 + 16.8 + detail.len() as f32 * 14.4).max(56.0);
+        let th = (28.0 + title_h + detail.len() as f32 * 14.4).max(56.0);
         let x = mx + (mw - tw) / 2.0;
-        let y = mh - th - 16.0;
+        // Portrait keeps Play at the bottom: the toast comes down from the top.
+        let y = if k.ui.h > k.ui.w {
+            16.0
+        } else {
+            mh - th - 16.0
+        };
         kit::plate(k.ui, [x, y, tw, th], 2, col::CONTROL, col::CONTROL_RING);
         let icon = if toast.error {
             Icon::Sprite(kit::ALERT)
@@ -336,23 +345,25 @@ impl Launcher {
                 col::SUCCESS
             },
         );
-        let text_top = y + (th - 16.8 - detail.len() as f32 * 14.4) / 2.0;
-        k.text(
-            Face::BodyBold,
-            14.0,
-            16.8,
-            x + 52.0,
-            text_top,
-            col::INK,
-            &title,
-        );
+        let text_top = y + (th - title_h - detail.len() as f32 * 14.4) / 2.0;
+        for (i, line) in title.iter().enumerate() {
+            k.text(
+                Face::BodyBold,
+                14.0,
+                16.8,
+                x + 52.0,
+                text_top + i as f32 * 16.8,
+                col::INK,
+                line,
+            );
+        }
         for (i, line) in detail.iter().enumerate() {
             k.text(
                 Face::BodyMedium,
                 12.0,
                 14.4,
                 x + 52.0,
-                text_top + 16.8 + i as f32 * 14.4,
+                text_top + title_h + i as f32 * 14.4,
                 col::INK_SOFT,
                 line,
             );
@@ -369,7 +380,7 @@ impl Launcher {
         let failed = !installed && !installing && self.error.is_some();
         let x0 = mx + 16.0;
         let w0 = mw - 32.0;
-        let top = my + if portrait { 40.0 } else { 16.0 };
+        let top = my + 16.0;
         // Top row: status line and the account chip.
         let (dot, state) = if installing {
             (col::ACCENT_HI, t("downloading"))
@@ -394,12 +405,30 @@ impl Launcher {
         } else {
             (t("Offline"), t("Sign in"))
         };
-        let chip_w = k.chip(x0 + w0, top, &name, status, sign_in);
+        let chip_w = k.chip(x0 + w0, top, &name, status, sign_in, Action::Account);
         let status_text = format!("Minecraft {} · {state}", horizon_core::VANILLA_VERSION);
-        let status_w = w0 - chip_w - 16.0;
-        let status_text =
-            k.ui.fit_text(Face::Mono, 11.0, &status_text, status_w - 24.0);
-        k.status_line(x0, top + 17.0, dot, &status_text);
+        let status_w = w0 - chip_w - 16.0 - 24.0;
+        if k.measure(Face::Mono, 11.0, &status_text.to_uppercase()) + 12.0 <= status_w {
+            k.status_line(x0, top + 17.0, dot, &status_text);
+        } else {
+            // A narrow screen: the version, and the state under it.
+            k.status_line(
+                x0,
+                top + 10.0,
+                dot,
+                &format!("Minecraft {}", horizon_core::VANILLA_VERSION),
+            );
+            k.spaced(
+                Face::Mono,
+                11.0,
+                14.0,
+                x0 + 16.0,
+                top + 26.0,
+                0.66,
+                col::INK_SOFT,
+                state,
+            );
+        }
         let body = top + 60.0;
         if installing || (!installed && !failed) {
             self.draw_install(
@@ -459,40 +488,53 @@ impl Launcher {
         let play_w = k
             .button_width(Style::PrimaryXl, Some(Icon::Pixel("play")), t("Play"))
             .max(184.0);
-        let profile_beside = !portrait && play_w + 10.0 + 150.0 <= left_w;
-        let play_rect = if portrait {
-            [x0, actions_y, w0, 56.0]
-        } else {
-            [x0, actions_y, play_w, 56.0]
-        };
-        k.button(
-            play_rect,
-            Style::PrimaryXl,
-            Some(Icon::Pixel("play")),
-            t("Play"),
-            Some(Action::Play),
-        );
-        let profile_rect = if profile_beside {
-            [
-                x0 + play_w + 10.0,
-                actions_y,
-                (left_w - play_w - 10.0).min(200.0),
-                56.0,
-            ]
-        } else {
-            [
-                x0,
-                actions_y + 66.0,
-                if portrait { w0 } else { left_w.min(260.0) },
-                56.0,
-            ]
-        };
-        k.dropdown(profile_rect, Some(t("Profile")), &profile, Action::Profile);
-        // The card: the last world and quick join.
         let card_h = 234.0;
         let card = if portrait {
-            [x0, my + mh - 16.0 - card_h, w0, card_h]
+            // Portrait stacks from the bottom, within thumb reach: Play last, the
+            // profile above it, the last-world card above that (each optional
+            // except Play; the card is off by default).
+            let mut bottom = my + mh - 16.0;
+            bottom -= 56.0;
+            k.button(
+                [x0, bottom, w0, 56.0],
+                Style::PrimaryXl,
+                Some(Icon::Pixel("play")),
+                t("Play"),
+                Some(Action::Play),
+            );
+            if !self.catalog.config.home_hide_profile {
+                bottom -= 66.0;
+                k.dropdown(
+                    [x0, bottom, w0, 56.0],
+                    Some(t("Profile")),
+                    &profile,
+                    Action::Profile,
+                );
+            }
+            if !self.catalog.config.home_last_world || bottom - 12.0 - card_h < para_y + 60.0 {
+                return;
+            }
+            [x0, bottom - 12.0 - card_h, w0, card_h]
         } else {
+            let profile_beside = play_w + 10.0 + 150.0 <= left_w;
+            k.button(
+                [x0, actions_y, play_w, 56.0],
+                Style::PrimaryXl,
+                Some(Icon::Pixel("play")),
+                t("Play"),
+                Some(Action::Play),
+            );
+            let profile_rect = if profile_beside {
+                [
+                    x0 + play_w + 10.0,
+                    actions_y,
+                    (left_w - play_w - 10.0).min(200.0),
+                    56.0,
+                ]
+            } else {
+                [x0, actions_y + 66.0, left_w.min(260.0), 56.0]
+            };
+            k.dropdown(profile_rect, Some(t("Profile")), &profile, Action::Profile);
             [x0 + w0 - card_w, body, card_w, card_h]
         };
         let [cx, cy, cw, _] = card;
@@ -990,20 +1032,16 @@ impl Launcher {
         }
         let page = self.catalog.page;
         let installed_view = self.view.addons_installed;
-        sky::band(
-            k.ui,
-            [mx, my, mw, if portrait { 96.0 } else { 72.0 }],
-            self.sky_time(),
-        );
+        sky::band(k.ui, [mx, my, mw, 72.0], self.sky_time());
         let x0 = mx + 16.0;
         let w0 = mw - 32.0;
-        let top = my + if portrait { 36.0 } else { 18.0 };
+        let top = my + if portrait { 14.0 } else { 18.0 };
         k.text(
             Face::Pixel,
             32.0,
             32.0,
             x0,
-            top + 10.0,
+            top + if portrait { 2.0 } else { 10.0 },
             col::INK,
             t("Add-ons"),
         );
@@ -1040,6 +1078,8 @@ impl Launcher {
             k.segmented([x0 + w0 - natural, top + 2.0, natural, 48.0], &kinds, false);
         }
         // Toolbar: Browse / Installed, the search field, and the pager or import.
+        // Narrow screens give the field its own row and move the pager under the list.
+        let narrow = portrait || w0 < 600.0;
         let tabs = [
             (None, t("Browse"), Action::AddonView(false), !installed_view),
             (
@@ -1049,39 +1089,36 @@ impl Launcher {
                 installed_view,
             ),
         ];
-        let tabs_w = if portrait {
+        let tabs_w = if narrow {
             w0
         } else {
             tabs.iter()
                 .map(|(_, l, _, _)| 28.0 + k.measure(Face::BodySemiBold, 14.0, l))
                 .sum::<f32>()
         };
-        k.segmented([x0, y, tabs_w, 48.0], &tabs, portrait);
+        k.segmented([x0, y, tabs_w, 48.0], &tabs, narrow);
         let kind = match page {
             Page::Shaders => Kind::Shaders,
             Page::Packs => Kind::Packs,
             _ => Kind::Mods,
         };
-        let (field_x, field_y) = if portrait {
+        let (field_x, field_y) = if narrow {
             (x0, y + 58.0)
         } else {
             (x0 + tabs_w + 10.0, y)
         };
-        let right_w = if installed_view {
-            k.button_width(
-                Style::Secondary,
-                Some(Icon::Pixel("plus")),
-                t("Import file"),
-            ) + 8.0
-                + 48.0
-        } else {
-            48.0 + 4.0 + 84.0 + 4.0 + 48.0
+        let import_w = k.button_width(
+            Style::Secondary,
+            Some(Icon::Pixel("plus")),
+            t("Import file"),
+        );
+        let right_w = match (installed_view, narrow) {
+            (true, true) => 48.0 + 8.0 + 48.0,
+            (true, false) => import_w + 8.0 + 48.0,
+            (false, true) => 0.0,
+            (false, false) => PAGER_W,
         };
-        let field_w = if portrait {
-            w0 - right_w - 8.0
-        } else {
-            (x0 + w0 - right_w - 10.0 - field_x).max(140.0)
-        };
+        let field_w = x0 + w0 - field_x - if right_w > 0.0 { right_w + 10.0 } else { 0.0 };
         let placeholder = match page {
             Page::Packs => t("Search resource packs"),
             Page::Shaders => t("Search shaders"),
@@ -1098,54 +1135,34 @@ impl Launcher {
             editing,
         );
         self.caret(k, editing, caret, field_y);
-        let rx = field_x + field_w + if portrait { 8.0 } else { 10.0 };
+        let rx = field_x + field_w + 10.0;
         if installed_view {
-            let import_w = right_w - 56.0;
+            let iw = if narrow { 48.0 } else { import_w };
             k.button(
-                [rx, field_y, import_w, 48.0],
+                [rx, field_y, iw, 48.0],
                 Style::Secondary,
                 Some(Icon::Pixel("plus")),
-                t("Import file"),
+                if narrow { "" } else { t("Import file") },
                 Some(Action::Import(kind)),
             );
             k.button(
-                [rx + import_w + 8.0, field_y, 48.0, 48.0],
+                [rx + iw + 8.0, field_y, 48.0, 48.0],
                 Style::Secondary,
                 Some(Icon::Pixel("folder")),
                 "",
                 Some(Action::OpenFolder(kind)),
             );
-        } else {
-            k.button(
-                [rx, field_y, 48.0, 48.0],
-                Style::Ghost,
-                Some(Icon::Sprite(kit::CHEVRON_LEFT)),
-                "",
-                (self.catalog.offset > 0).then_some(Action::Previous),
-            );
-            let label = tf("Page {}", &[&(self.catalog.offset / 12 + 1).to_string()]);
-            let lw = k.measure(Face::Mono, 12.0, &label);
-            k.text(
-                Face::Mono,
-                12.0,
-                16.0,
-                rx + 52.0 + (84.0 - lw) / 2.0,
-                field_y + 16.0,
-                col::INK_SOFT,
-                &label,
-            );
-            k.button(
-                [rx + 140.0, field_y, 48.0, 48.0],
-                Style::Ghost,
-                Some(Icon::Pixel("chevron-right")),
-                "",
-                (self.catalog.results.len() >= 12).then_some(Action::Next),
-            );
+        } else if !narrow {
+            self.pager(k, rx, field_y);
         }
-        // The list.
+        // The list, and on narrow screens the pager under it.
+        let pager_h = if !installed_view && narrow { 56.0 } else { 0.0 };
         let list_top = field_y + 60.0;
-        let panel = [x0, list_top, w0, my + mh - 16.0 - list_top];
+        let panel = [x0, list_top, w0, my + mh - 16.0 - pager_h - list_top];
         k.panel(panel, false);
+        if pager_h > 0.0 {
+            self.pager(k, x0 + (w0 - PAGER_W) / 2.0, panel[1] + panel[3] + 8.0);
+        }
         let lx = x0 + 6.0;
         let lw = w0 - 12.0;
         let mut ly = list_top + 6.0;
@@ -1179,24 +1196,45 @@ impl Launcher {
                     current == Origin::Modrinth,
                 ),
             ];
-            k.segmented([lx + 6.0, ly + 4.0, 220.0, 40.0], &items, true);
+            let seg_w = (lw - 12.0).min(220.0);
+            k.segmented([lx + 6.0, ly + 4.0, seg_w, 40.0], &items, true);
             let hint = match (page, current) {
                 (Page::Mods, Origin::Modrinth) => t("Java mods: browse only, they cannot run here"),
                 (Page::Mods, _) => t("Sandboxed .hmod mods"),
                 (_, Origin::Modrinth) => t("Shader ZIPs: experimental"),
                 _ => t("Horizon .hshader packs"),
             };
-            k.text_fit(
-                Face::Body,
-                12.0,
-                14.0,
-                lx + 238.0,
-                ly + 17.0,
-                lw - 244.0,
-                col::MUTED,
-                hint,
-            );
-            ly += 52.0;
+            let beside = lw - seg_w - 30.0;
+            if beside >= 180.0 {
+                let lines = k.wrap_max(Face::Body, 12.0, hint, beside, 2);
+                let top = ly + 4.0 + (40.0 - lines.len() as f32 * 14.0) / 2.0;
+                for (i, line) in lines.iter().enumerate() {
+                    k.text(
+                        Face::Body,
+                        12.0,
+                        14.0,
+                        lx + seg_w + 18.0,
+                        top + i as f32 * 14.0,
+                        col::MUTED,
+                        line,
+                    );
+                }
+                ly += 52.0;
+            } else {
+                let lines = k.wrap_max(Face::Body, 12.0, hint, lw - 12.0, 2);
+                for (i, line) in lines.iter().enumerate() {
+                    k.text(
+                        Face::Body,
+                        12.0,
+                        14.0,
+                        lx + 6.0,
+                        ly + 52.0 + i as f32 * 14.0,
+                        col::MUTED,
+                        line,
+                    );
+                }
+                ly += 52.0 + lines.len() as f32 * 14.0 + 8.0;
+            }
         }
         let rows = if installed_view {
             self.addon_installed_rows(k, kind, [lx, ly, lw, lb - ly])
@@ -1206,6 +1244,35 @@ impl Launcher {
         if rows == 0 {
             self.addon_empty(k, kind, [lx, ly, lw, lb - ly], installed_view);
         }
+    }
+
+    /// Previous · «Page n» · Next, `PAGER_W` wide.
+    fn pager(&mut self, k: &mut Kit, x: f32, y: f32) {
+        k.button(
+            [x, y, 48.0, 48.0],
+            Style::Ghost,
+            Some(Icon::Sprite(kit::CHEVRON_LEFT)),
+            "",
+            (self.catalog.offset > 0).then_some(Action::Previous),
+        );
+        let label = tf("Page {}", &[&(self.catalog.offset / 12 + 1).to_string()]);
+        let lw = k.measure(Face::Mono, 12.0, &label);
+        k.text(
+            Face::Mono,
+            12.0,
+            16.0,
+            x + 52.0 + (84.0 - lw) / 2.0,
+            y + 16.0,
+            col::INK_SOFT,
+            &label,
+        );
+        k.button(
+            [x + 140.0, y, 48.0, 48.0],
+            Style::Ghost,
+            Some(Icon::Pixel("chevron-right")),
+            "",
+            (self.catalog.results.len() >= 12).then_some(Action::Next),
+        );
     }
 
     fn list_scroll(&mut self, top: f32, bottom: f32, content: f32) -> f32 {
@@ -1222,112 +1289,51 @@ impl Launcher {
         [x, y, w, h]: [f32; 4],
     ) -> usize {
         let page = self.catalog.page;
-        let bundled: Vec<_> = if page == Page::Mods
+        // One entry per row: (seed, title, detail, trailing).
+        enum Trailing {
+            Toggle(&'static str, bool),
+            Install(usize, &'static str),
+            State(String),
+        }
+        let mut entries: Vec<(String, String, String, Trailing)> = Vec::new();
+        if page == Page::Mods
             && self.catalog.config.mod_source == crate::shader_catalog::Origin::Horizon
         {
             let query = self.catalog.query.to_lowercase();
-            horizon_client::mod_list::ANDROID_BUNDLED
-                .into_iter()
-                .filter(|(id, title, _)| {
-                    id.contains(&query) || title.to_lowercase().contains(&query)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let results: Vec<usize> = self
-            .catalog
-            .results
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| {
-                !(page == Page::Mods
-                    && p.source == crate::browser::SourceId::Horizon
-                    && horizon_client::mod_list::ANDROID_BUNDLED
-                        .iter()
-                        .any(|(id, _, _)| *id == p.id))
-            })
-            .map(|(i, _)| i)
-            .collect();
-        let count = bundled.len() + results.len();
-        if count == 0 {
-            return 0;
+            for (id, title, description) in horizon_client::mod_list::ANDROID_BUNDLED {
+                if id.contains(&query) || title.to_lowercase().contains(&query) {
+                    let enabled = self.catalog.bundled_enabled.contains(id);
+                    entries.push((
+                        id.to_owned(),
+                        title.to_owned(),
+                        t_dyn(description),
+                        Trailing::Toggle(id, enabled),
+                    ));
+                }
+            }
         }
-        let status_h = if self.catalog.status.is_empty() {
-            0.0
-        } else {
-            28.0
-        };
-        let scroll = self.list_scroll(y, y + h, count as f32 * 64.0 + status_h);
-        let clip = k.mark();
-        let mut row = 0;
-        for (id, title, description) in bundled {
-            let ry = y + row as f32 * 64.0 - scroll;
-            row += 1;
-            let enabled = self.catalog.bundled_enabled.contains(id);
-            let action = Action::ToggleBundled(id);
-            let bw = k.button_width(Style::Secondary, Some(Icon::Pixel("check")), t("Disable"));
-            self.list_targets
-                .push(([x + w - 12.0 - bw, ry + 8.0, bw, 48.0], action));
-            if ry + 64.0 <= y || ry >= y + h {
+        for (i, p) in self.catalog.results.iter().enumerate() {
+            if page == Page::Mods
+                && p.source == crate::browser::SourceId::Horizon
+                && horizon_client::mod_list::ANDROID_BUNDLED
+                    .iter()
+                    .any(|(id, _, _)| *id == p.id)
+            {
                 continue;
             }
-            divider(k, row, [x, ry, w]);
-            identicon(k, x + 12.0, ry + 12.0, id);
-            k.text_fit(
-                Face::BodySemiBold,
-                15.0,
-                18.0,
-                x + 64.0,
-                ry + 14.0,
-                w - 88.0 - bw,
-                col::INK,
-                title,
-            );
-            k.text_fit(
-                Face::Body,
-                12.0,
-                14.0,
-                x + 64.0,
-                ry + 34.0,
-                w - 88.0 - bw,
-                col::MUTED,
-                description,
-            );
-            k.button(
-                [x + w - 12.0 - bw, ry + 8.0, bw, 48.0],
-                Style::Secondary,
-                Some(Icon::Pixel(if enabled { "close" } else { "check" })),
-                if enabled { t("Disable") } else { t("Enable") },
-                Some(action),
-            );
-        }
-        for i in results {
-            let ry = y + row as f32 * 64.0 - scroll;
-            row += 1;
-            let p = &self.catalog.results[i];
-            let download = self.catalog.download_label(p);
             let java = p.kind == crate::browser::Kind::Mod
                 && p.source == crate::browser::SourceId::Modrinth;
-            let source_only = crate::catalog::source_only_mod(p);
-            let narrow = p.kind == crate::browser::Kind::Mod && !cfg!(target_pointer_width = "64");
-            let label = self.catalog.install_button(p).to_owned();
-            let installable = download.is_none() && !java && !source_only && !narrow;
-            let bw = k.button_width(
-                Style::Secondary,
-                Some(Icon::Pixel("download")),
-                t(static_label(&label)),
-            );
-            if installable {
-                self.list_targets
-                    .push(([x + w - 12.0 - bw, ry + 8.0, bw, 48.0], Action::Install(i)));
-            }
-            if ry + 64.0 <= y || ry >= y + h {
-                continue;
-            }
-            divider(k, row, [x, ry, w]);
-            identicon(k, x + 12.0, ry + 12.0, &p.id);
-            let title = p.title.clone();
+            let trailing = if let Some(state) = self.catalog.download_label(p) {
+                Trailing::State(state)
+            } else if java {
+                Trailing::State(t("Java mod").to_owned())
+            } else if crate::catalog::source_only_mod(p) {
+                Trailing::State(t(".hnmod: later").to_owned())
+            } else if p.kind == crate::browser::Kind::Mod && !cfg!(target_pointer_width = "64") {
+                Trailing::State(t("64-bit only").to_owned())
+            } else {
+                Trailing::Install(i, static_label(self.catalog.install_button(p)))
+            };
             let detail = if p.downloads > 0 {
                 format!(
                     "{} · {} {}",
@@ -1338,79 +1344,115 @@ impl Launcher {
             } else {
                 p.author.clone()
             };
-            let text_w = w - 88.0 - bw;
-            k.text_fit(
-                Face::BodySemiBold,
-                15.0,
-                18.0,
-                x + 64.0,
-                ry + 14.0,
-                text_w,
-                col::INK,
-                &title,
-            );
-            k.text_fit(
+            entries.push((p.id.clone(), p.title.clone(), detail, trailing));
+        }
+        if entries.is_empty() {
+            return 0;
+        }
+        // Wide buttons where there is room; on narrow rows an icon, so the title
+        // keeps its width.
+        let label_w = k.button_width(
+            Style::Secondary,
+            Some(Icon::Pixel("download")),
+            t("Install"),
+        );
+        let icon_only = w - 64.0 - 24.0 - label_w < w * 0.5;
+        let bw = if icon_only { 48.0 } else { label_w };
+        let text_w = w - 64.0 - 12.0 - bw - 12.0;
+        let layout: Vec<(Vec<String>, Vec<String>, f32)> = entries
+            .iter()
+            .map(|(_, title, detail, _)| {
+                let title = k.wrap_max(Face::BodySemiBold, 15.0, title, text_w, 2);
+                let detail = k.wrap_max(Face::Body, 12.0, detail, text_w, 2);
+                let height =
+                    (16.0 + title.len() as f32 * 18.0 + 2.0 + detail.len() as f32 * 14.0).max(64.0);
+                (title, detail, height)
+            })
+            .collect();
+        let status_h = if self.catalog.status.is_empty() {
+            0.0
+        } else {
+            34.0
+        };
+        let content = layout.iter().map(|l| l.2).sum::<f32>() + status_h;
+        let scroll = self.list_scroll(y, y + h, content);
+        let clip = k.mark();
+        let mut ry = y - scroll;
+        for (row, ((seed, _, _, trailing), (title, detail, rh))) in
+            entries.iter().zip(&layout).enumerate()
+        {
+            let button = [x + w - 12.0 - bw, ry + (rh - 48.0) / 2.0, bw, 48.0];
+            // Built-in mods switch on and off like installed ones.
+            let switch = [x + w - 12.0 - 60.0, ry + (rh - 36.0) / 2.0, 60.0, 36.0];
+            match trailing {
+                Trailing::Toggle(id, _) => {
+                    self.list_targets.push((switch, Action::ToggleBundled(id)))
+                }
+                Trailing::Install(i, _) => self.list_targets.push((button, Action::Install(*i))),
+                Trailing::State(_) => {}
+            }
+            if ry + rh > y && ry < y + h {
+                divider(k, row + 1, [x, ry, w]);
+                identicon(k, x + 12.0, ry + (rh - 40.0) / 2.0, seed);
+                let mut ty =
+                    ry + (rh - title.len() as f32 * 18.0 - 2.0 - detail.len() as f32 * 14.0) / 2.0;
+                for line in title {
+                    k.text(Face::BodySemiBold, 15.0, 18.0, x + 64.0, ty, col::INK, line);
+                    ty += 18.0;
+                }
+                ty += 2.0;
+                for line in detail {
+                    k.text(Face::Body, 12.0, 14.0, x + 64.0, ty, col::MUTED, line);
+                    ty += 14.0;
+                }
+                match trailing {
+                    Trailing::Toggle(id, enabled) => {
+                        k.switch(switch[0], switch[1], *enabled, Action::ToggleBundled(id));
+                    }
+                    Trailing::Install(i, label) => k.button(
+                        button,
+                        Style::Secondary,
+                        Some(Icon::Pixel("download")),
+                        if icon_only { "" } else { t(label) },
+                        Some(Action::Install(*i)),
+                    ),
+                    Trailing::State(state) => {
+                        let lines = k.wrap_max(Face::BodyMedium, 12.0, state, bw.max(96.0), 2);
+                        let mut sy = ry + (rh - lines.len() as f32 * 15.0) / 2.0;
+                        for line in &lines {
+                            let sw = k.measure(Face::BodyMedium, 12.0, line);
+                            k.text(
+                                Face::BodyMedium,
+                                12.0,
+                                15.0,
+                                x + w - 12.0 - sw,
+                                sy,
+                                col::MUTED,
+                                line,
+                            );
+                            sy += 15.0;
+                        }
+                    }
+                }
+            }
+            ry += rh;
+        }
+        if status_h > 0.0 && ry + 6.0 < y + h {
+            let status = t_dyn(&self.catalog.status);
+            k.paragraph(
                 Face::Body,
                 12.0,
                 14.0,
-                x + 64.0,
-                ry + 34.0,
-                text_w,
+                x + 12.0,
+                ry + 6.0,
+                w - 24.0,
+                2,
                 col::MUTED,
-                &detail,
+                &status,
             );
-            let state = if let Some(state) = download {
-                Some(state)
-            } else if java {
-                Some(t("Java mod").to_owned())
-            } else if source_only {
-                Some(t(".hnmod: later").to_owned())
-            } else if narrow {
-                Some(t("64-bit only").to_owned())
-            } else {
-                None
-            };
-            match state {
-                Some(state) => {
-                    let sw = k.measure(Face::BodyMedium, 13.0, &state).min(bw + 40.0);
-                    k.text_fit(
-                        Face::BodyMedium,
-                        13.0,
-                        18.0,
-                        x + w - 12.0 - sw,
-                        ry + 23.0,
-                        sw,
-                        col::MUTED,
-                        &state,
-                    );
-                }
-                None => k.button(
-                    [x + w - 12.0 - bw, ry + 8.0, bw, 48.0],
-                    Style::Secondary,
-                    Some(Icon::Pixel("download")),
-                    t(static_label(&label)),
-                    Some(Action::Install(i)),
-                ),
-            }
-        }
-        if status_h > 0.0 {
-            let sy = y + count as f32 * 64.0 - scroll + 6.0;
-            if sy + 16.0 > y && sy < y + h {
-                let status = self.catalog.status.clone();
-                k.text_fit(
-                    Face::Body,
-                    12.0,
-                    16.0,
-                    x + 12.0,
-                    sy,
-                    w - 24.0,
-                    col::MUTED,
-                    &status,
-                );
-            }
         }
         k.clip(clip, [x, y, w, h]);
-        count
+        entries.len()
     }
 
     fn addon_installed_rows(
@@ -1431,65 +1473,83 @@ impl Launcher {
         if items.is_empty() {
             return 0;
         }
-        let scroll = self.list_scroll(y, y + h, items.len() as f32 * 64.0);
-        let remove_w = k.button_width(Style::Danger, Some(Icon::Pixel("trash")), t("Remove"));
-        let compact = w < 420.0;
-        let remove_w = if compact { 48.0 } else { remove_w };
+        let narrow =
+            kind == horizon_client::content_files::Kind::Mods && !cfg!(target_pointer_width = "64");
+        let remove_label = k.button_width(Style::Danger, Some(Icon::Pixel("trash")), t("Remove"));
+        let icon_only = w - 64.0 - 24.0 - 68.0 - remove_label < w * 0.5;
+        let remove_w = if icon_only { 48.0 } else { remove_label };
+        let switch_w = if narrow { 0.0 } else { 68.0 };
+        let text_w = w - 64.0 - 12.0 - switch_w - remove_w - 12.0;
+        let layout: Vec<(Vec<String>, f32)> = items
+            .iter()
+            .map(|i| {
+                let title = k.wrap_max(
+                    Face::BodySemiBold,
+                    15.0,
+                    &self.catalog.local[*i].title,
+                    text_w,
+                    2,
+                );
+                let height = (16.0 + title.len() as f32 * 18.0 + 2.0 + 14.0).max(64.0);
+                (title, height)
+            })
+            .collect();
+        let scroll = self.list_scroll(y, y + h, layout.iter().map(|l| l.1).sum());
         let clip = k.mark();
-        for (row, i) in items.iter().copied().enumerate() {
-            let ry = y + row as f32 * 64.0 - scroll;
-            let switch_x = x + w - 12.0 - remove_w - 8.0 - 60.0;
-            let narrow = kind == horizon_client::content_files::Kind::Mods
-                && !cfg!(target_pointer_width = "64");
+        let mut ry = y - scroll;
+        for (row, (i, (title, rh))) in items.iter().copied().zip(&layout).enumerate() {
+            let rh = *rh;
+            let remove = [
+                x + w - 12.0 - remove_w,
+                ry + (rh - 48.0) / 2.0,
+                remove_w,
+                48.0,
+            ];
+            let switch = [remove[0] - 68.0, ry + (rh - 36.0) / 2.0, 60.0, 36.0];
             if !narrow {
-                self.list_targets
-                    .push(([switch_x, ry + 14.0, 60.0, 36.0], Action::ToggleLocal(i)));
+                self.list_targets.push((switch, Action::ToggleLocal(i)));
             }
-            self.list_targets.push((
-                [x + w - 12.0 - remove_w, ry + 8.0, remove_w, 48.0],
-                Action::DeleteLocal(i),
-            ));
-            if ry + 64.0 <= y || ry >= y + h {
-                continue;
+            self.list_targets.push((remove, Action::DeleteLocal(i)));
+            if ry + rh > y && ry < y + h {
+                divider(k, row + 1, [x, ry, w]);
+                let (enabled, file) = (
+                    self.catalog.local[i].enabled,
+                    self.catalog.local[i].file.clone(),
+                );
+                identicon(k, x + 12.0, ry + (rh - 40.0) / 2.0, &file);
+                let mut ty = ry + (rh - title.len() as f32 * 18.0 - 16.0) / 2.0;
+                for line in title {
+                    k.text(Face::BodySemiBold, 15.0, 18.0, x + 64.0, ty, col::INK, line);
+                    ty += 18.0;
+                }
+                let (dot, state) = if narrow {
+                    (col::MUTED, t("64-bit only"))
+                } else if enabled {
+                    (col::SUCCESS, t("Enabled"))
+                } else {
+                    (col::MUTED, t("Disabled"))
+                };
+                kit::fill(k.ui, x + 64.0, ty + 5.0, 8.0, 8.0, dot);
+                k.text(Face::Body, 12.0, 14.0, x + 78.0, ty + 2.0, dot, state);
+                if !narrow {
+                    k.switch(switch[0], switch[1], enabled, Action::ToggleLocal(i));
+                }
+                k.button(
+                    remove,
+                    Style::Danger,
+                    Some(Icon::Pixel("trash")),
+                    if icon_only { "" } else { t("Remove") },
+                    Some(Action::DeleteLocal(i)),
+                );
             }
-            divider(k, row + 1, [x, ry, w]);
-            let item = &self.catalog.local[i];
-            let (title, enabled, file) = (item.title.clone(), item.enabled, item.file.clone());
-            identicon(k, x + 12.0, ry + 12.0, &file);
-            k.text_fit(
-                Face::BodySemiBold,
-                15.0,
-                18.0,
-                x + 64.0,
-                ry + 14.0,
-                switch_x - x - 76.0,
-                col::INK,
-                &title,
-            );
-            let (dot, state) = if narrow {
-                (col::MUTED, t("64-bit only"))
-            } else if enabled {
-                (col::SUCCESS, t("Enabled"))
-            } else {
-                (col::MUTED, t("Disabled"))
-            };
-            kit::fill(k.ui, x + 64.0, ry + 38.0, 8.0, 8.0, dot);
-            k.text(Face::Body, 12.0, 14.0, x + 78.0, ry + 35.0, dot, state);
-            if !narrow {
-                k.switch(switch_x, ry + 14.0, enabled, Action::ToggleLocal(i));
-            }
-            k.button(
-                [x + w - 12.0 - remove_w, ry + 8.0, remove_w, 48.0],
-                Style::Danger,
-                Some(Icon::Pixel("trash")),
-                if compact { "" } else { t("Remove") },
-                Some(Action::DeleteLocal(i)),
-            );
+            ry += rh;
         }
         k.clip(clip, [x, y, w, h]);
         items.len()
     }
 
+    /// The empty list: an icon, a title, a line of help and the actions, shrunk to
+    /// fit the panel (the icon goes first, then help lines), never past its edge.
     fn addon_empty(
         &mut self,
         k: &mut Kit,
@@ -1517,63 +1577,105 @@ impl Launcher {
                 t("Try another search or import a file from the phone."),
             )
         };
-        let block = 48.0 + 8.0 + 22.0 + 8.0 + 40.6 + 6.0 + 48.0;
-        let top = y + ((h - block) / 2.0).max(8.0);
-        k.ui.icon(icon, x + (w - 48.0) / 2.0, top, 48.0, col::MUTED);
+        let pw = (w - 24.0).min(420.0);
+        let import_w = k.button_width(
+            Style::Secondary,
+            Some(Icon::Pixel("plus")),
+            t("Import file"),
+        );
+        let clear_w = k.button_width(Style::Secondary, None, t("Clear search"));
+        let both = !installed && !self.catalog.query.is_empty();
+        let buttons_row = if both {
+            clear_w + 8.0 + import_w
+        } else {
+            import_w
+        };
+        // Buttons stack when they do not fit side by side.
+        let buttons_h = if searching {
+            0.0
+        } else if buttons_row > w - 24.0 && both {
+            48.0 + 8.0 + 48.0 + 6.0
+        } else {
+            48.0 + 6.0
+        };
+        let mut lines = k.wrap_max(Face::BodyMedium, 14.0, body, pw, usize::MAX);
+        let mut show_icon = true;
+        let block = |icon: bool, lines: usize| {
+            (if icon { 56.0 } else { 0.0 }) + 22.0 + 8.0 + lines as f32 * 20.3 + buttons_h
+        };
+        if block(true, lines.len()) > h - 8.0 {
+            show_icon = false;
+        }
+        if block(show_icon, lines.len()) > h - 8.0 {
+            lines = k.wrap_max(Face::BodyMedium, 14.0, body, pw, 1);
+        }
+        let mut cy = y + ((h - block(show_icon, lines.len())) / 2.0).max(4.0);
+        if show_icon {
+            k.ui.icon(icon, x + (w - 48.0) / 2.0, cy, 48.0, col::MUTED);
+            cy += 56.0;
+        }
         let tw = k.measure(Face::BodyBold, 18.0, title);
         k.text(
             Face::BodyBold,
             18.0,
             22.0,
             x + (w - tw) / 2.0,
-            top + 56.0,
+            cy,
             col::INK,
             title,
         );
-        let pw = w.min(420.0);
-        let lines = k.wrap_max(Face::BodyMedium, 14.0, body, pw, 2);
-        for (i, line) in lines.iter().enumerate() {
+        cy += 30.0;
+        for line in &lines {
             let lw = k.measure(Face::BodyMedium, 14.0, line);
             k.text(
                 Face::BodyMedium,
                 14.0,
                 20.3,
                 x + (w - lw) / 2.0,
-                top + 86.0 + i as f32 * 20.3,
+                cy,
                 col::INK_SOFT,
                 line,
             );
+            cy += 20.3;
         }
         if searching {
             return;
         }
-        let by = top + 133.0;
-        let import_w = k.button_width(
-            Style::Secondary,
-            Some(Icon::Pixel("plus")),
-            t("Import file"),
-        );
-        if installed || self.catalog.query.is_empty() {
+        cy += 6.0;
+        if !both {
             k.button(
-                [x + (w - import_w) / 2.0, by, import_w, 48.0],
+                [x + (w - import_w) / 2.0, cy, import_w, 48.0],
                 Style::Secondary,
                 Some(Icon::Pixel("plus")),
                 t("Import file"),
                 Some(Action::Import(kind)),
             );
-        } else {
-            let clear_w = k.button_width(Style::Secondary, None, t("Clear search"));
-            let total = clear_w + 8.0 + import_w;
-            let bx = x + (w - total) / 2.0;
+        } else if buttons_row <= w - 24.0 {
+            let bx = x + (w - buttons_row) / 2.0;
             k.button(
-                [bx, by, clear_w, 48.0],
+                [bx, cy, clear_w, 48.0],
                 Style::Secondary,
                 None,
                 t("Clear search"),
                 Some(Action::ClearSearch),
             );
             k.button(
-                [bx + clear_w + 8.0, by, import_w, 48.0],
+                [bx + clear_w + 8.0, cy, import_w, 48.0],
+                Style::Secondary,
+                Some(Icon::Pixel("plus")),
+                t("Import file"),
+                Some(Action::Import(kind)),
+            );
+        } else {
+            k.button(
+                [x + (w - clear_w) / 2.0, cy, clear_w, 48.0],
+                Style::Secondary,
+                None,
+                t("Clear search"),
+                Some(Action::ClearSearch),
+            );
+            k.button(
+                [x + (w - import_w) / 2.0, cy + 56.0, import_w, 48.0],
                 Style::Secondary,
                 Some(Icon::Pixel("plus")),
                 t("Import file"),
@@ -1586,14 +1688,10 @@ impl Launcher {
 
     fn draw_worlds(&mut self, k: &mut Kit, main: [f32; 4], portrait: bool) {
         let [mx, my, mw, mh] = main;
-        sky::band(
-            k.ui,
-            [mx, my, mw, if portrait { 96.0 } else { 72.0 }],
-            self.sky_time(),
-        );
+        sky::band(k.ui, [mx, my, mw, 72.0], self.sky_time());
         let x0 = mx + 16.0;
         let w0 = mw - 32.0;
-        let top = my + if portrait { 40.0 } else { 12.0 };
+        let top = my + if portrait { 16.0 } else { 12.0 };
         k.text(
             Face::Pixel,
             32.0,
@@ -1765,20 +1863,19 @@ impl Launcher {
 
     fn draw_settings(&mut self, k: &mut Kit, main: [f32; 4], portrait: bool) {
         let [mx, my, mw, mh] = main;
-        sky::band(
-            k.ui,
-            [mx, my, mw, if portrait { 96.0 } else { 72.0 }],
-            self.sky_time(),
-        );
+        sky::band(k.ui, [mx, my, mw, 72.0], self.sky_time());
         let x0 = mx + 16.0;
         let w0 = mw - 32.0;
-        let top = my + if portrait { 40.0 } else { 16.0 };
+        let top = my + 16.0;
         k.text(Face::Pixel, 32.0, 32.0, x0, top, col::INK, t("Settings"));
-        let body = if portrait { my + 108.0 } else { my + 84.0 };
+        let body = my + 84.0;
         let bottom = my + mh - 16.0;
         let sections = self.settings_sections();
-        // The index (landscape): jump to a section.
-        let (cx, cw) = if portrait || w0 < 560.0 {
+        // The index (landscape): jump to a section. Its rows shrink to fit the
+        // height (full-screen landscape is short); a screen too short even for
+        // the smallest rows gets the single column instead.
+        let index_step = ((bottom - body + 2.0) / sections.len().max(1) as f32).min(46.0);
+        let (cx, cw) = if portrait || w0 < 560.0 || index_step < 34.0 {
             (x0, w0)
         } else {
             let selected = self
@@ -1788,7 +1885,7 @@ impl Launcher {
                 .rposition(|top| *top <= self.catalog.scroll + 8.0)
                 .unwrap_or(0);
             for (i, (icon, title, _)) in sections.iter().enumerate() {
-                let r = [x0, body + i as f32 * 46.0, 196.0, 44.0];
+                let r = [x0, body + i as f32 * index_step, 196.0, index_step - 2.0];
                 let action = Action::SettingsSection(i as u8);
                 let on = i == selected;
                 if on {
@@ -1799,20 +1896,21 @@ impl Launcher {
                 k.ui.icon(
                     icon,
                     x0 + 10.0,
-                    r[1] + 10.0,
+                    r[1] + (r[3] - 24.0) / 2.0,
                     24.0,
                     if on { col::ACCENT_HI } else { col::MUTED },
                 );
+                let lines = if k.measure(Face::BodySemiBold, 13.0, t(title)) > 142.0 {
+                    2.0
+                } else {
+                    1.0
+                };
                 k.paragraph(
                     Face::BodySemiBold,
                     13.0,
                     14.95,
                     x0 + 44.0,
-                    r[1] + if k.measure(Face::BodySemiBold, 13.0, t(title)) > 142.0 {
-                        7.0
-                    } else {
-                        14.5
-                    },
+                    r[1] + (r[3] - lines * 14.95) / 2.0,
                     142.0,
                     2,
                     if on { col::INK } else { col::MUTED },
@@ -1849,12 +1947,14 @@ impl Launcher {
                             _ => control_w,
                         };
                         let label_w = cw - 28.0 - if control > 0.0 { control + 16.0 } else { 0.0 };
-                        let title = k.wrap_max(Face::BodySemiBold, 14.0, &row.title, label_w, 2);
+                        // Titles and descriptions wrap in full: the row grows.
+                        let title =
+                            k.wrap_max(Face::BodySemiBold, 14.0, &row.title, label_w, usize::MAX);
                         let face = if row.mono { Face::Mono } else { Face::Body };
                         let description = if row.description.is_empty() {
                             Vec::new()
                         } else {
-                            k.wrap_max(face, 12.0, &row.description, label_w, 3)
+                            k.wrap_max(face, 12.0, &row.description, label_w, usize::MAX)
                         };
                         let text = title.len() as f32 * 17.0
                             + if description.is_empty() {
@@ -2015,10 +2115,15 @@ impl Launcher {
                 (s.height as f32 * p as f32 / 100.0).round()
             )
         });
+        let resolution_note = format!("{resolution}. {}", t("Lower is faster but blurrier."));
         let renderer_note = match c.renderer {
             crate::catalog::RendererMode::Vulkan => t("Recommended: fastest on most phones"),
-            crate::catalog::RendererMode::OpenGl => t("For old drivers; slower"),
-            _ => t("If plain Vulkan shows glitches or crashes"),
+            crate::catalog::RendererMode::OpenGl => {
+                t("For phones with old Vulkan drivers: slower, but works almost everywhere.")
+            }
+            _ => t(
+                "Vulkan with driver workarounds: pick it if regular Vulkan shows glitches or crashes.",
+            ),
         };
         let account = if let (Some(name), true) = (&self.login.profile, self.login.signed_in) {
             (
@@ -2046,9 +2151,9 @@ impl Launcher {
                         renderer_note,
                         Control::Dropdown(t_dyn(c.renderer.label()), Action::Renderer),
                     ),
-                    Row::mono(
+                    Row::new(
                         t("Resolution"),
-                        &resolution,
+                        &resolution_note,
                         Control::Dropdown(
                             if self.catalog.editing == Some("render_scale") {
                                 format!("{}…", self.catalog.render_scale_text)
@@ -2060,12 +2165,16 @@ impl Launcher {
                     ),
                     Row::new(
                         t("Aspect ratio"),
-                        "",
+                        t(
+                            "The shape of the game picture. A shape other than the screen's leaves black bars at the edges.",
+                        ),
                         Control::Dropdown(t_dyn(c.screen.aspect.label()), Action::Aspect),
                     ),
                     Row::new(
                         t("Refresh rate"),
-                        "",
+                        t(
+                            "How often the screen redraws. Higher is smoother but uses more battery.",
+                        ),
                         Control::Dropdown(t_dyn(&c.device.display_label()), Action::DisplayHz),
                     ),
                 ],
@@ -2076,7 +2185,9 @@ impl Launcher {
                 vec![
                     Row::new(
                         t("Thread limit"),
-                        t("Workers that build chunks"),
+                        t(
+                            "How many processor threads load and build the world around you. Fewer heat the phone less, but the world loads slower.",
+                        ),
                         Control::Dropdown(
                             if c.worker_limit == 0 {
                                 t("Auto").to_owned()
@@ -2088,7 +2199,9 @@ impl Launcher {
                     ),
                     Row::new(
                         t("RAM cache"),
-                        t("Buffers the game reuses"),
+                        t(
+                            "Memory where the game keeps sounds and chunk geometry to reuse. More means fewer stutters on phones with plenty of RAM.",
+                        ),
                         Control::Dropdown(
                             if c.cache_budget_mib == 0 {
                                 t("Default (80 MiB)").to_owned()
@@ -2100,12 +2213,16 @@ impl Launcher {
                     ),
                     Row::new(
                         t("Performance hints"),
-                        t("Android ADPF: steadier frame times"),
+                        t(
+                            "Tells Android how much processor power the game needs (ADPF), so frames come at a steadier pace.",
+                        ),
                         Control::Switch(c.device.performance_hints, Action::PerformanceHints),
                     ),
                     Row::new(
                         t("Download cache"),
-                        t("Installer files kept for a retry"),
+                        t(
+                            "Minecraft files left after installing, so an interrupted install can continue. Clearing frees space.",
+                        ),
                         Control::Button(
                             Style::Secondary,
                             "trash",
@@ -2120,7 +2237,9 @@ impl Launcher {
                 "Input",
                 vec![Row::new(
                     t("Controls"),
-                    t("Auto: touch until a keyboard or mouse connects"),
+                    t(
+                        "Auto uses touch controls and switches to a keyboard or mouse as soon as one is connected.",
+                    ),
                     Control::Segmented(vec![
                         (
                             t("Touch").to_owned(),
@@ -2141,22 +2260,42 @@ impl Launcher {
                 )],
             ),
             (
+                "home",
+                "Home screen",
+                vec![
+                    Row::new(
+                        t("Profile above Play"),
+                        t("Shows the profile picker above Play when the phone is held upright."),
+                        Control::Switch(!c.home_hide_profile, Action::HomeProfile),
+                    ),
+                    Row::new(
+                        t("Last world and quick join"),
+                        t(
+                            "Shows the last world and server quick join above Play when the phone is held upright.",
+                        ),
+                        Control::Switch(c.home_last_world, Action::HomeLastWorld),
+                    ),
+                ],
+            ),
+            (
                 "monitor",
                 "Display",
                 vec![
                     Row::new(
-                        t("Orientation"),
-                        "",
+                        t("Screen orientation"),
+                        t("The launcher and the game open in this orientation."),
                         Control::Dropdown(t_dyn(c.orientation.label()), Action::Orientation),
                     ),
                     Row::new(
-                        t("Full screen"),
-                        t("Hide the status and navigation bars"),
+                        t("Full screen in the game"),
+                        t("Hides Android's status bar and navigation buttons while you play."),
                         Control::Switch(c.screen.immersive, Action::Immersive),
                     ),
                     Row::new(
                         t("Avoid the camera cutout"),
-                        t("Keep the picture clear of the camera"),
+                        t(
+                            "Keeps the game picture out of the camera cutout, so nothing hides behind it.",
+                        ),
                         Control::Switch(c.screen.avoid_cutout, Action::Cutout),
                     ),
                 ],
@@ -2181,7 +2320,7 @@ impl Launcher {
                     ),
                     Row::new(
                         t("Profile"),
-                        t("Separate worlds and settings"),
+                        t("Each profile keeps its own worlds and settings."),
                         Control::Dropdown(self.profile_name(), Action::Profile),
                     ),
                 ],
@@ -2192,12 +2331,12 @@ impl Launcher {
                 vec![
                     Row::new(
                         t("Launch log"),
-                        t("Errors from the last starts"),
+                        t("Shows the errors from the last game launches."),
                         Control::Button(Style::Secondary, "terminal", t("Open"), Action::Logs),
                     ),
                     Row::new(
                         t("Report for developers"),
-                        t("One ZIP to attach to a bug report"),
+                        t("Saves logs and device details into one ZIP to attach to a bug report."),
                         Control::Button(
                             Style::Secondary,
                             "archive",
@@ -2207,17 +2346,23 @@ impl Launcher {
                     ),
                     Row::new(
                         t("Record performance"),
-                        t("Up to 30 min, for slow-game reports"),
+                        t(
+                            "Records frame times for up to 30 minutes, to show developers where the game slows down.",
+                        ),
                         Control::Switch(c.record_performance, Action::RecordPerformance),
                     ),
                     Row::new(
                         t("GPU profiling"),
-                        t("Adds GPU timings to the recording"),
+                        t(
+                            "Adds to the recording how long the GPU spends on each stage. May cost a little FPS.",
+                        ),
                         Control::Switch(c.device.gpu_profile, Action::GpuProfile),
                     ),
                     Row::new(
                         t("Raw performance data"),
-                        t("JSONL for analysis"),
+                        t(
+                            "Exports the recorded measurements as JSONL files for your own analysis.",
+                        ),
                         Control::Button(
                             Style::Secondary,
                             "download",
@@ -2227,7 +2372,7 @@ impl Launcher {
                     ),
                     Row::new(
                         t("Game files"),
-                        t("Worlds, mods, packs and reports in Files"),
+                        t("Opens the game folder (worlds, mods, packs, reports) in the Files app."),
                         Control::Button(Style::Secondary, "folder", t("Open"), Action::GameFiles),
                     ),
                     Row::mono(

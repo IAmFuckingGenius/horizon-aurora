@@ -237,12 +237,6 @@ pub fn flush() {
     }
     let _ = rx.recv_timeout(Duration::from_millis(500));
 }
-pub fn previous_unclean(home: &Path) -> bool {
-    fs::read(home.join("performance/previous-session.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .is_some_and(|v| v["clean_exit"] != true)
-}
 pub fn summary(home: &Path) -> String {
     let previous = fs::read(home.join("performance/previous-session.json"))
         .ok()
@@ -461,7 +455,6 @@ mod tests {
             r#"{"phase":"game_loading","clean_exit":false}"#,
         )
         .unwrap();
-        assert!(previous_unclean(&home));
         assert!(summary(&home).contains("game_loading"));
         let file = export(&home).unwrap();
         let mut zip = zip::ZipArchive::new(File::open(file).unwrap()).unwrap();

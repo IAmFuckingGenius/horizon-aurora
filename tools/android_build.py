@@ -206,6 +206,11 @@ def main():
         gradle = candidates[0]
     environment['ANDROID_HOME'] = str(args.sdk)
     variant = 'release' if args.release_candidate else 'debug'
+    # Incremental packaging rewrites the previous APK in place and leaves the old
+    # native library's bytes behind as an unused hole (tens of megabytes after a few
+    # builds): start from no APK so each one holds only what it lists.
+    shutil.rmtree(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}', ignore_errors=True)
+    shutil.rmtree(ROOT / f'.local/android/gradle-build/intermediates/incremental/package{variant.title()}', ignore_errors=True)
     run([gradle, '--no-daemon', '-p', ROOT / 'packaging/android', '-Pabi=' + args.abi, '-PminSdk=' + str(min_sdk), 'assemble' + variant.title()], cwd=ROOT, env=environment)
     apk = output / ('horizon-android-public.apk' if args.public else 'horizon-android-release.apk' if args.release_candidate else 'horizon-android.apk')
     shutil.copyfile(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}/HorizonAndroid-{variant}.apk', apk)

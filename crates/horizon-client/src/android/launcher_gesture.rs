@@ -15,7 +15,17 @@ pub(super) struct Drag {
     origin: [f64; 2],
     previous_y: f64,
     pub(super) moved: bool,
+    /// Scroll speed in dp per second, smoothed over the last moves.
+    velocity: f32,
+    last: std::time::Instant,
 }
+
+/// Below this release speed (dp/s) a list stops with the finger.
+const FLING_MIN: f32 = 120.0;
+/// How fast a fling slows: velocity × e^(−FRICTION·t).
+const FRICTION: f32 = 3.5;
+/// A fling ends below this speed.
+const FLING_STOP: f32 = 15.0;
 
 impl Drag {
     pub(super) fn new(x: f64, y: f64) -> Self {
@@ -23,7 +33,17 @@ impl Drag {
             origin: [x, y],
             previous_y: y,
             moved: false,
+            velocity: 0.0,
+            last: std::time::Instant::now(),
         }
+    }
+    /// The speed a list keeps after the finger lifts: none when the finger rested
+    /// before lifting or moved too slowly.
+    pub(super) fn release_velocity(&self) -> Option<f32> {
+        (self.moved
+            && self.last.elapsed() < std::time::Duration::from_millis(80)
+            && self.velocity.abs() >= FLING_MIN)
+            .then_some(self.velocity)
     }
 
     pub(super) fn origin_y(&self) -> f64 {
@@ -38,8 +58,46 @@ impl Drag {
         } else {
             0.0
         };
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last).as_secs_f32();
+        if self.moved && dt > 0.0 {
+            // Smoothed so one jittery event does not decide the throw.
+            let speed = delta / dt.max(0.004);
+            self.velocity = if dt > 0.1 {
+                speed
+            } else {
+                self.velocity * 0.4 + speed * 0.6
+            };
+        }
+        self.last = now;
         self.previous_y = y;
         delta
+    }
+}
+
+/// A list still sliding after the finger lifted.
+pub(super) struct Fling {
+    pub(super) velocity: f32,
+    last: std::time::Instant,
+    /// The open chooser's options rather than the page's list.
+    pub(super) chooser: bool,
+}
+impl Fling {
+    pub(super) fn new(velocity: f32, chooser: bool) -> Self {
+        Self {
+            velocity,
+            last: std::time::Instant::now(),
+            chooser,
+        }
+    }
+    /// The distance to scroll since the last step, or `None` once it has stopped.
+    pub(super) fn step(&mut self) -> Option<f32> {
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last).as_secs_f32().min(0.05);
+        self.last = now;
+        let distance = self.velocity * dt;
+        self.velocity *= (-FRICTION * dt).exp();
+        (self.velocity.abs() >= FLING_STOP).then_some(distance)
     }
 }
 
@@ -77,6 +135,23 @@ mod tests {
         assert!(drag.moved);
         assert_eq!(drag.origin_y(), 300.0);
         assert_eq!(drag.update(100.0, 290.0, 1.0), -5.0);
+    }
+
+    #[test]
+    fn a_fling_slows_down_and_stops() {
+        let mut fling = Fling::new(1000.0, false);
+        let mut travelled = 0.0;
+        let mut steps = 0;
+        while let Some(d) = {
+            fling.last -= std::time::Duration::from_millis(16);
+            fling.step()
+        } {
+            travelled += d;
+            steps += 1;
+            assert!(steps < 1000);
+        }
+        // ≈ v / friction for an exponential decay.
+        assert!((200.0..320.0).contains(&travelled), "{travelled}");
     }
 
     #[test]

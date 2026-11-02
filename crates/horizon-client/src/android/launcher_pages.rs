@@ -75,6 +75,10 @@ pub(super) enum Action {
     ClearSearch,
     /// Scroll Settings to this section.
     SettingsSection(u8),
+    /// Portrait Home: the last-world card on or off.
+    HomeLastWorld,
+    /// Portrait Home: the profile picker on or off.
+    HomeProfile,
 }
 
 impl Launcher {
@@ -136,6 +140,21 @@ impl Launcher {
         true
     }
 
+    /// One frame of the page colour alone, presented before the screen turns.
+    pub(super) fn draw_blank(&mut self) {
+        let (Some(r), Some(gui)) = (&mut self.renderer, &self.gui) else {
+            return;
+        };
+        if r.suspended {
+            return;
+        }
+        let mut b = HudBatch::new([r.config.width, r.config.height]);
+        let (w, h) = (b.width, b.height);
+        b.fill(&gui.atlas, 0.0, 0.0, w, h, super::kit::col::PAGE);
+        if let Err(error) = r.render(&game::loading_frame(&b)) {
+            log::warn!("Launcher transition frame: {error}");
+        }
+    }
     /// Physical pixels per dp: Android's `DisplayMetrics.density`.
     pub(super) fn density(&self) -> f32 {
         self.window
@@ -581,6 +600,14 @@ impl Launcher {
                     false,
                 );
             }
+            Some(Action::HomeLastWorld) => {
+                self.catalog.config.home_last_world ^= true;
+                self.catalog.config.save(&self.home)?;
+            }
+            Some(Action::HomeProfile) => {
+                self.catalog.config.home_hide_profile ^= true;
+                self.catalog.config.save(&self.home)?;
+            }
             Some(Action::SettingsSection(index)) => {
                 if let Some(top) = self.view.settings_tops.get(usize::from(index)) {
                     self.catalog.scroll = *top;
@@ -636,6 +663,7 @@ impl Launcher {
                 self.catalog.config.orientation = mode;
                 self.catalog.config.save(&self.home)?;
                 self.chooser = None;
+                // The launcher turns now; the game starts the same way.
                 crate::platform::set_orientation(mode);
             }
             Some(Action::ChooseRenderer(mode)) => {
@@ -728,6 +756,8 @@ impl Launcher {
         self.cursor = (t.location.x, t.location.y);
         match t.phase {
             TouchPhase::Started => {
+                // A touch catches a sliding list.
+                self.fling = None;
                 self.drag = Some(super::gesture::Drag::new(t.location.x, t.location.y));
             }
             TouchPhase::Moved => {
@@ -747,8 +777,18 @@ impl Launcher {
                 }
             }
             TouchPhase::Ended => {
-                if self.drag.take().is_some_and(|drag| !drag.moved) {
-                    self.activate(events)?;
+                if let Some(drag) = self.drag.take() {
+                    if !drag.moved {
+                        self.activate(events)?;
+                    } else if let Some(velocity) = drag.release_velocity() {
+                        let chooser = self.chooser.is_some();
+                        let list = self.list_view.is_some_and(|view| {
+                            drag.origin_y() / f64::from(self.ui_density()) >= f64::from(view[0])
+                        });
+                        if chooser || list {
+                            self.fling = Some(super::gesture::Fling::new(velocity, chooser));
+                        }
+                    }
                 }
             }
             TouchPhase::Cancelled => {
