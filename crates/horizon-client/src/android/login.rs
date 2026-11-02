@@ -1,7 +1,11 @@
 //! Native account panel; authentication is shared with the desktop launcher.
-use super::pages::{Action, button};
+use super::{
+    kit::{self, Icon, Kit, Style, col},
+    pages::Action,
+    text::t,
+};
 use crate::account::{self, Account, Accounts, Secrets, SignIn, SignInState};
-use horizon_client::ui_theme::{Face, Ui, color};
+use horizon_client::ui_theme::Face;
 
 pub(super) struct Login {
     pub visible: bool,
@@ -37,16 +41,6 @@ impl Login {
                 .is_some_and(|s| serde_json::from_str::<Secrets>(&s).is_ok())
         });
     }
-    pub fn status(&self, offline_name: &str) -> String {
-        match (&self.profile, self.signed_in) {
-            (Some(name), true) => format!("Signed in: {name}"),
-            (Some(name), false) => format!("Sign in required: {name}"),
-            _ if self.pending() => "Signing in...".into(),
-            _ if !offline_name.trim().is_empty() => format!("Offline: {offline_name}"),
-            _ => "Offline / Sign in".into(),
-        }
-    }
-
     pub fn pending(&self) -> bool {
         self.task.is_some()
     }
@@ -163,236 +157,346 @@ impl Login {
         accounts.save()?;
         Ok(Some((a, secrets)))
     }
-    pub fn draw(
-        &self,
-        ui: &mut Ui,
-        targets: &mut Vec<([f32; 4], Action)>,
-        offline_name: &str,
-        editing_name: bool,
-    ) {
-        targets.clear();
-        let w = (ui.w - 32.0).min(720.0);
-        let h = (ui.h - 24.0).min(550.0);
-        let x = (ui.w - w) / 2.0;
-        let y = (ui.h - h) / 2.0;
-        ui.rounded(x, y, w, h, 8.0, color::BG);
-        if editing_name {
-            ui.text(
-                Face::Medium,
+    /// The account sheet: Microsoft sign-in on the left, offline play on the right
+    /// (stacked on narrow screens), over a scrim.
+    pub fn draw(&self, k: &mut Kit, offline_name: &str, editing_name: bool) {
+        let (w, h) = (k.ui.w, k.ui.h);
+        kit::fill(k.ui, 0.0, 0.0, w, h, col::SCRIM);
+        let sw = w.min(640.0);
+        let two = sw >= 560.0;
+        let sh = (if two { 336.0 } else { 520.0f32 }).min(h - 12.0);
+        let (x, y) = ((w - sw) / 2.0, h - sh);
+        k.panel([x, y, sw, sh + 8.0], false);
+        kit::fill(
+            k.ui,
+            x + (sw - 40.0) / 2.0,
+            y + 18.0,
+            40.0,
+            4.0,
+            col::CONTROL_RING,
+        );
+        k.text(
+            Face::BodyBold,
+            20.0,
+            24.0,
+            x + 16.0,
+            y + 40.0,
+            col::INK,
+            t("Account"),
+        );
+        k.button(
+            [x + sw - 16.0 - 48.0, y + 28.0, 48.0, 48.0],
+            Style::Ghost,
+            Some(Icon::Pixel("close")),
+            "",
+            Some(Action::CloseLogin),
+        );
+        let column = if two {
+            (sw - 32.0 - 24.0) / 2.0
+        } else {
+            sw - 32.0
+        };
+        let (lx, ly) = (x + 16.0, y + 80.0);
+        // Left: Microsoft.
+        k.text(
+            Face::BodyBold,
+            16.0,
+            19.0,
+            lx,
+            ly,
+            col::INK,
+            t("Sign in with Microsoft"),
+        );
+        let mut cy = ly + 27.0;
+        let code = match &self.state {
+            Some(SignInState::Code(code)) => Some(code.user_code.clone()),
+            _ => None,
+        };
+        if self.signed_in {
+            let name = self.profile.clone().unwrap_or_default();
+            cy += k.paragraph(
+                Face::BodyMedium,
+                13.0,
+                18.85,
+                lx,
+                cy,
+                column,
+                3,
+                col::INK_SOFT,
+                &super::text::tf("Signed in as {}. The session renews by itself.", &[&name]),
+            ) + 8.0;
+            let switch_w = k.button_width(
+                Style::Secondary,
+                Some(Icon::Pixel("user")),
+                t("Switch account"),
+            );
+            k.button(
+                [lx, cy, switch_w.min(column), 48.0],
+                Style::Secondary,
+                Some(Icon::Pixel("user")),
+                t("Switch account"),
+                Some(Action::SignIn),
+            );
+            cy += 56.0;
+            let out_w = k.button_width(Style::Danger, None, t("Sign out"));
+            k.button(
+                [lx, cy, out_w, 48.0],
+                Style::Danger,
+                None,
+                t("Sign out"),
+                Some(Action::SignOut),
+            );
+            cy += 56.0;
+        } else if let Some(code) = code {
+            cy += k.paragraph(
+                Face::BodyMedium,
+                13.0,
+                18.85,
+                lx,
+                cy,
+                column,
+                3,
+                col::INK_SOFT,
+                t("Needed for servers that check the licence. On another device open microsoft.com/link and enter the code:"),
+            ) + 8.0;
+            let copy_w = k.button_width(Style::Secondary, Some(Icon::Sprite(kit::COPY)), t("Copy"));
+            let box_w = column - copy_w - 8.0;
+            kit::fill(k.ui, lx, cy, box_w, 48.0, col::SIDE);
+            kit::frame(k.ui, [lx, cy, box_w, 48.0], col::PLATE_RING);
+            let cw = k.measure(Face::Mono, 18.0, &code);
+            k.text(
+                Face::Mono,
+                18.0,
                 24.0,
-                x + 20.0,
-                y + 20.0,
-                color::TEXT,
-                "Offline player name",
+                lx + (box_w - cw) / 2.0,
+                cy + 12.0,
+                col::INK,
+                &code,
             );
-            ui.text(
-                Face::Regular,
+            k.button(
+                [lx + box_w + 8.0, cy, copy_w, 48.0],
+                Style::Secondary,
+                Some(Icon::Sprite(kit::COPY)),
+                t("Copy"),
+                Some(Action::CopyLoginCode),
+            );
+            cy += 56.0;
+            microsoft(
+                k,
+                [lx, cy, column, 48.0],
+                t("Open the link"),
+                Action::LoginLink,
+            );
+            cy += 56.0;
+            spinner(k, lx, cy + 3.0);
+            k.text_fit(
+                Face::BodyMedium,
+                13.0,
+                18.85,
+                lx + 20.0,
+                cy,
+                column - 20.0,
+                col::MUTED,
+                t("Waiting for confirmation…"),
+            );
+            cy += 24.0;
+        } else if self.pending() {
+            spinner(k, lx, cy + 3.0);
+            k.text_fit(
+                Face::BodyMedium,
+                13.0,
+                18.85,
+                lx + 20.0,
+                cy,
+                column - 20.0,
+                col::MUTED,
+                t("Requesting a sign-in code…"),
+            );
+            cy += 28.0;
+        } else {
+            cy += k.paragraph(
+                Face::BodyMedium,
+                13.0,
+                18.85,
+                lx,
+                cy,
+                column,
+                3,
+                col::INK_SOFT,
+                t("Needed for servers that check the licence. You type your password on Microsoft's own page."),
+            ) + 8.0;
+            microsoft(
+                k,
+                [lx, cy, column, 48.0],
+                t("Sign in with the browser"),
+                Action::SignIn,
+            );
+            cy += 52.0;
+            k.button(
+                [lx, cy, column, 48.0],
+                Style::Ghost,
+                None,
+                t("Use a code on another device"),
+                Some(Action::DeviceSignIn),
+            );
+            cy += 52.0;
+        }
+        if self.pending() {
+            k.button(
+                [lx, cy, column, 48.0],
+                Style::Ghost,
+                None,
+                t("Cancel sign-in"),
+                Some(Action::CancelLogin),
+            );
+            cy += 52.0;
+        }
+        if self.message.contains("not approved by Mojang") {
+            k.button(
+                [lx, cy, column, 48.0],
+                Style::Ghost,
+                None,
+                t("Request Minecraft API approval"),
+                Some(Action::ReviewApp),
+            );
+            cy += 52.0;
+        }
+        if !self.message.is_empty() && cy < y + sh - 20.0 {
+            let lines = ((y + sh - 8.0 - cy) / 16.0).max(1.0) as usize;
+            cy += k.paragraph(
+                Face::Body,
+                12.0,
                 16.0,
-                x + 20.0,
-                y + 66.0,
-                color::MUTED,
-                "Used when signed out of Microsoft.",
+                lx,
+                cy,
+                column,
+                lines.min(4),
+                col::MUTED,
+                &self.message,
             );
-            button(
-                ui,
-                targets,
-                [x + 20.0, y + 100.0, w - 40.0, 44.0],
-                offline_name,
-                Action::Field("name"),
-                false,
-            );
-            button(
-                ui,
-                targets,
-                [x + 20.0, y + h - 56.0, w - 40.0, 36.0],
-                "Done",
-                Action::FinishNameEdit,
-                true,
-            );
+        }
+        // Right: offline play.
+        let (rx, ry) = if two {
+            (lx + column + 24.0, ly)
+        } else {
+            (lx, cy + 14.0)
+        };
+        if ry + 120.0 > y + sh {
             return;
         }
+        k.text(
+            Face::BodyBold,
+            16.0,
+            19.0,
+            rx,
+            ry,
+            col::INK,
+            t("Without signing in"),
+        );
+        let mut oy = ry + 27.0;
+        oy += k.paragraph(
+            Face::BodyMedium,
+            13.0,
+            18.85,
+            rx,
+            oy,
+            column,
+            2,
+            col::INK_SOFT,
+            t("Singleplayer worlds and servers without licence checks."),
+        ) + 8.0;
+        k.text(
+            Face::Body,
+            12.0,
+            17.4,
+            rx,
+            oy,
+            col::MUTED,
+            t("In-game name"),
+        );
+        oy += 22.0;
+        let caret = k.field(
+            [rx, oy, column, 48.0],
+            None,
+            offline_name,
+            t("Name"),
+            Action::Field("name"),
+            editing_name,
+        );
+        let blink = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .is_ok_and(|t| t.as_millis() % 1000 < 500);
+        if editing_name && blink {
+            kit::fill(k.ui, caret + 1.0, oy + 14.0, 2.0, 20.0, col::INK);
+        }
+        oy += 56.0;
+        if editing_name {
+            let save_w =
+                k.button_width(Style::Secondary, Some(Icon::Pixel("check")), t("Save name"));
+            k.button(
+                [rx, oy, save_w, 48.0],
+                Style::Secondary,
+                Some(Icon::Pixel("check")),
+                t("Save name"),
+                Some(Action::FinishNameEdit),
+            );
+        }
+    }
+}
 
-        ui.text(
-            Face::Medium,
-            24.0,
-            x + 20.0,
-            y + 18.0,
-            color::TEXT,
-            "Accounts",
-        );
-        ui.text(
-            Face::Medium,
-            18.0,
-            x + 20.0,
-            y + 58.0,
-            if self.signed_in {
-                color::ACCENT
-            } else {
-                color::MUTED
-            },
-            &self.status(offline_name),
-        );
-        if let Some(SignInState::Code(code)) = &self.state {
-            button(
-                ui,
-                targets,
-                [x + 20.0, y + 96.0, w - 40.0, 48.0],
-                &format!("{}    /    Copy code", code.user_code),
-                Action::CopyLoginCode,
-                false,
-            );
-        } else {
-            ui.text(
-                Face::Regular,
-                16.0,
-                x + 20.0,
-                y + 104.0,
-                color::TEXT,
-                if self.signed_in {
-                    "Account saved securely. Sessions renew automatically."
-                } else {
-                    "Your password is entered in Microsoft's browser."
-                },
-            );
-        }
-        let text = match &self.state {
-            Some(SignInState::Starting) => "Requesting a sign-in code...",
-            _ => &self.message,
-        };
-        let limit = ((w - 40.0) / 7.5).max(20.0) as usize;
-        let mut line = String::new();
-        let mut row = 0;
-        for word in text.split_whitespace() {
-            if line.len() + word.len() + 1 > limit {
-                ui.text(
-                    Face::Regular,
-                    14.0,
-                    x + 20.0,
-                    y + 166.0 + row as f32 * 20.0,
-                    color::TEXT,
-                    &line,
-                );
-                row += 1;
-                line.clear();
-                if row >= 5 {
-                    break;
-                }
-            }
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str(word);
-        }
-        if row < 5 {
-            ui.text(
-                Face::Regular,
-                14.0,
-                x + 20.0,
-                y + 166.0 + row as f32 * 20.0,
-                color::TEXT,
-                &line,
-            );
-        }
-        if !self.pending() {
-            ui.text(
-                Face::Regular,
-                14.0,
-                x + 20.0,
-                y + h - 247.0,
-                color::MUTED,
-                "Offline player name",
-            );
-            button(
-                ui,
-                targets,
-                [x + 20.0, y + h - 226.0, w - 40.0, 38.0],
-                if offline_name.is_empty() {
-                    "Enter an offline name"
-                } else {
-                    offline_name
-                },
-                Action::Field("name"),
-                false,
-            );
-        }
-        let half = (w - 52.0) / 2.0;
-        if self.message.contains("not approved by Mojang") {
-            button(
-                ui,
-                targets,
-                [x + 20.0, y + h - 183.0, w - 40.0, 30.0],
-                "Request Minecraft API approval",
-                Action::ReviewApp,
-                false,
-            );
-        }
-        let (label, action) = if matches!(self.state, Some(SignInState::Code(_))) {
-            ("Copy code and open browser", Action::LoginLink)
-        } else if self.pending() {
-            ("Restart browser sign-in", Action::SignIn)
-        } else {
-            (
-                if self.signed_in {
-                    "Switch Microsoft account"
-                } else {
-                    "Sign in with browser"
-                },
-                Action::SignIn,
-            )
-        };
-        button(
-            ui,
-            targets,
-            [x + 20.0, y + h - 148.0, w - 40.0, 42.0],
-            label,
-            action,
-            true,
-        );
-        button(
-            ui,
-            targets,
-            [x + 20.0, y + h - 98.0, half, 38.0],
-            "Use a device code instead",
-            Action::DeviceSignIn,
-            false,
-        );
-        button(
-            ui,
-            targets,
-            [x + 32.0 + half, y + h - 98.0, half, 38.0],
-            if self.pending() {
-                "Cancel sign-in"
-            } else {
-                if self.profile.is_some() {
-                    "Sign out"
-                } else {
-                    "Close"
-                }
-            },
-            if self.pending() {
-                Action::CancelLogin
-            } else {
-                if self.profile.is_some() {
-                    Action::SignOut
-                } else {
-                    Action::CloseLogin
-                }
-            },
-            false,
-        );
-        button(
-            ui,
-            targets,
-            [x + 20.0, y + h - 52.0, w - 40.0, 36.0],
-            if self.pending() {
-                "Back (sign-in continues)"
-            } else {
-                "Done"
-            },
-            Action::CloseLogin,
-            false,
+/// Microsoft's sign-in button: its four-square logo on dark grey.
+fn microsoft(k: &mut Kit, r: [f32; 4], label: &str, action: Action) {
+    use horizon_client::ui_theme::color::hex;
+    let [x, y, w, h] = r;
+    let pressed = k.pressed(r, Some(action));
+    kit::fill(
+        k.ui,
+        x,
+        y,
+        w,
+        h,
+        hex(if pressed { 0x3d3d3d } else { 0x2f2f2f }, 255),
+    );
+    let lw = k.measure(Face::SemiBold, 15.0, label);
+    let cx = x + (w - 20.0 - 12.0 - lw) / 2.0;
+    for (dx, dy, rgb) in [
+        (0.0, 0.0, 0xf25022),
+        (11.0, 0.0, 0x7fba00),
+        (0.0, 11.0, 0x00a4ef),
+        (11.0, 11.0, 0xffb900),
+    ] {
+        kit::fill(
+            k.ui,
+            cx + dx,
+            y + (h - 20.0) / 2.0 + dy,
+            9.0,
+            9.0,
+            hex(rgb, 255),
         );
     }
+    k.text(
+        Face::SemiBold,
+        15.0,
+        18.0,
+        cx + 32.0,
+        y + (h - 18.0) / 2.0,
+        hex(0xffffff, 255),
+        label,
+    );
+    k.hit(r, action);
+}
+
+/// Two squares turning a quarter every 250 ms.
+fn spinner(k: &mut Kit, x: f32, y: f32) {
+    let step = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |t| t.as_millis() / 250)
+        % 4) as usize;
+    let spots = [(0.0, 0.0), (6.0, 0.0), (6.0, 6.0), (0.0, 6.0)];
+    let (ax, ay) = spots[step];
+    let (bx, by) = spots[(step + 2) % 4];
+    kit::fill(k.ui, x + ax, y + ay, 6.0, 6.0, col::ACCENT_HI);
+    kit::fill(k.ui, x + bx, y + by, 6.0, 6.0, col::CONTROL_RING);
 }
 impl Drop for Login {
     fn drop(&mut self) {

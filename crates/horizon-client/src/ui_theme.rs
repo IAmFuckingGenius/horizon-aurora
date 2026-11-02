@@ -86,9 +86,19 @@ pub enum Face {
     SemiBold,
     /// Counts, timestamps and the boot screen's console lines.
     Mono,
+    /// The Android launcher's pixel text (GNU Unifont): Latin and Cyrillic, drawn at
+    /// whole multiples of its 16 px grid so every texel stays square.
+    Pixel,
+    /// The Android launcher's Latin wordmark (Pixelify Sans Bold).
+    PixelDisplay,
+    /// The Android launcher's body text (Bricolage Grotesque).
+    Body,
+    BodyMedium,
+    BodySemiBold,
+    BodyBold,
 }
 struct Fonts {
-    faces: [FontRef<'static>; 4],
+    faces: [FontRef<'static>; 10],
 }
 impl Fonts {
     fn load() -> Self {
@@ -99,6 +109,12 @@ impl Fonts {
                 f(horizon_theme::fonts::GEIST_MEDIUM),
                 f(horizon_theme::fonts::GEIST_SEMIBOLD),
                 f(horizon_theme::fonts::GEIST_MONO),
+                f(horizon_theme::fonts::UNIFONT),
+                f(horizon_theme::fonts::PIXEL_BOLD),
+                f(horizon_theme::fonts::BRICOLAGE_REGULAR),
+                f(horizon_theme::fonts::BRICOLAGE_MEDIUM),
+                f(horizon_theme::fonts::BRICOLAGE_SEMIBOLD),
+                f(horizon_theme::fonts::BRICOLAGE_BOLD),
             ],
         }
     }
@@ -117,6 +133,131 @@ enum Key {
     Glyph(Face, u16, u16),
     /// A quarter disc (`false`) or a 1px quarter ring of this radius in pixels.
     Corner(u16, bool),
+    /// A Pixelarticons icon (index in `horizon_theme::icons::ALL`) at this many
+    /// pixels per grid unit.
+    Icon(u16, u16),
+}
+
+/// A 24-unit pixel icon's filled cells, from its SVG paths. Pixelarticons only use
+/// axis-aligned `M m H h V v Z z` paths; nonzero winding at each cell's centre.
+pub fn icon_mask(svg: &[u8]) -> Option<[[bool; 24]; 24]> {
+    let svg = std::str::from_utf8(svg).ok()?;
+    let mut edges: Vec<([f32; 2], [f32; 2])> = Vec::new();
+    for part in svg.split(" d=\"").skip(1) {
+        let d = part.split('"').next()?;
+        let (mut pen, mut start) = ([0.0f32; 2], [0.0f32; 2]);
+        let mut command = 'M';
+        let mut numbers = Vec::new();
+        let mut flush =
+            |command: char, numbers: &mut Vec<f32>, pen: &mut [f32; 2], start: &mut [f32; 2]| {
+                let relative = command.is_ascii_lowercase();
+                let mut i = 0;
+                while i < numbers.len() || (numbers.is_empty() && i == 0) {
+                    match command.to_ascii_uppercase() {
+                        'M' if i + 1 < numbers.len() => {
+                            let to = if relative {
+                                [pen[0] + numbers[i], pen[1] + numbers[i + 1]]
+                            } else {
+                                [numbers[i], numbers[i + 1]]
+                            };
+                            // Further pairs after a move are line-tos.
+                            if i > 0 {
+                                edges.push((*pen, to));
+                            } else {
+                                *start = to;
+                            }
+                            *pen = to;
+                            i += 2;
+                        }
+                        'L' if i + 1 < numbers.len() => {
+                            let to = if relative {
+                                [pen[0] + numbers[i], pen[1] + numbers[i + 1]]
+                            } else {
+                                [numbers[i], numbers[i + 1]]
+                            };
+                            edges.push((*pen, to));
+                            *pen = to;
+                            i += 2;
+                        }
+                        'H' if i < numbers.len() => {
+                            let to = [
+                                if relative {
+                                    pen[0] + numbers[i]
+                                } else {
+                                    numbers[i]
+                                },
+                                pen[1],
+                            ];
+                            edges.push((*pen, to));
+                            *pen = to;
+                            i += 1;
+                        }
+                        'V' if i < numbers.len() => {
+                            let to = [
+                                pen[0],
+                                if relative {
+                                    pen[1] + numbers[i]
+                                } else {
+                                    numbers[i]
+                                },
+                            ];
+                            edges.push((*pen, to));
+                            *pen = to;
+                            i += 1;
+                        }
+                        'Z' => {
+                            edges.push((*pen, *start));
+                            *pen = *start;
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+                numbers.clear();
+            };
+        let mut token = String::new();
+        for ch in d.chars().chain(std::iter::once(' ')) {
+            if ch.is_ascii_digit() || ch == '.' || (ch == '-' && token.is_empty()) {
+                token.push(ch);
+                continue;
+            }
+            if !token.is_empty() {
+                numbers.push(token.parse().ok()?);
+                token.clear();
+            }
+            if ch == '-' {
+                token.push(ch);
+            } else if ch.is_ascii_alphabetic() {
+                flush(command, &mut numbers, &mut pen, &mut start);
+                command = ch;
+            }
+        }
+        flush(command, &mut numbers, &mut pen, &mut start);
+    }
+    let mut mask = [[false; 24]; 24];
+    let mut any = false;
+    for (y, row) in mask.iter_mut().enumerate() {
+        for (x, cell) in row.iter_mut().enumerate() {
+            let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+            // Winding of a ray to +x: vertical edges to the right that span cy.
+            let winding: i32 = edges
+                .iter()
+                .filter(|(a, b)| a[0] == b[0] && a[0] > cx)
+                .map(|(a, b)| {
+                    if a[1] <= cy && b[1] > cy {
+                        1
+                    } else if b[1] <= cy && a[1] > cy {
+                        -1
+                    } else {
+                        0
+                    }
+                })
+                .sum();
+            *cell = winding != 0;
+            any |= *cell;
+        }
+    }
+    any.then_some(mask)
 }
 #[derive(Clone, Copy)]
 struct Cached {
@@ -248,6 +389,35 @@ impl Cache {
         }
         made
     }
+    fn icon(&mut self, atlas: &HudAtlas, index: usize, unit: u16) -> Option<Rect> {
+        let key = Key::Icon(index as u16, unit);
+        if let Some(c) = self.entries.get(&key) {
+            return c.rect;
+        }
+        let mask = icon_mask(horizon_theme::icons::ALL.get(index)?.1)?;
+        let u = u32::from(unit.max(1));
+        let n = 24 * u;
+        let mut alpha = vec![0.0; (n * n) as usize];
+        for y in 0..n {
+            for x in 0..n {
+                if mask[(y / u) as usize][(x / u) as usize] {
+                    alpha[(y * n + x) as usize] = 1.0;
+                }
+            }
+        }
+        let rect = self.upload(atlas, n, n, &alpha);
+        if rect.is_some() {
+            self.entries.insert(
+                key,
+                Cached {
+                    rect,
+                    left: 0.0,
+                    top: 0.0,
+                },
+            );
+        }
+        rect
+    }
     fn corner(&mut self, atlas: &HudAtlas, r: u16, ring: bool) -> Option<Rect> {
         let key = Key::Corner(r, ring);
         if let Some(c) = self.entries.get(&key) {
@@ -344,11 +514,44 @@ impl<'a> Ui<'a> {
         ui
     }
 
+    /// The em size in physical pixels for `size` dp: Unifont snaps to its 16 px grid
+    /// (never below one grid), everything else to quarter pixels.
+    pub fn font_px(&self, face: Face, size: f32) -> f32 {
+        let px = size * self.density;
+        if face == Face::Pixel {
+            (px / 16.0).round().max(1.0) * 16.0
+        } else {
+            (px * 4.0).round() / 4.0
+        }
+    }
+    /// The Android launcher at the display's own density (`DisplayMetrics.density`,
+    /// winit's scale factor), so a dp is the platform's dp: 48 dp touch targets
+    /// are the size Android recommends. Very small screens shrink to keep a usable
+    /// 320 × 240 dp canvas.
+    pub fn launcher(
+        atlas: &'a HudAtlas,
+        batch: &'a mut HudBatch,
+        cursor: (f32, f32),
+        density: f32,
+    ) -> Self {
+        let mut ui = Self::new(atlas, batch, cursor);
+        let pw = ui.batch.width * ui.scale;
+        let ph = ui.batch.height * ui.scale;
+        let fit = (pw.min(ph) / 240.0).min(pw.max(ph) / 320.0);
+        ui.density = density.clamp(0.75, 6.0).min(fit.max(0.5));
+        ui.w = pw / ui.density;
+        ui.h = ph / ui.density;
+        ui.cursor = (
+            cursor.0 * ui.scale / ui.density,
+            cursor.1 * ui.scale / ui.density,
+        );
+        ui
+    }
     pub fn fit_text(&self, face: Face, size: f32, text: &str, width: f32) -> String {
         if self.measure(face, size, text) <= width {
             return text.to_owned();
         }
-        let px = (size * self.density * 4.0).round() / 4.0;
+        let px = self.font_px(face, size);
         with_cache(self.atlas, |cache| {
             let font = cache.fonts.face(face);
             let scaled = font.as_scaled(cache.fonts.scale(face, px));
@@ -463,10 +666,35 @@ impl<'a> Ui<'a> {
         self.corners(x0, y0, x1, y1, r, true, color);
     }
 
+    /// A Pixelarticons icon (`horizon_theme::icons`) `size` dp square at (x, y),
+    /// tinted `color`. Drawn at a whole number of pixels per grid unit, so its
+    /// cells stay square; centred in the requested box.
+    pub fn icon(&mut self, name: &str, x: f32, y: f32, size: f32, color: u32) {
+        let Some(index) = horizon_theme::icons::ALL
+            .iter()
+            .position(|(n, _)| *n == name)
+        else {
+            return;
+        };
+        let unit = ((size * self.density) / 24.0).round().max(1.0) as u16;
+        let atlas = self.atlas;
+        let Some(rect) = with_cache(atlas, |c| c.icon(atlas, index, unit)) else {
+            return;
+        };
+        let side = 24.0 * f32::from(unit);
+        let (x0, y0) = (
+            (self.px_x(x) + (size * self.density - side) / 2.0).round(),
+            (self.px_y(y) + (size * self.density - side) / 2.0).round(),
+        );
+        let s = self.scale;
+        self.batch
+            .rect_uv(x0 / s, y0 / s, side / s, side / s, rect, color);
+    }
+
     // ---- text ----
     /// The advance of `text` in dp.
     pub fn measure(&self, face: Face, size: f32, text: &str) -> f32 {
-        let px = (size * self.density * 4.0).round() / 4.0;
+        let px = self.font_px(face, size);
         with_cache(self.atlas, |c| {
             let font = c.fonts.face(face);
             let scaled = font.as_scaled(c.fonts.scale(face, px));
@@ -486,7 +714,7 @@ impl<'a> Ui<'a> {
     /// Draw a line of text in a `line`-tall box whose top is `y` (the
     /// launcher's line heights: about 1.45 × size for the interface);
     /// returns its width in dp.
-    pub(crate) fn text_line(
+    pub fn text_line(
         &mut self,
         face: Face,
         size: f32,
@@ -496,7 +724,7 @@ impl<'a> Ui<'a> {
         color: u32,
         text: &str,
     ) -> f32 {
-        let px = (size * self.density * 4.0).round() / 4.0;
+        let px = self.font_px(face, size);
         let real = color >> 24 != 0;
         let (x0, y0) = (self.px_x(x), self.px_y(y));
         let box_px = line * self.density;
@@ -548,7 +776,7 @@ impl<'a> Ui<'a> {
     pub fn text(&mut self, face: Face, size: f32, x: f32, y: f32, color: u32, text: &str) -> f32 {
         self.text_line(face, size, (size * 1.45).round(), x, y, color, text)
     }
-    pub(crate) fn text_centered(
+    pub fn text_centered(
         &mut self,
         face: Face,
         size: f32,
@@ -671,6 +899,21 @@ fn wrapping_lines(ui: &Ui, face: Face, size: f32, text: &str, max_w: f32) -> Vec
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn every_pixel_icon_parses_to_cells() {
+        for (name, svg) in horizon_theme::icons::ALL {
+            assert!(super::icon_mask(svg).is_some(), "{name}");
+        }
+        // home.svg's roof apex: the 4-unit block at x 10..14, y 2..4.
+        let home = super::icon_mask(horizon_theme::icons::get("home").unwrap()).unwrap();
+        assert!(home[2][10] && home[3][13] && !home[2][9] && !home[0][0]);
+        // Its floor line spans x 4..20 at y 20..22.
+        assert!(home[21][4] && home[21][19] && !home[21][3] && !home[21][20]);
+    }
 }
 
 #[cfg(test)]

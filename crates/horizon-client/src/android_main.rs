@@ -140,6 +140,15 @@ thread_local! {
     static APP: RefCell<Option<AndroidApp>> = const { RefCell::new(None) };
 }
 
+/// Android's language code (`AConfiguration`), e.g. "ru"; the launcher's language.
+pub(crate) fn system_language() -> Option<String> {
+    APP.with(|app| {
+        app.borrow()
+            .as_ref()
+            .and_then(|app| app.config().language())
+    })
+}
+
 pub(crate) fn android_event_loop() -> Result<EventLoop<()>, winit::error::EventLoopError> {
     APP.with(|app| {
         EventLoop::builder()

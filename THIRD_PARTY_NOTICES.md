@@ -20,6 +20,13 @@ are in that folder (`LICENSE.MIT`, `LICENSE.APACHE`).
 by The Pixelify Sans Project Authors, licensed under the SIL Open Font License 1.1
 (`crates/horizon-theme/fonts/OFL-PixelifySans.txt`).
 
+## GNU Unifont
+
+`crates/horizon-theme/fonts/Unifont-Horizon.otf` is a Latin and Cyrillic subset of
+[GNU Unifont](https://unifoundry.com/unifont/) 16.0.04 by Roman Czyborra, Paul Hardy et al.
+Unifont is dual licensed; Horizon uses it under the SIL Open Font License 1.1
+(`crates/horizon-theme/fonts/OFL-Unifont.txt`).
+
 ## Pixelarticons
 
 `crates/horizon-theme/icons/pixel/*.svg` are icons from

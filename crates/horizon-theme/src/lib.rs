@@ -35,6 +35,11 @@ pub mod fonts {
     pub const BRICOLAGE_BOLD: &[u8] = include_bytes!("../fonts/BricolageGrotesque-Bold.ttf");
     pub const BRICOLAGE_DISPLAY_BOLD: &[u8] =
         include_bytes!("../fonts/BricolageGrotesqueDisplay-Bold.ttf");
+    /// GNU Unifont 16.0.04, a Latin and Cyrillic subset, under the SIL Open Font
+    /// License (`fonts/OFL-Unifont.txt`): the Android launcher's pixel text. Pixelify's
+    /// Cyrillic reads poorly; Unifont is also what Minecraft draws Cyrillic with. Crisp
+    /// at multiples of 16 px.
+    pub const UNIFONT: &[u8] = include_bytes!("../fonts/Unifont-Horizon.otf");
 }
 
 /// The launcher's pixel icons: Pixelarticons (MIT, `icons/pixel/LICENSE-pixelarticons.txt`), 24

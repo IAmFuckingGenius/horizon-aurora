@@ -19,6 +19,22 @@ mod cache_input;
 const CATALOG: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const LOCK: &str = include_str!("../../../research-lock.json");
 static INSTALLATION: Mutex<()> = Mutex::new(());
+/// Set by [`cancel`]: the running installation stops at its next file or stage.
+static CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The error an installation stopped by [`cancel`] returns.
+pub const CANCELLED_MESSAGE: &str = "Installation cancelled";
+/// Asks the running installation to stop. Verified downloads stay in the cache, so a
+/// retry continues where it stopped.
+pub fn cancel() {
+    CANCELLED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+fn cancelled() -> Result<()> {
+    if CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+        Err(CANCELLED_MESSAGE.into())
+    } else {
+        Ok(())
+    }
+}
 static DOWNLOAD_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Android supplies Context.getCacheDir(), keeping temporary downloads out of files/.
@@ -342,6 +358,7 @@ fn validate_manifest(bytes: &[u8], checksum: &str, version: &str, pins: &Value) 
 
 pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + Sync) -> Result<()> {
     let _guard = INSTALLATION.lock().unwrap_or_else(|e| e.into_inner());
+    CANCELLED.store(false, Ordering::Relaxed);
     let report = |stage, done, total| progress(InstallProgress { stage, done, total });
     report(InstallStage::Metadata, 0, 0);
     let version = horizon_core::VANILLA_VERSION;
@@ -419,6 +436,10 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
                     if error.lock().unwrap().is_some() {
                         break;
                     }
+                    if let Err(e) = cancelled() {
+                        *error.lock().unwrap() = Some(e.to_string());
+                        break;
+                    }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(file) = files.get(i) else { break };
                     if let Err(e) = file.get() {
@@ -437,6 +458,8 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     if let Some(error) = error.into_inner().unwrap() {
         return Err(error.into());
     }
+    // The last moment a cancel is cheap: unpacking replaces the installed files.
+    cancelled()?;
     let versions = home.join(".local/horizon-client");
     fs::create_dir_all(&versions)?;
     let stage = versions.join("official.partial");

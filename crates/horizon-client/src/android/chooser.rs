@@ -1,10 +1,12 @@
 //! Explicit, scrollable selections. Values never cycle on repeated button taps.
 use super::{
     Launcher,
-    pages::{Action, button},
+    kit::{self, Kit, Style, col},
+    pages::Action,
+    text::t,
 };
 use crate::catalog::RendererMode;
-use horizon_client::ui_theme::{Face, Ui, color};
+use horizon_client::ui_theme::Face;
 
 pub(super) enum Kind {
     Aspect,
@@ -15,7 +17,6 @@ pub(super) enum Kind {
     RenderScale,
     Profile,
     Orientation,
-    InputHost,
 }
 pub(super) struct Chooser {
     title: &'static str,
@@ -23,6 +24,10 @@ pub(super) struct Chooser {
     device: Option<String>,
     choices: Vec<(String, String, Action, bool)>,
     pub scroll: f32,
+    /// The option rows as last drawn, for D-pad navigation.
+    rows: Vec<([f32; 4], Action)>,
+    /// The scrolling options area: top, bottom, maximum scroll.
+    view: [f32; 3],
 }
 impl Launcher {
     pub(super) fn open_chooser(&mut self, kind: Kind) {
@@ -42,7 +47,7 @@ impl Launcher {
         let (title, help, choices) = match kind {
             Kind::Aspect => (
                 "Aspect ratio",
-                "Fits the entire picture without stretching. Touch coordinates follow the picture. Portrait swaps width and height.",
+                "Fits the whole picture without stretching. In portrait, width and height swap.",
                 [
                     crate::display::Aspect::Native,
                     crate::display::Aspect::Wide,
@@ -62,7 +67,7 @@ impl Launcher {
             ),
             Kind::CacheBudget => (
                 "Reusable RAM cache",
-                "Decoded sounds (80%) and empty mesh buffers (20%). Recreated at the same quality. Smaller budgets can increase CPU work. Not total RAM/VRAM. Applies on next Play.",
+                "Sounds and mesh buffers the game keeps for reuse. Not a limit on all memory. Applies on the next Play.",
                 [0, 16, 32, 64, 128, 256]
                     .into_iter()
                     .map(|mib| {
@@ -81,7 +86,7 @@ impl Launcher {
             ),
             Kind::WorkerLimit => (
                 "Chunk worker limit",
-                "Ceiling for generation and meshing workers, not all app threads. Lower values can reduce CPU contention but slow loading. Applies on next Play.",
+                "A ceiling for the threads that generate and build chunks. Fewer ease the CPU but load chunks slower. Applies on the next Play.",
                 (0..=64u32)
                     .map(|limit| {
                         (
@@ -144,21 +149,6 @@ impl Launcher {
                     choices,
                 )
             }
-            Kind::InputHost => (
-                "Input mode",
-                "Mouse mode uses a physical keyboard. Touch mode keeps the Android keyboard.",
-                crate::catalog::InputHost::ALL
-                    .into_iter()
-                    .map(|mode| {
-                        (
-                            mode.label().into(),
-                            String::new(),
-                            Action::ChooseInputHost(mode),
-                            c.input_host == mode,
-                        )
-                    })
-                    .collect(),
-            ),
             Kind::Orientation => (
                 "Screen orientation",
                 "Applies to the launcher and game. Does not change touch bindings.",
@@ -222,7 +212,11 @@ impl Launcher {
                     .into_iter()
                     .map(|id| {
                         (
-                            format!("Profile {id}"),
+                            if id == 0 {
+                                "Main".into()
+                            } else {
+                                format!("Profile {id}")
+                            },
                             if id == 0 {
                                 "Default profile".into()
                             } else {
@@ -254,6 +248,8 @@ impl Launcher {
             choices,
             device,
             scroll: 0.0,
+            rows: Vec::new(),
+            view: [0.0; 3],
         });
     }
 }
@@ -273,69 +269,209 @@ impl Chooser {
                 ("Cancel".into(), String::new(), Action::Dismiss, true),
             ],
             scroll: 0.0,
+            rows: Vec::new(),
+            view: [0.0; 3],
         }
     }
-    pub(super) fn navigation(&self, width: f32) -> Vec<([f32; 4], Action)> {
-        self.choices
-            .iter()
-            .enumerate()
-            .map(|(i, (_, _, action, _))| {
-                (
-                    [
-                        32.0,
-                        137.0 + i as f32 * 84.0 - self.scroll,
-                        width - 64.0,
-                        76.0,
-                    ],
-                    *action,
-                )
-            })
-            .collect()
+    pub(super) fn navigation(&self) -> Vec<([f32; 4], Action)> {
+        self.rows.clone()
     }
-    pub(super) fn viewport(&self, height: f32) -> [f32; 3] {
-        [
-            137.0,
-            height - 100.0,
-            (self.choices.len() as f32 * 84.0 - (height - 237.0)).max(0.0),
-        ]
+    pub(super) fn viewport(&self) -> [f32; 3] {
+        self.view
     }
-    pub fn draw(&mut self, ui: &mut Ui, targets: &mut Vec<([f32; 4], Action)>) {
-        let (w, h) = (ui.w, ui.h);
-        targets.clear();
-        ui.rounded(0.0, 0.0, w, h, 0.0, color::BG);
-        ui.text(Face::Medium, 28.0, 32.0, 35.0, color::TEXT, self.title);
-        ui.text(Face::Regular, 15.0, 32.0, 85.0, color::MUTED, self.help);
+    /// A dialog over a scrim: radio options with their descriptions, or, for a
+    /// confirmation without descriptions, a row of buttons.
+    pub fn draw(&mut self, k: &mut Kit) {
+        let (w, h) = (k.ui.w, k.ui.h);
+        kit::fill(k.ui, 0.0, 0.0, w, h, col::SCRIM);
+        let dw = (w - 32.0).min(460.0);
+        let inner = dw - 32.0;
+        let confirm = self.choices.len() <= 2 && self.choices.iter().all(|c| c.1.is_empty());
+        // The whole help when it fits; a long one ends in an ellipsis, never mid-word.
+        let help = k.wrap_max(
+            Face::BodyMedium,
+            13.0,
+            t(self.help),
+            inner,
+            if h < 420.0 { 3 } else { 5 },
+        );
+        let head = 14.0
+            + 24.0
+            + 6.0
+            + help.len() as f32 * 18.85
+            + if self.device.is_some() { 20.0 } else { 0.0 }
+            + 10.0;
+        let row_h = |detail: &str| if detail.is_empty() { 48.0 } else { 56.0 };
+        let options: f32 = if confirm {
+            0.0
+        } else {
+            self.choices.iter().map(|c| row_h(&c.1) + 6.0).sum::<f32>()
+        };
+        // Confirmations end in buttons; choosers close from their header.
+        let foot = if confirm { 8.0 + 48.0 + 14.0 } else { 14.0 };
+        let dh = (head + options + foot).min(h - 24.0);
+        let (x, y) = ((w - dw) / 2.0, (h - dh) / 2.0);
+        k.panel([x, y, dw, dh], false);
+        k.text_fit(
+            Face::BodyBold,
+            20.0,
+            24.0,
+            x + 16.0,
+            y + 14.0,
+            inner - if confirm { 0.0 } else { 52.0 },
+            col::INK,
+            t(self.title),
+        );
+        if !confirm {
+            k.button(
+                [x + dw - 16.0 - 48.0, y + 2.0, 48.0, 48.0],
+                Style::Ghost,
+                Some(super::kit::Icon::Pixel("close")),
+                "",
+                Some(Action::Dismiss),
+            );
+        }
+        let mut cy = y + 44.0;
+        for line in &help {
+            k.text(
+                Face::BodyMedium,
+                13.0,
+                18.85,
+                x + 16.0,
+                cy,
+                col::INK_SOFT,
+                line,
+            );
+            cy += 18.85;
+        }
         if let Some(device) = &self.device {
-            ui.text(Face::Regular, 13.0, 32.0, 111.0, color::MUTED, device);
+            k.text_fit(
+                Face::Mono,
+                12.0,
+                16.0,
+                x + 16.0,
+                cy + 2.0,
+                inner,
+                col::MUTED,
+                device,
+            );
+            cy += 20.0;
         }
-        let top = 137.0;
-        let bottom = h - 100.0;
-        self.scroll = self.scroll.clamp(
-            0.0,
-            (self.choices.len() as f32 * 84.0 - (bottom - top)).max(0.0),
-        );
-        for (i, (label, detail, action, selected)) in self.choices.iter().enumerate() {
-            let y = top + i as f32 * 84.0 - self.scroll;
-            if y < top || y + 76.0 > bottom {
-                continue;
+        cy += 10.0;
+        let foot_y = y + dh - 14.0 - 48.0;
+        if confirm {
+            // Buttons, right-aligned: the safe choice last, nearest the thumb.
+            let mut bx = x + dw - 16.0;
+            for (label, _, action, _) in self.choices.iter().rev() {
+                let style = if *action == Action::ConfirmDeleteLocal {
+                    Style::Danger
+                } else {
+                    Style::Secondary
+                };
+                let bw = k.button_width(style, None, t(static_str(label)));
+                bx -= bw;
+                k.button(
+                    [bx, foot_y, bw, 48.0],
+                    style,
+                    None,
+                    t(static_str(label)),
+                    Some(*action),
+                );
+                bx -= 8.0;
             }
-            ui.rounded(34.0, y + 10.0, 22.0, 22.0, 11.0, color::TEXT);
-            ui.rounded(36.0, y + 12.0, 18.0, 18.0, 9.0, color::BG);
-            if *selected {
-                ui.rounded(40.0, y + 16.0, 10.0, 10.0, 5.0, color::TEXT);
-            }
-            ui.text(Face::Medium, 19.0, 80.0, y + 8.0, color::TEXT, label);
-            ui.text(Face::Regular, 14.0, 80.0, y + 40.0, color::MUTED, detail);
-            ui.rounded(32.0, y + 75.0, w - 64.0, 1.0, 0.0, color::BORDER);
-            targets.push(([32.0, y, w - 64.0, 76.0], *action));
+            self.rows.clear();
+            self.view = [0.0; 3];
+            return;
         }
-        button(
-            ui,
-            targets,
-            [32.0, h - 78.0, 160.0, 44.0],
-            "Cancel",
-            Action::Dismiss,
-            false,
-        );
+        let top = cy;
+        let bottom = y + dh - 14.0;
+        let maximum = (options - (bottom - top)).max(0.0);
+        self.scroll = self.scroll.clamp(0.0, maximum);
+        self.view = [top, bottom, maximum];
+        self.rows.clear();
+        let mut oy = top - self.scroll;
+        let clip = k.mark();
+        for (label, detail, action, selected) in &self.choices {
+            let rh = row_h(detail);
+            let r = [x + 16.0, oy, inner, rh];
+            self.rows.push((r, *action));
+            if oy + rh > top && oy < bottom {
+                let pressed = k.pressed(r, Some(*action));
+                kit::plate(
+                    k.ui,
+                    r,
+                    1,
+                    if pressed {
+                        col::CONTROL_PRESSED
+                    } else {
+                        col::CONTROL
+                    },
+                    if *selected {
+                        col::ACCENT_HI
+                    } else {
+                        col::CONTROL_RING
+                    },
+                );
+                // A square radio: a 2 dp frame, and a dot when chosen.
+                let (rx, ry) = (r[0] + 12.0, oy + (rh - 20.0) / 2.0);
+                let ring = if *selected {
+                    col::ACCENT_HI
+                } else {
+                    col::MUTED
+                };
+                kit::frame(k.ui, [rx, ry, 20.0, 20.0], ring);
+                if *selected {
+                    kit::fill(k.ui, rx + 6.0, ry + 6.0, 8.0, 8.0, col::ACCENT_HI);
+                }
+                let tw = inner - 44.0 - 12.0;
+                let label = &super::text::t_dyn(label);
+                let detail = &super::text::t_dyn(detail);
+                if detail.is_empty() {
+                    k.text_fit(
+                        Face::BodySemiBold,
+                        15.0,
+                        18.0,
+                        r[0] + 44.0,
+                        oy + 15.0,
+                        tw,
+                        col::INK,
+                        label,
+                    );
+                } else {
+                    k.text_fit(
+                        Face::BodySemiBold,
+                        15.0,
+                        18.0,
+                        r[0] + 44.0,
+                        oy + 9.0,
+                        tw,
+                        col::INK,
+                        label,
+                    );
+                    k.text_fit(
+                        Face::Body,
+                        12.0,
+                        14.0,
+                        r[0] + 44.0,
+                        oy + 29.0,
+                        tw,
+                        col::MUTED,
+                        detail,
+                    );
+                }
+                k.hit(r, *action);
+            }
+            oy += rh + 6.0;
+        }
+        k.clip(clip, [x + 12.0, top, inner + 8.0, bottom - top]);
+    }
+}
+
+/// Confirmation labels are fixed English words; give them a static lifetime for `t`.
+fn static_str(label: &str) -> &'static str {
+    match label {
+        "Remove" => "Remove",
+        "Cancel" => "Cancel",
+        _ => "OK",
     }
 }

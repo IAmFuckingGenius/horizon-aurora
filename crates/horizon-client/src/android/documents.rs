@@ -43,6 +43,8 @@ struct State {
     hits: Vec<([f32; 4], Choice)>,
     toast: Option<(String, std::time::Instant)>,
     cursor: (f32, f32),
+    /// The choice keyboard, D-pad and controller navigation acts on.
+    focus: usize,
 }
 #[derive(Clone, Copy)]
 pub enum Choice {
@@ -58,6 +60,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     hits: Vec::new(),
     toast: None,
     cursor: (0.0, 0.0),
+    focus: 0,
 });
 static CANCEL: AtomicBool = AtomicBool::new(false);
 pub fn busy() -> bool {
@@ -257,11 +260,16 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
         }
         let target = dir.join(name);
         if target.exists() {
-            STATE.lock().unwrap_or_else(|e| e.into_inner()).conflict = Some(Conflict {
+            let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+            // Focus starts on the choice that loses nothing: Keep both, or Cancel
+            // for a mod, which has no Keep both.
+            state.focus = if request.kind == Kind::Mods { 1 } else { 0 };
+            state.conflict = Some(Conflict {
                 kind: request.kind,
                 staged: staged.clone(),
                 target,
             });
+            drop(state);
             notice(
                 "File already exists: choose Keep both, Replace or Cancel",
                 false,
@@ -385,6 +393,29 @@ pub fn tap(x: f32, y: f32) -> bool {
     }
     true
 }
+/// Moves the overlay's focus to the next (`forward`) or previous choice, wrapping.
+pub fn focus_step(forward: bool) {
+    let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let count = s.hits.len();
+    if count > 0 {
+        s.focus = if forward {
+            (s.focus + 1) % count
+        } else {
+            (s.focus + count - 1) % count
+        };
+    }
+}
+/// Acts on the focused choice, as a tap on it would.
+pub fn activate_focused() {
+    let choice = {
+        let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        s.hits.get(s.focus).map(|(_, c)| *c)
+    };
+    match choice {
+        Some(Choice::Cancel) | None => cancel(),
+        Some(choice) => resolve(choice),
+    }
+}
 pub fn draw(batch: &mut HudBatch, atlas: &HudAtlas) {
     let mut ui = Ui::mobile(atlas, batch, (0.0, 0.0));
     draw_ui(&mut ui);
@@ -448,12 +479,25 @@ pub fn draw_ui(ui: &mut Ui<'_>) {
     let name = ui.fit_text(Face::Regular, 16.0, &name, w - 24.0);
     ui.text(Face::Regular, 16.0, x + 12.0, y + 46.0, color::MUTED, &name);
     let width = (w - 24.0) / choices.len() as f32;
+    s.focus = s.focus.min(choices.len().saturating_sub(1));
+    let focus = s.focus;
     for (i, (label, choice)) in choices.into_iter().enumerate() {
         let rect = if vertical {
             [x + 12.0, y + 86.0 + i as f32 * 44.0, w - 24.0, 38.0]
         } else {
             [x + 12.0 + i as f32 * width, y + 92.0, width - 4.0, 38.0]
         };
+        if i == focus {
+            // The same 2px ink ring as the launcher's own focus.
+            ui.rounded(
+                rect[0] - 2.0,
+                rect[1] - 2.0,
+                rect[2] + 4.0,
+                rect[3] + 4.0,
+                2.0,
+                color::TEXT,
+            );
+        }
         ui.rounded(rect[0], rect[1], rect[2], rect[3], 2.0, color::RAISED);
         ui.text(
             Face::Medium,
@@ -511,18 +555,22 @@ pub fn handle_event(event: &winit::event::WindowEvent) -> bool {
                     || event.logical_key == Key::Named(NamedKey::BrowserBack)
                 {
                     cancel();
-                } else if event.physical_key == PhysicalKey::Code(KeyCode::Enter) && conflict() {
-                    let native = STATE
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .conflict
-                        .as_ref()
-                        .is_some_and(|c| c.kind == Kind::Mods);
-                    resolve(if native {
-                        Choice::Cancel
-                    } else {
-                        Choice::KeepBoth
-                    });
+                } else if matches!(
+                    event.logical_key,
+                    Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp)
+                ) {
+                    focus_step(false);
+                } else if matches!(
+                    event.logical_key,
+                    Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown | NamedKey::Tab)
+                ) {
+                    focus_step(true);
+                } else if matches!(
+                    event.physical_key,
+                    PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space)
+                ) || event.logical_key == Key::Named(NamedKey::Select)
+                {
+                    activate_focused();
                 }
             }
             true

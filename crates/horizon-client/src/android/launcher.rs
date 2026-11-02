@@ -5,15 +5,23 @@ use crate::game;
 mod chooser;
 #[path = "launcher_gesture.rs"]
 mod gesture;
+#[path = "launcher_kit.rs"]
+mod kit;
 #[path = "login.rs"]
 mod login;
 #[path = "launcher_pages.rs"]
 mod pages;
+#[path = "launcher_sky.rs"]
+mod sky;
+#[path = "launcher_text.rs"]
+pub(crate) mod text;
+#[path = "launcher_view.rs"]
+mod view;
 use horizon_client::{
     Result,
     gfx::Renderer,
     hud::{HudAtlas, HudBatch},
-    ui_theme::{Face, Ui},
+    ui_theme::Ui,
 };
 use std::{
     path::PathBuf,
@@ -56,6 +64,18 @@ pub(super) struct Launcher {
     prepared_session: Option<PathBuf>,
     focus: Option<usize>,
     diagnostic_export: Option<mpsc::Receiver<std::result::Result<String, String>>>,
+    /// Where Play goes once the session is ready: the title screen, the quick-join
+    /// server or straight into a world.
+    launch_target: LaunchTarget,
+    view: view::ViewState,
+}
+
+#[derive(Clone, Default, PartialEq)]
+pub(super) enum LaunchTarget {
+    #[default]
+    Title,
+    Server,
+    World(String),
 }
 
 impl Launcher {
@@ -112,6 +132,8 @@ impl Launcher {
             prepared_session: None,
             focus: None,
             diagnostic_export: None,
+            launch_target: LaunchTarget::Title,
+            view: view::ViewState::default(),
         }
     }
 
@@ -150,6 +172,7 @@ impl Launcher {
         self.login.refresh_status();
         crate::diagnostics::heartbeat("returned_to_launcher", || serde_json::json!({}));
         self.catalog.page = Page::Play;
+        self.launch_target = LaunchTarget::Title;
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
@@ -224,7 +247,14 @@ impl Launcher {
             self.login.hide();
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
-        } else if self.catalog.editing.take().is_none() {
+        } else if self.catalog.editing.take().is_some() {
+            // Back leaves the text field first.
+        } else if self.catalog.page != Page::Play {
+            // Then returns to Play; only Play asks before exiting.
+            self.catalog.page = Page::Play;
+            self.catalog.scroll = 0.0;
+            self.catalog.status.clear();
+        } else {
             self.exit_confirmation = true;
         }
         self.focus = None;
@@ -339,6 +369,11 @@ impl Launcher {
             horizon_client::android_runtime::clear_gamepads();
             self.controller_edges = Default::default();
             self.controller_repeat = None;
+            let mut extra_arguments = extra_arguments;
+            if let LaunchTarget::World(folder) = &self.launch_target {
+                // The game opens an existing world by folder name (game.rs `--world`).
+                extra_arguments.extend(["--world".into(), folder.clone()]);
+            }
             let request = crate::game_launch::LaunchRequest {
                 resources: self
                     .home
@@ -347,7 +382,11 @@ impl Launcher {
                 game_home,
                 session_file: self.prepared_session.take(),
                 offline_name: self.catalog.config.name.clone(),
-                server: self.catalog.config.server.clone(),
+                server: if self.launch_target == LaunchTarget::Server {
+                    self.catalog.config.server.clone()
+                } else {
+                    String::new()
+                },
                 control_socket: (!crate::PUBLIC_BUILD).then(|| self.home.join("control.json")),
                 extra_arguments,
                 open_gl: self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl,
@@ -658,6 +697,19 @@ impl Launcher {
                 self.controller_repeat = Some((button, now, true));
             }
         }
+        if crate::documents::busy() {
+            // The import overlay is modal: the controller drives its choices.
+            for b in pressed {
+                match b {
+                    Button::DPadLeft | Button::DPadUp => crate::documents::focus_step(false),
+                    Button::DPadRight | Button::DPadDown => crate::documents::focus_step(true),
+                    Button::South => crate::documents::activate_focused(),
+                    Button::East => crate::documents::cancel(),
+                    _ => {}
+                }
+            }
+            return Ok(());
+        }
         for b in pressed {
             let direction = match b {
                 Button::DPadUp => Some(NamedKey::ArrowUp),
@@ -674,16 +726,8 @@ impl Launcher {
             } else if b == Button::South {
                 self.activate(events)?;
             } else if b == Button::East {
-                crate::platform::hide();
-                self.catalog.editing = None;
-                if self.chooser.take().is_none() {
-                    if self.login.visible {
-                        self.login.visible = false;
-                    } else {
-                        self.catalog.page = Page::Play;
-                    }
-                }
-                self.focus = None;
+                // The controller's Back follows the same steps as Android Back.
+                self.request_back();
             }
         }
         Ok(())

@@ -151,26 +151,10 @@ pub enum Page {
     Shaders,
     Installed,
     Settings,
+    /// The profile's worlds: list, open in Files.
+    Worlds,
 }
 impl Page {
-    pub const ALL: [Self; 6] = [
-        Self::Play,
-        Self::Mods,
-        Self::Packs,
-        Self::Shaders,
-        Self::Installed,
-        Self::Settings,
-    ];
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Play => "Play",
-            Self::Mods => "Mods",
-            Self::Packs => "Packs",
-            Self::Shaders => "Shaders",
-            Self::Installed => "Installed",
-            Self::Settings => "Settings",
-        }
-    }
     pub fn is_catalog(self) -> bool {
         matches!(self, Self::Packs | Self::Mods | Self::Shaders)
     }
