@@ -181,10 +181,14 @@ impl Game<'_> {
             .chain(self.offhand.as_ref())
             .any(|s| self.blocks_attacks(s).is_some())
     }
+    /// A screen is open over the world and some touch control is shown over
+    /// screens: the inventory set of "Controls in inventory", or controls and
+    /// custom buttons the player chose to show in menus.
     #[cfg(target_os = "android")]
-    pub(super) fn android_inventory_controls(&self) -> bool {
-        self.settings.touch.inventory_controls
-            && matches!(self.screen, Screen::Inventory | Screen::Creative)
+    pub(super) fn android_menu_overlay(&self) -> bool {
+        self.pad.touch.inventory_mode
+            && self.pad.touch.editor.is_none()
+            && self.pad.touch.any_visible()
     }
     /// Once per loop iteration: read the pads and act on button changes.
     pub(super) fn poll_pads(&mut self, event_loop: &dyn EventLoopCtl) {
@@ -200,7 +204,13 @@ impl Game<'_> {
                 crate::device_runtime::preferences().gpu_profile,
                 &crate::backend::game_home(),
             );
-            self.pad.touch.inventory_mode = self.android_inventory_controls();
+            self.pad.touch.inventory_mode = self.title.is_none()
+                && self.pad_in_menu()
+                && !self.touch_editing()
+                && self.screen != Screen::Options;
+            self.pad.touch.inventory_screen =
+                matches!(self.screen, Screen::Inventory | Screen::Creative);
+            self.pad.touch_ui.utility = self.pad.touch.settings.utility;
             if !matches!(self.screen, Screen::Inventory | Screen::Creative) {
                 self.pad.touch_ui.reset_inventory_pointer();
             }
@@ -217,7 +227,7 @@ impl Game<'_> {
             if !self.focused || (!crate::touch_visible() && !self.settings.keypad.enabled) {
                 self.pad.touch.clear();
                 horizon_client::android_runtime::clear_keypad();
-            } else if self.pad_in_menu() && !self.android_inventory_controls() {
+            } else if self.pad_in_menu() && !self.android_menu_overlay() {
                 // A screen releases fingers but keeps the sprint toggle, as vanilla does.
                 self.pad.touch.release_fingers();
                 horizon_client::android_runtime::clear_keypad();
@@ -228,7 +238,7 @@ impl Game<'_> {
             self.android_custom_events();
         }
         #[cfg(target_os = "android")]
-        if self.pad_in_menu() && self.android_inventory_controls() {
+        if self.pad_in_menu() && self.android_menu_overlay() {
             self.pad.touch.clear_world_gesture();
         }
         let settings = &self.settings.controller;

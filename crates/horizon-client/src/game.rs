@@ -14910,7 +14910,7 @@ impl Game<'_> {
         #[cfg(target_os = "android")]
         if self.pad.touch.editor.is_some()
             || ((crate::touch_visible() || self.settings.keypad.enabled)
-                && (!self.pad_in_menu() || self.android_inventory_controls()))
+                && (!self.pad_in_menu() || self.android_menu_overlay()))
         {
             self.pad.touch.context_use =
                 self.pad.touch.settings.contextual_interact && self.touch_context_use();
@@ -14920,7 +14920,23 @@ impl Game<'_> {
             self.pad.touch.shield_available = self.touch_shield_available();
             self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
             self.pad.touch.break_progress = self.touch_mining_progress();
+            let density = self
+                .window
+                .as_ref()
+                .map_or(1.0, |w| w.scale_factor() as f32);
+            horizon_client::touch_editor::backdrop(
+                &self.pad.touch,
+                &mut hud,
+                &self.gui.atlas,
+                density,
+            );
             self.pad.touch.draw(&mut hud, &self.gui.atlas);
+            horizon_client::touch_editor::draw(
+                &mut self.pad.touch,
+                &mut hud,
+                &self.gui.atlas,
+                density,
+            );
         }
         #[cfg(target_os = "android")]
         {
@@ -16224,8 +16240,17 @@ impl Game<'_> {
                 ) {
                     self.pause = false;
                 }
+                if let Some(text) = self.pad.touch.take_text_request() {
+                    crate::platform::show(&text);
+                }
+                if self.pad.touch.take_hide_keyboard() {
+                    crate::platform::hide();
+                }
                 if self.pad.touch.editor.is_none() {
                     self.settings.touch = self.pad.touch.settings.clone();
+                    if crate::platform::active() {
+                        crate::platform::hide();
+                    }
                 }
                 if std::mem::take(&mut self.pad.touch.clicked) {
                     self.audio.play_button_click();
@@ -16248,7 +16273,7 @@ impl Game<'_> {
                 touch.location.x as f32 / size.width.max(1) as f32,
                 touch.location.y as f32 / size.height.max(1) as f32,
             ];
-            let inventory_control = self.android_inventory_controls()
+            let inventory_control = self.android_menu_overlay()
                 && (self.pad.touch.owns_pointer(touch.id)
                     || (touch.phase == TouchPhase::Started
                         && self.pad.touch.control_at_point(overlay_point)));
@@ -16388,7 +16413,7 @@ impl Game<'_> {
                     }
                 }
             } else {
-                if !self.android_inventory_controls() {
+                if !self.android_menu_overlay() {
                     self.pad.touch.release_fingers();
                 }
                 if !matches!(self.screen, Screen::Inventory | Screen::Creative) {

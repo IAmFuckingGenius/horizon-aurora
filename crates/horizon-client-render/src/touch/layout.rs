@@ -67,22 +67,86 @@ impl Control {
         Self::Offhand,
         Self::Shield,
     ];
-    pub fn name(self) -> &'static str {
+    /// The control's id in lang keys (`horizon.touch.control.<id>`).
+    pub fn id(self) -> &'static str {
         match self {
-            Self::Move => "Movement",
-            Self::Sprint => "Sprint",
-            Self::Jump => "Jump / fly up",
-            Self::Sneak => "Sneak / fly down",
-            Self::Attack => "Attack / mine",
-            Self::Use => "Use / place",
-            Self::Chat => "Chat",
-            Self::Pause => "Pause",
-            Self::Settings => "Touch settings",
-            Self::Inventory => "Inventory",
-            Self::Debug => "Debug overlay (F3)",
-            Self::Perspective => "Camera perspective (F5)",
-            Self::Offhand => "Swap hands",
-            Self::Shield => "Raise shield",
+            Self::Move => "move",
+            Self::Sprint => "sprint",
+            Self::Jump => "jump",
+            Self::Sneak => "sneak",
+            Self::Attack => "attack",
+            Self::Use => "use",
+            Self::Chat => "chat",
+            Self::Pause => "pause",
+            Self::Settings => "settings",
+            Self::Inventory => "inventory",
+            Self::Debug => "debug",
+            Self::Perspective => "perspective",
+            Self::Offhand => "offhand",
+            Self::Shield => "shield",
+        }
+    }
+    /// The player-facing name, in the game's language.
+    pub fn name(self) -> String {
+        crate::lang::get(&format!("horizon.touch.control.{}", self.id()))
+    }
+    /// Controls that mean something over a screen (an inventory, a chest, the
+    /// pause menu): modifier and mouse keys, closing the screen, swapping hands.
+    pub fn menu_capable(self) -> bool {
+        matches!(
+            self,
+            Self::Sneak | Self::Attack | Self::Use | Self::Inventory | Self::Pause | Self::Offhand
+        )
+    }
+}
+/// Where a control is shown. Stored as one byte per control in
+/// `button_visibility` (0 = Auto, 1 = Game, 2 = Hidden, the values older files
+/// already use; 3 = Menus, 4 = Always).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Show {
+    /// The scheme decides (Attack and Use only with the crosshair...); over screens,
+    /// "Controls in inventory" adds the inventory set.
+    #[default]
+    Auto,
+    /// Only while playing, with no screen open.
+    Game,
+    Hidden,
+    /// Only over screens: inventories, containers, the pause menu.
+    Menus,
+    /// While playing and over screens.
+    Always,
+}
+impl Show {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Game,
+            2 => Self::Hidden,
+            3 => Self::Menus,
+            4 => Self::Always,
+            _ => Self::Auto,
+        }
+    }
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Game => 1,
+            Self::Hidden => 2,
+            Self::Menus => 3,
+            Self::Always => 4,
+        }
+    }
+    pub fn in_game(self) -> Option<bool> {
+        match self {
+            Self::Auto => None,
+            Self::Game | Self::Always => Some(true),
+            Self::Hidden | Self::Menus => Some(false),
+        }
+    }
+    pub fn in_menus(self) -> Option<bool> {
+        match self {
+            Self::Auto => None,
+            Self::Menus | Self::Always => Some(true),
+            Self::Hidden | Self::Game => Some(false),
         }
     }
 }
@@ -116,7 +180,9 @@ impl Placement {
         if !self.opacity.is_finite() {
             self.opacity = 0.65;
         }
-        self.size = self.size.clamp(0.045, 0.45);
+        // The movement control may grow to most of the height: the D-pad's arrows
+        // are a third of it each.
+        self.size = self.size.clamp(0.045, 0.9);
         self.opacity = self.opacity.clamp(0.0, 1.0);
         for c in &mut self.center {
             *c = if c.is_finite() {
@@ -166,6 +232,10 @@ pub struct Settings {
     pub dynamic_area_y: f32,
     #[serde(deserialize_with = "deserialize_visibility")]
     pub button_visibility: [u8; 14],
+    /// The layout editor snaps dragged controls to a grid and to each other.
+    pub editor_snap: bool,
+    /// The utility buttons' places and when they show.
+    pub utility: super::utility::UtilityLayout,
     pub horizontal_margin: f32,
     pub vertical_margin: f32,
     #[serde(deserialize_with = "deserialize_layouts")]
@@ -252,6 +322,8 @@ impl Default for Settings {
             dynamic_area_x: 0.25,
             dynamic_area_y: 1.0,
             button_visibility: [0; 14],
+            editor_snap: true,
+            utility: Default::default(),
             horizontal_margin: 0.0,
             vertical_margin: 0.0,
             layouts,
@@ -412,10 +484,9 @@ impl Settings {
         self.custom_buttons
             .retain(|b| super::CustomButton::valid_token(&b.key));
         for button in &mut self.custom_buttons {
-            for p in &mut button.layouts {
-                p.sanitize();
-            }
+            button.sanitize();
         }
+        self.utility.sanitize();
         for p in self.layouts.iter_mut().flatten() {
             p.sanitize();
         }
@@ -431,11 +502,31 @@ impl Settings {
     pub fn crosshair(&self) -> bool {
         self.mode == Mode::Crosshair || self.split_controls
     }
+    pub fn show(&self, c: Control) -> Show {
+        Show::from_u8(self.button_visibility[c as usize])
+    }
+    pub fn set_show(&mut self, c: Control, show: Show) {
+        self.button_visibility[c as usize] = show.to_u8();
+    }
+    /// Shown over a screen. `inventory`: the screen is the inventory, where "Controls
+    /// in inventory" shows its modifier and mouse set unless the player chose otherwise.
+    pub fn visible_in_menu(&self, c: Control, inventory: bool) -> bool {
+        if !c.menu_capable() {
+            return false;
+        }
+        self.show(c).in_menus().unwrap_or_else(|| {
+            inventory
+                && self.inventory_controls
+                && matches!(
+                    c,
+                    Control::Sneak | Control::Attack | Control::Use | Control::Inventory
+                )
+        })
+    }
+    /// Shown while playing, with no screen open.
     pub fn visible(&self, c: Control) -> bool {
-        match self.button_visibility[c as usize] {
-            1 => return true,
-            2 => return false,
-            _ => {}
+        if let Some(shown) = self.show(c).in_game() {
+            return shown;
         }
         match c {
             Control::Offhand => self.offhand_button,

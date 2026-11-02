@@ -40,6 +40,17 @@ fn chat_px(caption: &str, px: f32) -> Text {
         &[tr(caption), Text::literal((px as i32).to_string())],
     )
 }
+/// The translation key of a touch control scheme's name. `touch::Mode`
+/// names its schemes in English; one without a key here shows as it is.
+fn touch_scheme_key(label: &str) -> Option<&'static str> {
+    Some(match label {
+        "Joystick & aim crosshair" => "horizon.options.touch.scheme.joystick_crosshair",
+        "Joystick & tap to interact" => "horizon.options.touch.scheme.joystick_tap",
+        "D-Pad & tap to interact" => "horizon.options.touch.scheme.dpad_tap",
+        "D-Pad & aim crosshair" => "horizon.options.touch.scheme.dpad_crosshair",
+        _ => return None,
+    })
+}
 pub(crate) enum Kind {
     /// Slider position 0..1.
     Slider(f32),
@@ -191,35 +202,37 @@ impl Opt {
 
     pub(crate) fn caption(self) -> &'static str {
         match self {
-            Opt::TouchMode => "Control scheme",
-            Opt::TouchCrosshairGestures => "Touch gestures",
-            Opt::TouchMouseSensitivity => "Virtual mouse sensitivity",
-            Opt::TouchAnalog => "360-degree movement",
-            Opt::TouchCircleSize => "Touch circle size",
-            Opt::TouchAttackSide => "Attack indicator side",
-            Opt::TouchHorizontalMargin => "HUD margins: left / right",
-            Opt::TouchVerticalMargin => "HUD margins: top / bottom",
-            Opt::TouchSensitivity => "Touch sensitivity",
-            Opt::TouchSensitivityHorizontal => "Horizontal sensitivity",
-            Opt::TouchSensitivityVertical => "Vertical sensitivity",
-            Opt::TouchOffhand => "Swap hands button",
-            Opt::TouchShield => "Raise shield with",
-            Opt::TouchButtonScale => "Control button size",
-            Opt::TouchInteract => "Interact button",
-            Opt::TouchLeftHand => "Left handed",
-            Opt::TouchSprintButton => "Sprint button",
-            Opt::TouchSprintToggle => "Toggle sprint button",
-            Opt::TouchInventoryControls => "Controls in inventory",
-            Opt::TouchDynamicJoystick => "Dynamic joystick",
-            Opt::TouchButtonLook => "Aim while holding Attack/Use",
-            Opt::TouchHotbarDrop => "Hold hotbar slot to drop",
-            Opt::TouchDynamicAreaX => "Dynamic joystick width",
-            Opt::TouchDynamicAreaY => "Dynamic joystick height",
-            Opt::AndroidGyroscope => "Gyroscope aiming",
-            Opt::AndroidGyroSensitivity => "Gyroscope sensitivity",
-            Opt::AndroidInputMode => "Input device",
-            Opt::TouchSwapJumpSneak => "Swap jump / sneak",
-            Opt::TouchAutoSprint => "Auto Sprint",
+            // Android's touch options: Horizon's own keys, bundled in
+            // assets/horizon/lang like the controller's.
+            Opt::TouchMode => "horizon.options.touch.mode",
+            Opt::TouchCrosshairGestures => "horizon.options.touch.crosshair_gestures",
+            Opt::TouchMouseSensitivity => "horizon.options.touch.mouse_sensitivity",
+            Opt::TouchAnalog => "horizon.options.touch.analog_movement",
+            Opt::TouchCircleSize => "horizon.options.touch.circle_size",
+            Opt::TouchAttackSide => "horizon.options.touch.attack_side",
+            Opt::TouchHorizontalMargin => "horizon.options.touch.margin_horizontal",
+            Opt::TouchVerticalMargin => "horizon.options.touch.margin_vertical",
+            Opt::TouchSensitivity => "horizon.options.touch.sensitivity",
+            Opt::TouchSensitivityHorizontal => "horizon.options.touch.sensitivity_horizontal",
+            Opt::TouchSensitivityVertical => "horizon.options.touch.sensitivity_vertical",
+            Opt::TouchOffhand => "horizon.options.touch.offhand_button",
+            Opt::TouchShield => "horizon.options.touch.shield",
+            Opt::TouchButtonScale => "horizon.options.touch.button_scale",
+            Opt::TouchInteract => "horizon.options.touch.interact_button",
+            Opt::TouchLeftHand => "horizon.options.touch.left_handed",
+            Opt::TouchSprintButton => "horizon.options.touch.sprint_button",
+            Opt::TouchSprintToggle => "horizon.options.touch.sprint_toggle",
+            Opt::TouchInventoryControls => "horizon.options.touch.inventory_controls",
+            Opt::TouchDynamicJoystick => "horizon.options.touch.dynamic_joystick",
+            Opt::TouchButtonLook => "horizon.options.touch.button_look",
+            Opt::TouchHotbarDrop => "horizon.options.touch.hotbar_drop",
+            Opt::TouchDynamicAreaX => "horizon.options.touch.dynamic_area_x",
+            Opt::TouchDynamicAreaY => "horizon.options.touch.dynamic_area_y",
+            Opt::AndroidGyroscope => "horizon.options.touch.gyroscope",
+            Opt::AndroidGyroSensitivity => "horizon.options.touch.gyro_sensitivity",
+            Opt::AndroidInputMode => "horizon.options.input_device",
+            Opt::TouchSwapJumpSneak => "horizon.options.touch.swap_jump_sneak",
+            Opt::TouchAutoSprint => "horizon.options.touch.auto_sprint",
             Opt::Fov => "options.fov",
             Opt::RenderDistance => "options.renderDistance",
             Opt::SimulationDistance => "options.simulationDistance",
@@ -232,7 +245,7 @@ impl Opt {
             Opt::Volume(_) => "soundCategory.master",
             Opt::SoundDevice => "options.audioDevice",
             Opt::GuiScale => "options.guiScale",
-            Opt::DebugGuiScale => "F3 text scale",
+            Opt::DebugGuiScale => "horizon.options.touch.debug_text_scale",
             Opt::ViewBobbing => "options.viewBobbing",
             Opt::Gamma => "options.gamma",
             Opt::MaxFps => "options.framerateLimit",
@@ -507,122 +520,76 @@ impl Opt {
     /// The widget message (OptionInstance.toString / CycleButton full name).
     pub fn label(self, s: &Settings) -> Text {
         let c = self.caption();
+        // Android's touch options: their numbers keep the units they always
+        // showed, every word is translated.
+        let literal = |value: String| Some(Text::literal(value));
+        let percent_of = |v: f32| literal(format!("{:.0}%", v * 100.0));
         let touch_value = match self {
-            Opt::TouchMode => Some(
-                crate::touch::Mode::SCHEMES
+            Opt::TouchMode => {
+                let label = crate::touch::Mode::SCHEMES
                     .iter()
                     .find(|(mode, split, _)| {
                         *mode == s.touch.mode
                             && (!matches!(mode, crate::touch::Mode::Dpad | crate::touch::Mode::Tap)
                                 || *split == s.touch.split_controls)
                     })
-                    .map_or("Joystick & aim crosshair", |(_, _, label)| *label)
-                    .to_owned(),
-            ),
-            Opt::TouchCircleSize => Some(format!("{} px", s.touch.circle_size.round())),
-            Opt::TouchAttackSide => Some(
-                if s.touch.attack_indicator_left {
-                    "Left"
-                } else {
-                    "Right"
-                }
-                .into(),
-            ),
+                    .map_or("Joystick & aim crosshair", |(_, _, label)| *label);
+                Some(touch_scheme_key(label).map_or_else(|| Text::literal(label), tr))
+            }
+            Opt::TouchCircleSize => literal(format!("{} px", s.touch.circle_size.round())),
+            Opt::TouchAttackSide => Some(tr(if s.touch.attack_indicator_left {
+                "horizon.options.touch.attack_side.left"
+            } else {
+                "horizon.options.touch.attack_side.right"
+            })),
             Opt::TouchHorizontalMargin => {
-                Some(format!("{:.1}%", s.touch.horizontal_margin * 100.0))
+                literal(format!("{:.1}%", s.touch.horizontal_margin * 100.0))
             }
-            Opt::TouchVerticalMargin => Some(format!("{:.1}%", s.touch.vertical_margin * 100.0)),
+            Opt::TouchVerticalMargin => literal(format!("{:.1}%", s.touch.vertical_margin * 100.0)),
             Opt::DebugGuiScale => Some(match s.file.int("debugGuiScale") {
-                n if n <= 0 => "Auto".into(),
-                n => format!("{n}x"),
+                n if n <= 0 => tr("options.guiScale.auto"),
+                n => Text::literal(format!("{n}x")),
             }),
-            Opt::AndroidGyroscope => Some(if s.touch.gyroscope { "ON" } else { "OFF" }.into()),
-            Opt::AndroidGyroSensitivity => {
-                Some(format!("{:.0}%", s.touch.gyro_sensitivity * 100.0))
+            Opt::AndroidGyroscope => Some(on_off(s.touch.gyroscope)),
+            Opt::AndroidGyroSensitivity => percent_of(s.touch.gyro_sensitivity),
+            Opt::TouchSensitivity => percent_of(s.touch.sensitivity),
+            Opt::TouchSensitivityHorizontal => percent_of(s.touch.sensitivity_horizontal),
+            Opt::TouchSensitivityVertical => percent_of(s.touch.sensitivity_vertical),
+            Opt::TouchOffhand => Some(on_off(s.touch.offhand_button)),
+            Opt::TouchShield => Some(tr(if s.touch.shield_button {
+                "horizon.options.touch.shield.button"
+            } else {
+                "horizon.options.touch.shield.sneak"
+            })),
+            Opt::TouchMouseSensitivity => percent_of(s.touch.virtual_mouse_sensitivity),
+            Opt::TouchCrosshairGestures => Some(on_off(s.touch.crosshair_gestures)),
+            Opt::TouchButtonScale => percent_of(s.touch.button_scale),
+            Opt::TouchAnalog => Some(on_off(s.touch.analog_movement)),
+            Opt::TouchInteract => Some(on_off(s.touch.contextual_interact)),
+            Opt::TouchLeftHand => Some(on_off(s.touch.left_handed)),
+            Opt::TouchSprintButton => Some(on_off(s.touch.sprint_button)),
+            Opt::TouchSprintToggle => Some(on_off(s.touch.sprint_toggle)),
+            Opt::TouchInventoryControls => Some(on_off(s.touch.inventory_controls)),
+            Opt::TouchButtonLook => Some(on_off(s.touch.button_look)),
+            Opt::TouchHotbarDrop => Some(on_off(s.touch.hotbar_hold_drop)),
+            Opt::TouchDynamicJoystick => Some(on_off(s.touch.dynamic_joystick)),
+            Opt::TouchDynamicAreaX => percent_of(s.touch.dynamic_area_x),
+            Opt::TouchDynamicAreaY => percent_of(s.touch.dynamic_area_y),
+            Opt::AndroidInputMode => {
+                use crate::android_gamepad::InputMode;
+                Some(tr(match crate::android_runtime::input_mode() {
+                    InputMode::Auto => "horizon.options.input_device.auto",
+                    InputMode::Touch => "horizon.options.input_device.touch",
+                    InputMode::KeyboardMouse => "horizon.options.input_device.keyboard_mouse",
+                    InputMode::Controller => "horizon.options.input_device.controller",
+                }))
             }
-            Opt::TouchSensitivity => Some(format!("{:.0}%", s.touch.sensitivity * 100.0)),
-            Opt::TouchSensitivityHorizontal => {
-                Some(format!("{:.0}%", s.touch.sensitivity_horizontal * 100.0))
-            }
-            Opt::TouchSensitivityVertical => {
-                Some(format!("{:.0}%", s.touch.sensitivity_vertical * 100.0))
-            }
-            Opt::TouchOffhand => Some(if s.touch.offhand_button { "On" } else { "Off" }.into()),
-            Opt::TouchShield => Some(
-                if s.touch.shield_button {
-                    "Button"
-                } else {
-                    "Sneak"
-                }
-                .into(),
-            ),
-            Opt::TouchMouseSensitivity => {
-                Some(format!("{:.0}%", s.touch.virtual_mouse_sensitivity * 100.0))
-            }
-            Opt::TouchCrosshairGestures => Some(
-                if s.touch.crosshair_gestures {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .into(),
-            ),
-            Opt::TouchButtonScale => Some(format!("{:.0}%", s.touch.button_scale * 100.0)),
-            Opt::TouchAnalog => Some(if s.touch.analog_movement { "ON" } else { "OFF" }.into()),
-            Opt::TouchInteract => Some(
-                if s.touch.contextual_interact {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .into(),
-            ),
-            Opt::TouchLeftHand => Some(if s.touch.left_handed { "ON" } else { "OFF" }.into()),
-            Opt::TouchSprintButton => Some(if s.touch.sprint_button { "ON" } else { "OFF" }.into()),
-            Opt::TouchSprintToggle => Some(if s.touch.sprint_toggle { "ON" } else { "OFF" }.into()),
-            Opt::TouchInventoryControls => Some(
-                if s.touch.inventory_controls {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .into(),
-            ),
-            Opt::TouchButtonLook => Some(if s.touch.button_look { "ON" } else { "OFF" }.into()),
-            Opt::TouchHotbarDrop => Some(
-                if s.touch.hotbar_hold_drop {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .into(),
-            ),
-            Opt::TouchDynamicJoystick => Some(
-                if s.touch.dynamic_joystick {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .into(),
-            ),
-            Opt::TouchDynamicAreaX => Some(format!("{:.0}%", s.touch.dynamic_area_x * 100.0)),
-            Opt::TouchDynamicAreaY => Some(format!("{:.0}%", s.touch.dynamic_area_y * 100.0)),
-            Opt::AndroidInputMode => Some(crate::android_runtime::input_mode().label().into()),
-            Opt::TouchSwapJumpSneak => {
-                Some(if s.touch.swap_jump_sneak { "ON" } else { "OFF" }.into())
-            }
-            Opt::TouchAutoSprint => Some(
-                if s.touch.sprint_with_joystick {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .into(),
-            ),
+            Opt::TouchSwapJumpSneak => Some(on_off(s.touch.swap_jump_sneak)),
+            Opt::TouchAutoSprint => Some(on_off(s.touch.sprint_with_joystick)),
             _ => None,
         };
         if let Some(value) = touch_value {
-            return Text::literal(format!("{c}: {value}"));
+            return generic(c, value);
         }
         match self {
             Opt::ChatDelay => tr("options.chat.delay_none"),
@@ -2435,7 +2402,7 @@ impl OptionsUi {
             Page::Controller => "horizon.pages.controller",
             Page::PadBinds => "horizon.pages.controller_binds",
             Page::Extras => "horizon.pages.extras",
-            Page::Touch => "Touch Controls",
+            Page::Touch => "horizon.pages.touch",
             Page::Credits => "credits_and_attribution.screen.title",
             Page::Horizon => "horizon.pages.settings",
             Page::Agent => "horizon.pages.agent",
@@ -2750,7 +2717,7 @@ impl OptionsUi {
                         } else {
                             310.0
                         },
-                        Text::literal("Controller Settings..."),
+                        tr("horizon.pages.open.controller"),
                         Act::Push(Page::Controller),
                     ),
                     {
@@ -2760,7 +2727,7 @@ impl OptionsUi {
                                 0.0,
                                 0.0,
                                 150.0,
-                                Text::literal("Touch Controls..."),
+                                tr("horizon.pages.open.touch"),
                                 Act::Push(Page::Touch),
                             ))
                         }
@@ -2807,7 +2774,7 @@ impl OptionsUi {
                         0.0,
                         0.0,
                         310.0,
-                        Text::literal("Customize layout..."),
+                        tr("horizon.options.touch.customize_layout"),
                         Act::TouchControls,
                     ),
                     None,
@@ -7361,6 +7328,41 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn touch_controls_page_names_have_bundled_russian() {
+        // Every option, the title and each scheme of the Touch Controls page
+        // reads a key of Horizon's bundled strings, translated in ru_ru:
+        // ru_ru lies over en_us, so a key it lacks reads as the English.
+        let en = lang::Language::load(&[], "en_us");
+        let ru = lang::Language::load(&[], "ru_ru");
+        let russian = |key: &str| {
+            let english = en.get(key);
+            assert!(english.is_some(), "{key:?} is not a bundled key");
+            assert_ne!(ru.get(key), english, "{key:?} has no ru_ru translation");
+        };
+        let mut ui = OptionsUi::default();
+        ui.push(Page::Touch);
+        let opts: Vec<Opt> = ui
+            .list_rows(&Settings::default())
+            .into_iter()
+            .flat_map(|row| match row {
+                Row::Big(o) => vec![o],
+                Row::Pair(a, b) => std::iter::once(a).chain(b).collect(),
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(opts.contains(&Opt::TouchMode) && opts.contains(&Opt::AndroidGyroscope));
+        for opt in opts {
+            russian(opt.caption());
+        }
+        russian(OptionsUi::title(Page::Touch));
+        for (_, _, label) in crate::touch::Mode::SCHEMES {
+            let key = touch_scheme_key(label);
+            assert!(key.is_some(), "scheme {label:?} has no translation key");
+            russian(key.unwrap());
+        }
     }
 
     #[test]

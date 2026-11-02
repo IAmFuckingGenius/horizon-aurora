@@ -27,6 +27,8 @@ pub struct TouchUi {
     /// The one finger that drives the raw inventory cursor; other fingers are ignored
     /// there so a second touch cannot click in the middle of a drag.
     inventory_pointer: Option<u64>,
+    /// Where the utility buttons are and when they show (the touch settings').
+    pub utility: crate::touch::UtilityLayout,
 }
 struct RelativeTouch {
     id: u64,
@@ -83,17 +85,67 @@ const KEYS: [(&str, KeyCode); 28] = [
     ("F3+T", KeyCode::KeyT),
 ];
 
-// Shared draw/hit rectangles: utility-style buttons at the lower right.
-fn mouse_button_rects(w: f32, h: f32) -> [([f32; 4], bool); 2] {
-    [
-        ([w - 53.0, h - 51.0, 50.0, 20.0], false),
-        ([w - 53.0, h - 27.0, 50.0, 20.0], true),
-    ]
+/// The drawer's keys' labels, translated where they are words.
+fn key_label(label: &str) -> String {
+    let key = match label {
+        "Swap" => "swap",
+        "Drop" => "drop",
+        "Adv" => "advanced",
+        "Chat" => "chat",
+        "Inv" => "inventory",
+        "Pick" => "pick",
+        _ => return label.to_owned(),
+    };
+    crate::lang::get(&format!("horizon.touch.utility.key.{key}"))
+}
+fn inside([x, y, w, h]: [f32; 4], p: [f32; 2]) -> bool {
+    (x..x + w).contains(&p[0]) && (y..y + h).contains(&p[1])
+}
+/// The open drawer, next to the "..." button: its top row (F3, F5, chat, the
+/// keyboard) and the origin of its key grid, all kept on the `w` × `h` GUI.
+struct Drawer {
+    row: [([f32; 4], Action, &'static str); 4],
+    grid: [f32; 2],
+}
+const GRID_W: f32 = 200.0;
+const GRID_H: f32 = 192.0;
+fn drawer(more: [f32; 4], w: f32, h: f32) -> Drawer {
+    let widths = [33.0, 33.0, 33.0, 39.0];
+    let row_w: f32 = widths.iter().sum::<f32>() + 9.0;
+    let mut x = more[0] + more[2] + 3.0;
+    if x + row_w > w - 3.0 {
+        x = (more[0] - 3.0 - row_w).max(3.0);
+    }
+    let y = more[1] + (more[3] - 20.0) / 2.0;
+    let mut row = [
+        ([0.0; 4], Action::Key(KeyCode::F3), "F3"),
+        ([0.0; 4], Action::Key(KeyCode::F5), "F5"),
+        ([0.0; 4], Action::Key(KeyCode::KeyT), "Chat"),
+        ([0.0; 4], Action::Keyboard, "Keys"),
+    ];
+    for (item, width) in row.iter_mut().zip(widths) {
+        item.0 = [x, y, width, 20.0];
+        x += width + 3.0;
+    }
+    let gx = more[0].clamp(3.0, (w - GRID_W - 3.0).max(3.0));
+    let below = more[1] + more[3] + 4.0;
+    let gy = if below + GRID_H <= h - 3.0 {
+        below
+    } else {
+        (more[1] - 4.0 - GRID_H).max(3.0)
+    };
+    Drawer {
+        row,
+        grid: [gx, gy],
+    }
 }
 
 /// Shared outlined pointer for virtual mouse and controller menus.
 pub fn draw_pointer(batch: &mut HudBatch, atlas: &HudAtlas, cursor: (f32, f32)) {
-    let (x, y) = (cursor.0.floor(), cursor.1.floor());
+    // Snapped to physical pixels, not GUI pixels: at GUI scale 4 a slow finger
+    // would otherwise move the pointer in visible 4-pixel jumps.
+    let snap = |v: f32| (v * batch.scale).round() / batch.scale;
+    let (x, y) = (snap(cursor.0), snap(cursor.1));
     const ROWS: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 4, 2, 1];
     for (i, &w) in ROWS.iter().enumerate() {
         batch.fill(
@@ -329,38 +381,38 @@ impl TouchUi {
         }
     }
     pub fn action(&self, w: f32, h: f32, p: [f32; 2], menu: bool) -> Option<Action> {
+        use crate::touch::Utility;
+        let gui = [w, h];
+        let shown = |u: Utility| self.utility.shown(u, menu);
         if menu && self.virtual_mouse {
-            for ([x, y, width, height], right) in mouse_button_rects(w, h) {
-                if (x..x + width).contains(&p[0]) && (y..y + height).contains(&p[1]) {
+            for (u, right) in [(Utility::Lmb, false), (Utility::Rmb, true)] {
+                if shown(u) && inside(self.utility.rect(u, gui), p) {
                     return Some(Action::MouseButton(right));
                 }
             }
         }
-        if menu && (3.0..23.0).contains(&p[1]) && (w - 108.0..w - 56.0).contains(&p[0]) {
+        if shown(Utility::Mouse) && inside(self.utility.rect(Utility::Mouse, gui), p) {
             return Some(Action::VirtualMouse);
         }
-        if (3.0..23.0).contains(&p[1]) {
-            if menu && (w - 53.0..w - 3.0).contains(&p[0]) {
-                return Some(Action::Key(KeyCode::Escape));
-            }
-            if (3.0..36.0).contains(&p[0]) {
-                return Some(Action::More);
-            }
-            if self.expanded && (39.0..72.0).contains(&p[0]) {
-                return Some(Action::Key(KeyCode::F3));
-            }
-            if self.expanded && (75.0..108.0).contains(&p[0]) {
-                return Some(Action::Key(KeyCode::F5));
-            }
-            if self.expanded && (111.0..144.0).contains(&p[0]) {
-                return Some(Action::Key(KeyCode::KeyT));
-            }
-            if self.expanded && (147.0..186.0).contains(&p[0]) {
-                return Some(Action::Keyboard);
+        if shown(Utility::Back) && inside(self.utility.rect(Utility::Back, gui), p) {
+            return Some(Action::Key(KeyCode::Escape));
+        }
+        let more = self.utility.rect(Utility::More, gui);
+        if shown(Utility::More) && inside(more, p) {
+            return Some(Action::More);
+        }
+        if !self.expanded {
+            return None;
+        }
+        let drawer = drawer(more, w, h);
+        for (rect, action, _) in drawer.row {
+            if inside(rect, p) {
+                return Some(action);
             }
         }
-        if self.expanded && (3.0..203.0).contains(&p[0]) && (27.0..219.0).contains(&p[1]) {
-            let i = ((p[1] - 27.0) / 24.0) as usize * 4 + ((p[0] - 3.0) / 50.0) as usize;
+        let [gx, gy] = drawer.grid;
+        if (gx..gx + GRID_W).contains(&p[0]) && (gy..gy + GRID_H).contains(&p[1]) {
+            let i = ((p[1] - gy) / 24.0) as usize * 4 + ((p[0] - gx) / 50.0) as usize;
             if i == 28 {
                 return Some(Action::LatchF3);
             }
@@ -373,70 +425,59 @@ impl TouchUi {
         None
     }
     pub fn draw(&self, b: &mut HudBatch, a: &HudAtlas, menu: bool) {
-        for (label, x, width) in [
-            ("...", 3.0, 33.0),
-            ("F3", 39.0, 33.0),
-            ("F5", 75.0, 33.0),
-            ("Chat", 111.0, 33.0),
-            ("Keys", 147.0, 39.0),
-        ] {
-            if label != "..." && !self.expanded {
+        use crate::touch::{Utility, draw_utility_button};
+        let gui = [b.width, b.height];
+        let more = self.utility.rect(Utility::More, gui);
+        for u in Utility::ALL {
+            let mouse_button = matches!(u, Utility::Lmb | Utility::Rmb);
+            if !self.utility.shown(u, menu) || (mouse_button && !self.virtual_mouse) {
                 continue;
             }
-            button(
+            let rect = self.utility.rect(u, gui);
+            draw_utility_button(
                 b,
                 a,
-                if label == "F3" && self.key_held(KeyCode::F3) {
-                    "F3*"
-                } else {
-                    label
-                },
-                x,
-                3.0,
-                width,
+                rect,
+                &u.label(self.virtual_mouse),
+                false,
+                self.utility.opacity(u),
             );
         }
-        if menu {
-            button(
+        if !self.expanded {
+            return;
+        }
+        let drawer = drawer(more, b.width, b.height);
+        for (rect, _, label) in drawer.row {
+            let label = if label == "F3" && self.key_held(KeyCode::F3) {
+                "F3*".to_owned()
+            } else if label == "Keys" {
+                crate::lang::get("horizon.touch.utility.key.keyboard")
+            } else {
+                key_label(label)
+            };
+            draw_utility_button(b, a, rect, &label, false, 1.0);
+        }
+        let [gx, gy] = drawer.grid;
+        let hold = crate::lang::get(if self.f3_latched {
+            "horizon.touch.utility.key.f3_on"
+        } else {
+            "horizon.touch.utility.key.f3_hold"
+        });
+        draw_utility_button(b, a, [gx, gy + 168.0, 48.0, 20.0], &hold, false, 1.0);
+        for (i, (label, _)) in KEYS.iter().enumerate() {
+            draw_utility_button(
                 b,
                 a,
-                if self.virtual_mouse {
-                    "Mouse ON"
-                } else {
-                    "Mouse"
-                },
-                b.width - 108.0,
-                3.0,
-                50.0,
-            );
-        }
-        if menu && self.virtual_mouse {
-            for ([x, y, width, _], right) in mouse_button_rects(b.width, b.height) {
-                button(b, a, if right { "RMB" } else { "LMB" }, x, y, width);
-            }
-        }
-        if menu {
-            button(b, a, "Back", b.width - 53.0, 3.0, 50.0);
-        }
-        if self.expanded {
-            button(
-                b,
-                a,
-                if self.f3_latched { "F3 ON" } else { "HoldF3" },
-                3.0,
-                195.0,
-                48.0,
-            );
-            for (i, (label, _)) in KEYS.iter().enumerate() {
-                button(
-                    b,
-                    a,
-                    label,
-                    3.0 + (i % 4) as f32 * 50.0,
-                    27.0 + (i / 4) as f32 * 24.0,
+                [
+                    gx + (i % 4) as f32 * 50.0,
+                    gy + (i / 4) as f32 * 24.0,
                     48.0,
-                );
-            }
+                    20.0,
+                ],
+                &key_label(label),
+                false,
+                1.0,
+            );
         }
     }
     pub fn keyboard_touch(
@@ -464,13 +505,6 @@ impl TouchUi {
         }
     }
 }
-fn button(b: &mut HudBatch, a: &HudAtlas, label: &str, x: f32, y: f32, w: f32) {
-    if !crate::touch::theme_button(b, a, "button", [x, y, w, 20.0], false, u32::MAX, true) {
-        b.fill(a, x, y, w, 20.0, rgba(16, 18, 24, 180));
-    }
-    b.text(a, label, x + 4.0, y + 6.0, rgba(245, 245, 245, 255), true);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

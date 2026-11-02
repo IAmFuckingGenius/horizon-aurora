@@ -22,9 +22,12 @@ struct HotbarFinger {
 }
 mod custom;
 mod editor;
-pub use custom::CustomButton;
+pub use custom::{COLORS, CustomButton, MAX_KEYS, Shape, choices as key_choices};
+pub use editor::{Act, Editor, Layer, Panel, Slider, Target};
 pub mod layout;
-pub use layout::{Control, Mode, Settings};
+mod utility;
+pub use layout::{Control, Mode, Settings, Show};
+pub use utility::{Utility, UtilityLayout};
 /// Entity-placement items retain short-tap placement, like building blocks.
 pub fn item_places_entity_on_tap(item: &str) -> bool {
     let Some(id) = item.strip_prefix("minecraft:") else {
@@ -142,14 +145,20 @@ pub struct TouchControls {
     pub shield_available: bool,
     /// Physical keypad profiles keep utility controls without a movement overlay.
     pub auxiliary_only: bool,
-    /// Inventory utility buttons emit real modifier/mouse events, never movement.
+    /// A screen is open over the world: only the controls shown over screens are
+    /// drawn and pressed, and they emit real modifier/mouse events, never movement.
     pub inventory_mode: bool,
+    /// The open screen is the inventory, where "Controls in inventory" shows its set.
+    pub inventory_screen: bool,
     pub editor: Option<editor::Editor>,
+    /// The editor's layer while it is open (kept outside the editor so visibility
+    /// checks see it while the editor handles a touch).
+    editing: Option<Layer>,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
     /// Attack/Use fingers that may turn the camera: where they went down, and
     /// whether they have moved past the drag threshold.
     button_drags: BTreeMap<u64, ([f32; 2], bool)>,
-    custom_fingers: BTreeMap<u64, String>,
+    custom_fingers: BTreeMap<u64, custom::Held>,
     hotbar_finger: Option<HotbarFinger>,
     /// Toggle-mode custom buttons that are switched on, by index.
     custom_latched: std::collections::BTreeSet<usize>,
@@ -159,6 +168,8 @@ pub struct TouchControls {
     tap_aim: Option<[f32; 2]>,
     pending_tap: Option<bool>,
     aspect: f32,
+    /// The surface in physical pixels, for the editor's dp geometry.
+    surface: [f32; 2],
     loaded: bool,
     pub chat_requested: bool,
     pub settings_requested: bool,
@@ -186,12 +197,13 @@ impl TouchControls {
 
     pub fn viewport(&mut self, width: u32, height: u32) {
         self.aspect = width.max(1) as f32 / height.max(1) as f32;
+        self.surface = [width.max(1) as f32, height.max(1) as f32];
         if !self.loaded {
             self.settings = Settings::load();
             self.loaded = true;
         }
     }
-    fn aspect(&self) -> f32 {
+    pub fn aspect(&self) -> f32 {
         if self.aspect > 0.0 {
             self.aspect
         } else {
@@ -228,6 +240,12 @@ impl TouchControls {
                     && layout::contains(self.placement(c).rect(self.aspect()), point)
             })
     }
+    /// Whether anything is shown in the current context (over a screen, only what
+    /// the player chose to show there).
+    pub fn any_visible(&self) -> bool {
+        Control::ALL.into_iter().any(|c| self.visible(c))
+            || (0..self.settings.custom_buttons.len()).any(|i| self.custom_visible(i))
+    }
     pub fn control_at(&self, point: [f32; 2]) -> Option<Control> {
         Control::ALL.into_iter().rev().find(|c| {
             self.visible(*c) && layout::contains(self.placement(*c).rect(self.aspect()), point)
@@ -257,8 +275,17 @@ impl TouchControls {
     pub fn tap(&mut self, button: Button) {
         self.pending.set(button, true);
     }
-    fn visible(&self, c: Control) -> bool {
-        if c == Control::Shield && !self.shield_available && self.editor.is_none() {
+    pub fn visible(&self, c: Control) -> bool {
+        if let Some(layer) = self.editing {
+            return match layer {
+                Layer::Game => self.settings.visible(c),
+                Layer::Menus => self.settings.visible_in_menu(c, true),
+            };
+        }
+        if self.inventory_mode {
+            return self.settings.visible_in_menu(c, self.inventory_screen);
+        }
+        if c == Control::Shield && !self.shield_available {
             return false;
         }
         if self.auxiliary_only && !Self::auxiliary_control(c) {
@@ -266,13 +293,13 @@ impl TouchControls {
         }
         if self.force_crosshair
             && matches!(c, Control::Attack | Control::Use)
-            && self.settings.button_visibility[c as usize] == 0
+            && self.settings.show(c) == Show::Auto
         {
             return true;
         }
 
         self.settings.visible(c)
-            || (self.settings.button_visibility[c as usize] != 2
+            || (self.settings.show(c) == Show::Auto
                 && c == Control::Use
                 && self.settings.contextual_interact
                 && (self.context_use
@@ -281,7 +308,8 @@ impl TouchControls {
                         .values()
                         .any(|(r, _)| matches!(r, Role::Button(Button::LeftTrigger)))))
     }
-    fn placement(&self, c: Control) -> layout::Placement {
+    /// Where control `c` is drawn, in surface fractions (mirrored, scaled, fitted).
+    pub fn placement(&self, c: Control) -> layout::Placement {
         let mut p = self.settings.placement(c);
         let factory_swap = c == Control::Offhand
             && self.settings.layouts[self.settings.mode.index()][c as usize].center == [0.80, 0.96]
@@ -340,9 +368,6 @@ impl TouchControls {
     }
     pub fn draw(&self, b: &mut HudBatch, a: &HudAtlas) {
         let (w, h) = (b.width, b.height);
-        if self.editor.is_some() {
-            self.draw_editor_toolbar(b, a);
-        }
         let state = self.state();
         for control in Control::ALL {
             if !self.visible(control) {
@@ -535,24 +560,23 @@ impl TouchControls {
                     ),
                 }
             }
-            if let Some(e) = &self.editor
-                && e.selected == Some(control)
-            {
-                let green = rgba(255, 255, 255, 255);
-                for (p, q) in [
-                    ([x - 1.0, y - 1.0], [x + size + 1.0, y - 1.0]),
-                    ([x - 1.0, y + size + 1.0], [x + size + 1.0, y + size + 1.0]),
-                    ([x - 1.0, y - 1.0], [x - 1.0, y + size + 1.0]),
-                    ([x + size + 1.0, y - 1.0], [x + size + 1.0, y + size + 1.0]),
-                ] {
-                    line(b, a, p, q, green);
-                }
-            }
         }
         self.draw_custom(b, a);
         if self.editor.is_some() {
-            self.draw_editor(b, a);
-        } else if let Some(point) = self.pointer() {
+            // The utility buttons, drawn by `touch_ui` while playing, show here
+            // so they can be moved.
+            let menus = self.editor_layer() == Layer::Menus;
+            for u in Utility::ALL {
+                if self.settings.utility.shown(u, menus) {
+                    let rect = self.settings.utility.rect(u, [w, h]);
+                    let opacity = self.settings.utility.opacity(u).max(0.35);
+                    draw_utility_button(b, a, rect, &u.label(false), false, opacity);
+                }
+            }
+        }
+        if self.editor.is_none()
+            && let Some(point) = self.pointer()
+        {
             let center = [point[0] * w, point[1] * h];
             let radius = self.settings.circle_size / 2.0;
             ring(b, a, center, radius + 0.7, rgba(0, 0, 0, 110));
@@ -1018,6 +1042,42 @@ pub fn theme_button(
     true
 }
 
+/// A utility button (the key drawer, the menu mouse, Back...): the pack's button
+/// art or a dark plate, its label centred and scaled with the button's height.
+pub fn draw_utility_button(
+    b: &mut HudBatch,
+    a: &HudAtlas,
+    [x, y, w, h]: [f32; 4],
+    label: &str,
+    pressed: bool,
+    opacity: f32,
+) {
+    let alpha = |v: f32| (v * opacity.clamp(0.0, 1.0)).round() as u8;
+    let tint = rgba(255, 255, 255, alpha(255.0));
+    if !theme_button(b, a, "button", [x, y, w, h], pressed, tint, true) {
+        let shade = if pressed { 40 } else { 16 };
+        b.fill(
+            a,
+            x,
+            y,
+            w,
+            h,
+            rgba(shade, shade + 2, shade + 8, alpha(180.0)),
+        );
+    }
+    let scale = h / 20.0;
+    let width = HudBatch::text_width(a, label);
+    let fit = ((w / scale - 6.0).max(1.0) / width.max(1.0)).min(1.0) * scale;
+    let start = b.vertices.len();
+    b.text(a, label, x, y, rgba(245, 245, 245, alpha(255.0)), true);
+    b.scale_since(start, x, y, fit, scale);
+    let shift = [(w - width * fit) / 2.0, 6.0 * scale];
+    for v in &mut b.vertices[start..] {
+        v.pos[0] += shift[0];
+        v.pos[1] += shift[1];
+    }
+}
+
 /// Shared text controls: keep the raised frame at rest, visibly depress it while held.
 fn text_button(
     b: &mut HudBatch,
@@ -1038,25 +1098,80 @@ fn text_button(
         };
         menu_frame(b, a, bounds, tint);
     }
-    let [x, y, w, h] = bounds;
+    let h = bounds[3];
     let offset = if pressed { (h / 18.0).min(2.0) } else { 0.0 };
-    let width = HudBatch::text_width(a, label);
-    let start = b.vertices.len();
     let label_color = if custom_art {
         rgba(25, 25, 25, color.to_le_bytes()[3])
     } else {
         color
     };
-    b.text(
-        a,
-        label,
-        x + (w - width) / 2.0,
-        y + (h - 8.0) / 2.0 + offset,
-        label_color,
-        false,
-    );
-    let scale = ((w - 6.0).max(1.0) / width.max(1.0)).min(((h - 6.0).max(1.0) / 8.0).min(1.0));
-    b.scale_since(start, x + w / 2.0, y + h / 2.0 + offset, scale, scale);
+    draw_label(b, a, bounds, label, label_color, offset, 6.0);
+}
+
+/// A label centred in `bounds`, scaled down to fit. A label that would shrink a
+/// lot breaks onto two lines (after a slash or plus, or at a space) when that
+/// reads bigger.
+pub(crate) fn draw_label(
+    b: &mut HudBatch,
+    a: &HudAtlas,
+    [x, y, w, h]: [f32; 4],
+    label: &str,
+    color: u32,
+    offset: f32,
+    pad: f32,
+) {
+    let room = (w - pad).max(1.0);
+    let fit = |width: f32, height: f32| {
+        (room / width.max(1.0))
+            .min((h - 4.0).max(1.0) / height)
+            .min(1.0)
+    };
+    let single = fit(HudBatch::text_width(a, label), 8.0).min((h - 6.0).max(1.0) / 8.0);
+    let mut lines = vec![label.to_owned()];
+    let mut scale = single;
+    if single < 0.8
+        && let Some((first, second)) = split_label(label)
+    {
+        let wide = HudBatch::text_width(a, &first).max(HudBatch::text_width(a, &second));
+        let two = fit(wide, 17.0);
+        if two > single * 1.15 {
+            lines = vec![first, second];
+            scale = two;
+        }
+    }
+    let line_h = 9.0 * scale;
+    let top = y + h / 2.0 + offset - (lines.len() as f32 * line_h - scale) / 2.0;
+    for (i, line) in lines.iter().enumerate() {
+        let width = HudBatch::text_width(a, line);
+        let start = b.vertices.len();
+        let cy = top + i as f32 * line_h + 4.0 * scale;
+        b.text(a, line, x + (w - width) / 2.0, cy - 4.0, color, false);
+        b.scale_since(start, x + w / 2.0, cy, scale, scale);
+    }
+}
+/// Splits a label in two near its middle: after a `/` or `+`, or at a space.
+fn split_label(label: &str) -> Option<(String, String)> {
+    let chars: Vec<char> = label.chars().collect();
+    let middle = chars.len() as f32 / 2.0;
+    let mut best: Option<(f32, usize, bool)> = None;
+    for (i, c) in chars.iter().enumerate() {
+        let (cut, drop) = match c {
+            '/' | '+' | '-' => (i + 1, false),
+            ' ' => (i, true),
+            _ => continue,
+        };
+        if cut == 0 || cut >= chars.len() {
+            continue;
+        }
+        let d = (cut as f32 - middle).abs();
+        if best.is_none_or(|(b, _, _)| d < b) {
+            best = Some((d, cut, drop));
+        }
+    }
+    let (_, cut, drop) = best?;
+    let first: String = chars[..cut].iter().collect();
+    let second: String = chars[cut + usize::from(drop)..].iter().collect();
+    Some((first.trim().to_owned(), second.trim().to_owned()))
 }
 
 /// Reuse Chat's complete 18x18 border, including its bottommost pixel row.
@@ -1091,41 +1206,6 @@ fn menu_frame(b: &mut HudBatch, a: &HudAtlas, [x, y, w, h]: [f32; 4], color: u32
                 ],
                 color,
             );
-        }
-    }
-}
-
-fn nine(
-    b: &mut HudBatch,
-    a: &HudAtlas,
-    name: &str,
-    border: f32,
-    [x, y, w, h]: [f32; 4],
-    color: u32,
-) {
-    if let Some(r) = a.sprites.get(&format!("gui/bedrock/{name}")).copied() {
-        let xs = [0.0, border, r.w as f32 - border, r.w as f32];
-        let ys = [0.0, border, r.h as f32 - border, r.h as f32];
-        let dx = [x, x + border, x + w - border, x + w];
-        let dy = [y, y + border, y + h - border, y + h];
-        for row in 0..3 {
-            for col in 0..3 {
-                let mut cell = r;
-                cell.u0 = r.u0 + (r.u1 - r.u0) * xs[col] / r.w as f32;
-                cell.u1 = r.u0 + (r.u1 - r.u0) * xs[col + 1] / r.w as f32;
-                cell.v0 = r.v0 + (r.v1 - r.v0) * ys[row] / r.h as f32;
-                cell.v1 = r.v0 + (r.v1 - r.v0) * ys[row + 1] / r.h as f32;
-                control_quad(
-                    b,
-                    a,
-                    dx[col],
-                    dy[row],
-                    dx[col + 1] - dx[col],
-                    dy[row + 1] - dy[row],
-                    cell,
-                    color,
-                );
-            }
         }
     }
 }
@@ -1230,26 +1310,6 @@ fn control_quad(
     b.rect_uv(left, top, right - left, bottom - top, r, color);
 }
 
-fn line(
-    b: &mut crate::hud::HudBatch,
-    a: &crate::hud::HudAtlas,
-    p: [f32; 2],
-    q: [f32; 2],
-    color: u32,
-) {
-    let steps = (q[0] - p[0]).abs().max((q[1] - p[1]).abs()).ceil().max(1.0) as u32;
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        b.fill(
-            a,
-            p[0] + (q[0] - p[0]) * t - 0.7,
-            p[1] + (q[1] - p[1]) * t - 0.7,
-            1.4,
-            1.4,
-            color,
-        );
-    }
-}
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1614,7 +1674,10 @@ mod tests {
         touch.open_editor();
         let center = touch.placement(Control::Move).center;
         touch.edit_touch(77, center, true, false);
-        assert_eq!(touch.editor.as_ref().unwrap().selected, Some(Control::Move));
+        assert_eq!(
+            touch.editor.as_ref().unwrap().selected,
+            Some(Target::Control(Control::Move))
+        );
         touch.edit_touch(77, [0.95, 0.95], false, false);
         let [x, y, w, h] = touch.placement(Control::Move).rect(touch.aspect());
         assert!(x >= 0.0 && y >= 0.0 && x + w <= 1.0001 && y + h <= 1.0001);
@@ -1652,18 +1715,122 @@ mod tests {
     }
 
     use super::*;
+    /// Taps an editor action the way its panel does: through a tap target.
+    fn act(t: &mut TouchControls, act: Act) -> bool {
+        t.editor.as_mut().unwrap().targets = vec![([0.0, 0.0, 1.0e6, 1.0e6], act)];
+        t.edit_touch(900, [0.5, 0.5], true, false);
+        let closed = t.edit_touch(900, [0.5, 0.5], false, true);
+        if let Some(e) = t.editor.as_mut() {
+            e.targets.clear();
+        }
+        closed
+    }
+    /// Drags a slider spanning the surface (1920 dp wide) to `value`.
+    fn slide(t: &mut TouchControls, kind: Slider, value: f32) {
+        t.editor.as_mut().unwrap().targets = vec![([0.0, 0.0, 1920.0, 1080.0], Act::Slider(kind))];
+        t.edit_touch(901, [value, 0.5], true, false);
+        t.edit_touch(901, [value, 0.5], false, true);
+        t.editor.as_mut().unwrap().targets.clear();
+    }
+    /// A finger down and up at `p` on the layout.
+    fn tap(t: &mut TouchControls, id: u64, p: [f32; 2]) {
+        t.edit_touch(id, p, true, false);
+        t.edit_touch(id, p, false, true);
+    }
     #[test]
-    fn editor_add_row_creates_a_button_without_closing_the_editor() {
+    fn adding_a_button_opens_its_key_picker_and_undo_takes_it_back() {
         let mut touch = TouchControls::default();
         touch.viewport(1920, 1080);
         touch.open_editor();
-        assert!(!touch.edit_touch(1, [0.15, 0.165], true, true));
-        assert!(!touch.edit_touch(2, [0.5, 0.875], true, true));
+        assert!(!act(&mut touch, Act::Add));
         assert!(touch.editor.is_some());
         assert_eq!(touch.settings.custom_buttons.len(), 1);
         assert_eq!(touch.settings.custom_buttons[0].key, "key.keyboard.unknown");
+        assert_eq!(
+            touch.editor.as_ref().unwrap().panel,
+            Panel::Keys {
+                slot: 0,
+                raw: false
+            }
+        );
+        let jump = key_choices(false)
+            .iter()
+            .position(|(token, _)| token == "action:key.jump")
+            .unwrap();
+        act(&mut touch, Act::Pick(jump));
+        assert_eq!(touch.settings.custom_buttons[0].key, "action:key.jump");
+        assert_eq!(touch.editor.as_ref().unwrap().panel, Panel::Props);
+        act(&mut touch, Act::Undo);
+        act(&mut touch, Act::Undo);
+        assert!(touch.settings.custom_buttons.is_empty());
+        act(&mut touch, Act::Redo);
+        assert_eq!(touch.settings.custom_buttons.len(), 1);
         touch.cancel_editor();
         assert!(touch.settings.custom_buttons.is_empty());
+    }
+    #[test]
+    fn a_dragged_control_snaps_to_its_neighbours_centre_line() {
+        let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+        t.settings.editor_snap = false;
+        t.open_editor();
+        let attack = t.placement(Control::Attack).center;
+        let start = t.placement(Control::Use).center;
+        t.edit_touch(1, start, true, false);
+        // 3 dp below Attack's centre line.
+        t.edit_touch(1, [start[0], attack[1] + 3.0 / 1080.0], false, false);
+        assert!(!t.editor.as_ref().unwrap().guides.1.is_empty());
+        t.edit_touch(1, [start[0], attack[1] + 3.0 / 1080.0], false, true);
+        assert!((t.placement(Control::Use).center[1] - attack[1]).abs() < 0.001);
+        assert!(t.editor.as_ref().unwrap().guides.1.is_empty());
+        t.cancel_editor();
+    }
+    #[test]
+    fn reset_waits_for_confirmation_and_can_be_undone() {
+        let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+        t.settings.layouts[0][Control::Jump as usize].center = [0.3, 0.3];
+        t.settings.set_show(Control::Chat, Show::Hidden);
+        t.open_editor();
+        act(&mut t, Act::Open(Panel::Reset));
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            [0.3, 0.3]
+        );
+        act(&mut t, Act::ResetLayout);
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            Settings::default().layouts[0][Control::Jump as usize].center
+        );
+        assert!(t.settings.visible(Control::Chat));
+        act(&mut t, Act::Undo);
+        assert_eq!(
+            t.settings.layouts[0][Control::Jump as usize].center,
+            [0.3, 0.3]
+        );
+        assert!(!t.settings.visible(Control::Chat));
+        t.cancel_editor();
+    }
+    #[test]
+    fn the_list_eye_shows_controls_in_the_layer_being_edited() {
+        let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+        t.open_editor();
+        assert!(t.visible(Control::Jump));
+        act(&mut t, Act::Eye(Target::Control(Control::Jump)));
+        assert!(!t.visible(Control::Jump));
+        act(&mut t, Act::Layer(Layer::Menus));
+        assert!(!t.visible(Control::Sneak));
+        act(&mut t, Act::Eye(Target::Control(Control::Sneak)));
+        assert!(t.visible(Control::Sneak));
+        assert_eq!(t.settings.show(Control::Sneak), Show::Always);
+        // Jump means nothing over a screen: its eye does nothing there.
+        act(&mut t, Act::Eye(Target::Control(Control::Jump)));
+        assert!(!t.visible(Control::Jump));
+        assert!(act(&mut t, Act::Cancel));
+        assert!(t.editor.is_none());
+        assert!(t.settings.visible(Control::Jump));
+        assert_eq!(t.settings.show(Control::Sneak), Show::Auto);
     }
 
     #[test]
@@ -1962,19 +2129,20 @@ mod tests {
     #[test]
     fn editing_owns_input_and_cancel_restores_layouts() {
         let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+        t.settings.editor_snap = false;
         t.open_editor();
         t.edit_touch(1, [0.13, 0.76], true, false);
         t.edit_touch(1, [0.18, 0.70], false, true);
-        assert!((t.settings.placement(Control::Move).center[0] - 0.18).abs() < 0.001);
+        assert!((t.settings.placement(Control::Move).center[0] - 0.18).abs() < 0.01);
         assert_eq!(t.poll_state(), PadState::default());
         t.cancel_editor();
         assert_eq!(t.settings.placement(Control::Move).center, [0.13, 0.76]);
         t.settings.mode = Mode::Tap;
         t.open_editor();
         assert_eq!(t.settings.mode, Mode::Tap);
-        t.edit_touch(3, [0.13, 0.76], true, true);
-        t.edit_touch(4, [0.6, 0.82], true, true);
-        t.edit_touch(5, [0.65, 0.73], true, true);
+        tap(&mut t, 3, [0.13, 0.76]);
+        slide(&mut t, Slider::Size, 1.0);
         assert!(t.settings.placement(Control::Move).size > 0.4);
         t.cancel_editor();
         assert_eq!(t.settings.mode, Mode::Tap);
@@ -1982,19 +2150,33 @@ mod tests {
     #[test]
     fn editor_deselects_and_can_apply_opacity_to_the_current_mode() {
         let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
         t.open_editor();
-        t.edit_touch(1, [0.13, 0.76], true, true);
-        t.edit_touch(2, [0.4, 0.82], true, true); // Opacity
-        t.edit_touch(3, [0.5, 0.64], true, true); // Apply to all
-        t.edit_touch(4, [0.5, 0.73], true, true);
+        tap(&mut t, 1, [0.13, 0.76]);
+        assert_eq!(t.editor.as_ref().unwrap().panel, Panel::Props);
+        slide(&mut t, Slider::Opacity, 0.5);
+        act(&mut t, Act::OpacityToAll);
         for p in t.settings.layouts[0] {
             assert!((p.opacity - 0.5).abs() < 0.001);
         }
         assert_eq!(t.settings.layouts[1][0].opacity, 0.65);
-        t.edit_touch(5, [0.7, 0.4], true, true);
+        tap(&mut t, 5, [0.5, 0.4]);
         assert!(t.editor.as_ref().unwrap().selected.is_none());
         t.cancel_editor();
         assert_eq!(t.settings.layouts[0][0].opacity, 0.65);
+    }
+    #[test]
+    fn long_labels_break_after_a_slash_or_at_a_space() {
+        assert_eq!(
+            split_label("Использовать/Установить"),
+            Some(("Использовать/".into(), "Установить".into()))
+        );
+        assert_eq!(split_label("Ctrl+Q"), Some(("Ctrl+".into(), "Q".into())));
+        assert_eq!(
+            split_label("Drop all items"),
+            Some(("Drop all".into(), "items".into()))
+        );
+        assert_eq!(split_label("Jump"), None);
     }
     #[test]
     fn layouts_roundtrip_and_reject_invalid_sizes() {

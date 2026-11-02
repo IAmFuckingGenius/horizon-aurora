@@ -497,6 +497,17 @@ impl Game<'_> {
             ));
         }
         for out in crate::platform::poll() {
+            if self.pad.touch.editor_typing() {
+                match out {
+                    Output::Text(s) => self.pad.touch.editor_type(&s, false, false),
+                    Output::Backspace => self.pad.touch.editor_type("", true, false),
+                    Output::Enter | Output::Close => {
+                        self.pad.touch.editor_type("", false, true);
+                        crate::platform::hide();
+                    }
+                }
+                continue;
+            }
             let next_sign_line = self.sign_edit.is_some() && matches!(out, Output::Enter);
             let done =
                 matches!(out, Output::Close) || (matches!(out, Output::Enter) && !next_sign_line);

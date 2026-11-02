@@ -762,6 +762,17 @@ impl Loading {
             log::info!("{}", notice.text);
         }
         for out in crate::platform::poll() {
+            if self.menu.controls.editor_typing() {
+                match out {
+                    Output::Text(s) => self.menu.controls.editor_type(&s, false, false),
+                    Output::Backspace => self.menu.controls.editor_type("", true, false),
+                    Output::Enter | Output::Close => {
+                        self.menu.controls.editor_type("", false, true);
+                        crate::platform::hide();
+                    }
+                }
+                continue;
+            }
             match out {
                 Output::Text(s) => {
                     if self.menu.options_open {
@@ -1165,8 +1176,17 @@ impl Loading {
                         t.phase == TouchPhase::Ended,
                     );
                 }
+                if let Some(text) = self.menu.controls.take_text_request() {
+                    crate::platform::show(&text);
+                }
+                if self.menu.controls.take_hide_keyboard() {
+                    crate::platform::hide();
+                }
                 if self.menu.controls.editor.is_none() {
                     self.settings.touch = self.menu.controls.settings.clone();
+                    if crate::platform::active() {
+                        crate::platform::hide();
+                    }
                 }
                 if std::mem::take(&mut self.menu.controls.clicked) {
                     self.menu.click_sound(self.settings.volumes);
@@ -1615,7 +1635,13 @@ impl Loading {
         }
         #[cfg(target_os = "android")]
         if self.menu.controls.editor.is_some() {
+            let density = self
+                .window
+                .as_ref()
+                .map_or(1.0, |w| w.scale_factor() as f32);
+            horizon_client::touch_editor::backdrop(&self.menu.controls, batch, &gui.atlas, density);
             self.menu.controls.draw(batch, &gui.atlas);
+            horizon_client::touch_editor::draw(&mut self.menu.controls, batch, &gui.atlas, density);
             return;
         }
         if self.menu.pending.is_some() {
@@ -1694,6 +1720,7 @@ impl Loading {
         );
         #[cfg(target_os = "android")]
         {
+            self.menu.touch.utility = self.menu.controls.settings.utility;
             self.menu.touch.draw(batch, &gui.atlas, true);
             if self.menu.touch.virtual_mouse {
                 horizon_client::touch_ui::draw_pointer(batch, &gui.atlas, self.menu.cursor);
