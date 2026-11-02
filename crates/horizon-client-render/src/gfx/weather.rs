@@ -3,6 +3,11 @@ use crate::weather::{Time, Vertex};
 
 pub(super) struct Weather {
     pipeline: wgpu::RenderPipeline,
+    /// The same draw through `vs_weather_lean`/`fs_weather_lean`: the classic pass's
+    /// default, with the same pixels and less work per covered pixel.
+    lean: wgpu::RenderPipeline,
+    /// Draw through `pipeline` instead of `lean` (the `weather-shader` A/B command).
+    pub classic: bool,
     /// The layouts of groups 0 (the entities') and 1 (the fall clock), for a native pack's
     /// weather pipeline.
     pub entity_layout: wgpu::BindGroupLayout,
@@ -40,38 +45,42 @@ impl Weather {
         });
         let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x2,2=>Float32x4,
             3=>Float32x4,4=>Uint32x4,5=>Unorm8x4,6=>Uint8x4,7=>Uint32];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Weather"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_weather"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &attributes,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(depth_stencil()),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_weather"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = |label: &str, vs: &str, fs: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some(vs),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &attributes,
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_stencil()),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let lean = pipeline("Weather (lean)", "vs_weather_lean", "fs_weather_lean");
+        let pipeline = pipeline("Weather", "vs_weather", "fs_weather");
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Weather time"),
             size: 16,
@@ -88,6 +97,8 @@ impl Weather {
         });
         Self {
             pipeline,
+            lean,
+            classic: false,
             entity_layout: entities.clone(),
             time_layout: bindings,
             group,
@@ -160,7 +171,8 @@ impl Weather {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(horizon_shader_api::stages::GROUP, frame, &[]);
             }
-            None => pass.set_pipeline(&self.pipeline),
+            None if self.classic => pass.set_pipeline(&self.pipeline),
+            None => pass.set_pipeline(&self.lean),
         }
         pass.set_bind_group(0, entities, &[]);
         pass.set_bind_group(1, &self.group, &[]);

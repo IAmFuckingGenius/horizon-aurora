@@ -13,6 +13,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 const HELP: &[&str] = &[
     "sky-order early|late           A/B vanilla sky ordering on supported Android Vulkan devices",
     "terrain-passes single|split    A/B terrain pipelines; split requires a supported backend",
+    "weather-shader classic|lean    A/B the rain and snow fragment shader (lean is the default)",
     "static-cutout on|off           A/B skipping unused LOD dithering in proven unfaded cutouts",
     "settled-terrain on|off         A/B specialization for fully visible non-RGSS terrain",
     "status                         game, player, streaming and renderer state",
@@ -349,6 +350,18 @@ impl Game<'_> {
                     .as_mut()
                     .ok_or("no renderer")?
                     .set_static_cutout(on)?;
+                ok()
+            }
+            "weather-shader" => {
+                let classic = match arg(1)? {
+                    "classic" => true,
+                    "lean" => false,
+                    _ => return Err("weather-shader classic|lean".into()),
+                };
+                self.renderer
+                    .as_mut()
+                    .ok_or("no renderer")?
+                    .set_weather_classic(classic);
                 ok()
             }
             "terrain-passes" => {

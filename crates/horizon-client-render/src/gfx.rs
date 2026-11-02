@@ -4034,6 +4034,14 @@ impl Renderer {
         self.late_sky_on = on;
         Ok(())
     }
+    /// Developer A/B of the classic pass's weather shader: `true` draws it through the
+    /// original entity fragment, `false` (the default) through the lean one.
+    pub fn set_weather_classic(&mut self, on: bool) {
+        self.weather.classic = on;
+    }
+    pub fn weather_classic(&self) -> bool {
+        self.weather.classic
+    }
     /// Whether one of Horizon's own packs reads the water mirror, which needs the frame's
     /// `water_plane`.
     pub fn wants_water_plane(&self) -> bool {
