@@ -248,8 +248,27 @@ impl TouchControls {
     }
     pub fn control_at(&self, point: [f32; 2]) -> Option<Control> {
         Control::ALL.into_iter().rev().find(|c| {
-            self.visible(*c) && layout::contains(self.placement(*c).rect(self.aspect()), point)
+            if !self.visible(*c) {
+                return false;
+            }
+            // While editing (the editor is taken out to handle a touch), the
+            // joystick is picked by its home rectangle like any control.
+            if *c == Control::Move && self.dynamic_joystick() && self.editing.is_none() {
+                let area = self.dynamic_area();
+                return !self.inventory_mode
+                    && area[2] > 0.0
+                    && area[3] > 0.0
+                    && !self
+                        .fingers
+                        .values()
+                        .any(|(role, _)| matches!(role, Role::Move(_)))
+                    && layout::contains(area, point);
+            }
+            layout::contains(self.placement(*c).rect(self.aspect()), point)
         })
+    }
+    fn dynamic_joystick(&self) -> bool {
+        self.settings.dynamic_joystick && self.settings.mode != Mode::Dpad
     }
     pub fn control_at_point(&self, point: [f32; 2]) -> bool {
         self.custom_at(point).is_some() || self.control_at(point).is_some()
@@ -286,6 +305,14 @@ impl TouchControls {
             return self.settings.visible_in_menu(c, self.inventory_screen);
         }
         if c == Control::Shield && !self.shield_available {
+            return false;
+        }
+        if c == Control::Shield
+            && self.force_crosshair
+            && self.settings.button_visibility[Control::Use as usize] == 0
+            && self.settings.button_visibility[c as usize] == 0
+        {
+            // A forced aim layout already provides the ordinary use/raise-shield button.
             return false;
         }
         if self.auxiliary_only && !Self::auxiliary_control(c) {
@@ -397,7 +424,7 @@ impl TouchControls {
                     Role::Move(anchor) => Some(*anchor),
                     _ => None,
                 });
-                let dynamic = self.settings.dynamic_joystick && self.settings.mode != Mode::Dpad;
+                let dynamic = self.dynamic_joystick();
                 let (x, y) = match anchor {
                     Some(anchor) if dynamic => {
                         (anchor[0] * w - size / 2.0, anchor[1] * h - size / 2.0)
@@ -662,7 +689,7 @@ impl TouchControls {
                         .values()
                         .any(|(r, _)| matches!(r, Role::Move(_))) =>
                 {
-                    let anchor = if self.settings.dynamic_joystick {
+                    let anchor = if self.dynamic_joystick() {
                         point
                     } else {
                         self.placement(Control::Move).center
@@ -722,16 +749,6 @@ impl TouchControls {
                     Role::Ignore
                 }
                 Some(c) => Self::button(c).map_or(Role::Ignore, Role::Button),
-                None if self.settings.dynamic_joystick
-                    && self.settings.mode != Mode::Dpad
-                    && layout::contains(self.dynamic_area(), point)
-                    && !self
-                        .fingers
-                        .values()
-                        .any(|(r, _)| matches!(r, Role::Move(_))) =>
-                {
-                    Role::Move(point)
-                }
                 None => Role::Look {
                     start: point,
                     since: Instant::now(),
@@ -1463,6 +1480,69 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_joystick_respects_hidden_controls_and_has_no_fixed_hitbox() {
+        let mut t = TouchControls::default();
+        t.settings.dynamic_joystick = true;
+        t.settings.dynamic_area_x = 0.05;
+        let home = t.placement(Control::Move).center;
+        t.update(1, home, true, false);
+        assert!(matches!(t.fingers[&1].0, Role::Look { .. }));
+        t.clear();
+
+        // The edge strip participates in the same hit test as the other controls.
+        let edge = [0.025, 0.5];
+        assert_eq!(t.control_at(edge), Some(Control::Move));
+        t.update(2, edge, true, false);
+        assert!(matches!(t.fingers[&2].0, Role::Move(_)));
+        // A second finger cannot steal the movement anchor.
+        t.update(3, [0.03, 0.6], true, false);
+        assert!(matches!(t.fingers[&3].0, Role::Look { .. }));
+        t.update(2, [0.05, 0.5], false, false);
+        assert!(t.state().left[0] > 0.0);
+        t.update(2, [0.05, 0.5], false, true);
+        assert_eq!(t.state().left, [0.0; 2]);
+        t.clear();
+
+        t.settings.button_visibility[Control::Move as usize] = 2;
+        t.update(4, edge, true, false);
+        assert!(matches!(t.fingers[&4].0, Role::Look { .. }));
+        t.clear();
+        t.settings.button_visibility[Control::Move as usize] = 0;
+        t.settings.dynamic_area_x = 0.0;
+        t.update(5, [0.0, 0.5], true, false);
+        assert!(matches!(t.fingers[&5].0, Role::Look { .. }));
+    }
+
+    #[test]
+    fn dynamic_joystick_keeps_fixed_and_dpad_controls_and_button_priority() {
+        let mut t = TouchControls::default();
+        let home = t.placement(Control::Move).center;
+        let start = [home[0] + 0.01, home[1]];
+        t.update(1, start, true, false);
+        assert!(matches!(t.fingers[&1].0, Role::Move(anchor) if anchor == home));
+        t.clear();
+
+        t.settings.dynamic_joystick = true;
+        t.settings.mode = Mode::Dpad;
+        let home = t.placement(Control::Move).center;
+        let up = [home[0], home[1] - t.placement(Control::Move).size / 3.0];
+        t.update(2, up, true, false);
+        assert!(matches!(t.fingers[&2].0, Role::Move(anchor) if anchor == home));
+        t.clear();
+
+        t.settings.mode = Mode::Crosshair;
+        t.settings.dynamic_area_x = 1.0;
+        let jump = t.placement(Control::Jump).center;
+        t.update(3, jump, true, false);
+        assert!(t.state().held(Button::South));
+        assert!(
+            !t.fingers
+                .values()
+                .any(|(role, _)| matches!(role, Role::Move(_)))
+        );
+    }
+
+    #[test]
     fn camera_calibration_uses_physical_distance_on_both_axes() {
         let mut settings = Settings::default();
         for (w, h) in [(2400, 1080), (1080, 2400)] {
@@ -1538,6 +1618,7 @@ mod tests {
             ]
         );
         t.clear();
+        t.settings.mode = Mode::Tap;
         t.settings.shield_button = true;
         t.shield_available = true;
         let p = t.placement(Control::Shield).center;
@@ -1549,6 +1630,41 @@ mod tests {
         t.update(2, [0.5, 0.4], false, true);
         assert!(!t.shield_held());
         assert_eq!(t.poll_state().triggers[0], 0.0);
+    }
+
+    #[test]
+    fn shield_uses_the_existing_use_button_in_aim_layouts() {
+        let mut t = TouchControls::default();
+        t.shield_available = true;
+        assert!(!t.visible(Control::Shield));
+        let p = t.placement(Control::Use).center;
+        t.update(1, p, true, false);
+        assert!(t.poll_state().triggers[0] > 0.0);
+        t.update(1, p, false, true);
+        assert_eq!(t.poll_state().triggers[0], 0.0);
+
+        for mode in [Mode::Tap, Mode::Dpad] {
+            t.clear();
+            t.settings.mode = mode;
+            assert!(t.visible(Control::Shield));
+            let p = t.placement(Control::Shield).center;
+            t.update(2, p, true, false);
+            assert!(t.shield_held());
+            assert!(t.poll_state().triggers[0] > 0.0);
+            t.update(2, p, false, true);
+            assert!(!t.shield_held());
+
+            t.force_crosshair = true;
+            assert!(!t.visible(Control::Shield));
+            t.force_crosshair = false;
+            t.settings.shield_button = false;
+            assert!(!t.visible(Control::Shield));
+            t.settings.shield_button = true;
+        }
+        // A player hiding the normal use button can retain the dedicated shield button.
+        t.settings.mode = Mode::Crosshair;
+        t.settings.button_visibility[Control::Use as usize] = 2;
+        assert!(t.visible(Control::Shield));
     }
 
     #[test]
