@@ -4,7 +4,7 @@ use crate::{
     osk::{Keyboard, Output},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     time::{Duration, Instant},
 };
 use winit::{event::TouchPhase, keyboard::KeyCode};
@@ -21,6 +21,12 @@ pub struct TouchUi {
     pointer_drag: Option<u64>,
     held_keys: BTreeMap<u64, KeyCode>,
     pub f3_latched: bool,
+    /// Fingers that went down on the auxiliary drawer. They stay with it until they
+    /// lift, wherever they move, so they never reach the joystick or the camera.
+    drawer_fingers: BTreeSet<u64>,
+    /// The one finger that drives the raw inventory cursor; other fingers are ignored
+    /// there so a second touch cannot click in the middle of a drag.
+    inventory_pointer: Option<u64>,
 }
 struct RelativeTouch {
     id: u64,
@@ -166,6 +172,44 @@ impl TouchUi {
         self.pointer_drag = None;
         self.relative = None;
         self.relative_click = None;
+        self.drawer_fingers.clear();
+        self.inventory_pointer = None;
+    }
+    /// A finger that went down on a drawer control belongs to the drawer until it lifts.
+    pub fn claim_finger(&mut self, id: u64) {
+        self.drawer_fingers.insert(id);
+    }
+    pub fn owns_finger(&self, id: u64) -> bool {
+        self.drawer_fingers.contains(&id)
+    }
+    /// Returns whether the drawer owned this finger.
+    pub fn release_finger(&mut self, id: u64) -> bool {
+        self.drawer_fingers.remove(&id)
+    }
+    /// Forgets the inventory cursor finger once no inventory screen is open, so a
+    /// finger that lifted elsewhere cannot keep the next inventory from responding.
+    pub fn reset_inventory_pointer(&mut self) {
+        self.inventory_pointer = None;
+    }
+    /// Whether this finger drives the raw inventory cursor. The first finger down owns it
+    /// until it lifts; touches by other fingers meanwhile are dropped.
+    pub fn inventory_pointer(&mut self, id: u64, phase: TouchPhase) -> bool {
+        match phase {
+            TouchPhase::Started => {
+                if self.inventory_pointer.is_none() {
+                    self.inventory_pointer = Some(id);
+                }
+                self.inventory_pointer == Some(id)
+            }
+            TouchPhase::Moved => self.inventory_pointer == Some(id),
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                let owner = self.inventory_pointer == Some(id);
+                if owner {
+                    self.inventory_pointer = None;
+                }
+                owner
+            }
+        }
     }
     pub fn cancel_relative(&mut self) {
         self.relative = None;
@@ -430,6 +474,39 @@ fn button(b: &mut HudBatch, a: &HudAtlas, label: &str, x: f32, y: f32, w: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_drawer_finger_stays_with_the_drawer_until_it_lifts() {
+        let mut ui = TouchUi::default();
+        ui.claim_finger(3);
+        assert!(ui.owns_finger(3));
+        assert!(!ui.owns_finger(4));
+        assert!(ui.release_finger(3));
+        assert!(!ui.owns_finger(3), "a reused pointer id starts fresh");
+        assert!(!ui.release_finger(3));
+    }
+    #[test]
+    fn a_second_finger_cannot_click_during_an_inventory_drag() {
+        let mut ui = TouchUi::default();
+        assert!(ui.inventory_pointer(1, TouchPhase::Started));
+        assert!(!ui.inventory_pointer(2, TouchPhase::Started));
+        assert!(ui.inventory_pointer(1, TouchPhase::Moved));
+        assert!(!ui.inventory_pointer(2, TouchPhase::Moved));
+        assert!(!ui.inventory_pointer(2, TouchPhase::Ended));
+        assert!(ui.inventory_pointer(1, TouchPhase::Ended));
+        assert!(
+            ui.inventory_pointer(2, TouchPhase::Started),
+            "free again after the lift"
+        );
+    }
+    #[test]
+    fn cancel_releases_drawer_and_inventory_fingers() {
+        let mut ui = TouchUi::default();
+        ui.claim_finger(1);
+        assert!(ui.inventory_pointer(2, TouchPhase::Started));
+        ui.cancel();
+        assert!(!ui.owns_finger(1));
+        assert!(ui.inventory_pointer(5, TouchPhase::Started));
+    }
     #[test]
     fn explicit_mouse_drag_does_not_generate_an_extra_tap_or_hold_click() {
         let mut ui = TouchUi::default();

@@ -6,6 +6,20 @@ use std::{
     time::{Duration, Instant},
 };
 const HOLD_DELAY: Duration = Duration::from_millis(350);
+/// Holding a hotbar slot throws its item after this, then again every repeat.
+const HOTBAR_DROP_DELAY: Duration = Duration::from_millis(600);
+const HOTBAR_DROP_REPEAT: Duration = Duration::from_millis(250);
+/// A finger on the hotbar: it selects the slot under it, slides between slots and,
+/// held still, throws the selected item as Bedrock does.
+#[derive(Clone, Copy)]
+struct HotbarFinger {
+    id: u64,
+    slot: usize,
+    since: Instant,
+    next_drop: Option<Instant>,
+    /// Slid off the hotbar: no throw until it is back on a slot.
+    left: bool,
+}
 mod custom;
 mod editor;
 pub use custom::CustomButton;
@@ -132,7 +146,13 @@ pub struct TouchControls {
     pub inventory_mode: bool,
     pub editor: Option<editor::Editor>,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
+    /// Attack/Use fingers that may turn the camera: where they went down, and
+    /// whether they have moved past the drag threshold.
+    button_drags: BTreeMap<u64, ([f32; 2], bool)>,
     custom_fingers: BTreeMap<u64, String>,
+    hotbar_finger: Option<HotbarFinger>,
+    /// Toggle-mode custom buttons that are switched on, by index.
+    custom_latched: std::collections::BTreeSet<usize>,
     custom_events: Vec<(String, bool)>,
     pending: PadState,
     pub aim: Option<[f32; 2]>,
@@ -178,6 +198,18 @@ impl TouchControls {
             16.0 / 9.0
         }
     }
+    /// Where a dynamic joystick may appear. X is the fraction of the surface
+    /// width measured inward from the movement edge; Y is the fraction of the
+    /// height centred on the movement control. Touches outside it stay camera
+    /// gestures.
+    pub fn dynamic_area(&self) -> [f32; 4] {
+        let move_control = self.placement(Control::Move);
+        let left = move_control.center[0] < 0.5;
+        let width = self.settings.dynamic_area_x.clamp(0.0, 1.0);
+        let height = self.settings.dynamic_area_y.clamp(0.0, 1.0);
+        let y = (move_control.center[1] - height / 2.0).clamp(0.0, 1.0 - height);
+        [if left { 0.0 } else { 1.0 - width }, y, width, height]
+    }
     fn auxiliary_control(c: Control) -> bool {
         matches!(
             c,
@@ -208,7 +240,6 @@ impl TouchControls {
     pub fn clear_world_gesture(&mut self) {
         self.fingers
             .retain(|_, (role, _)| matches!(role, Role::Ignore));
-        self.sprint_latched = false;
         self.pending = PadState::default();
         self.aim = None;
         self.tap_aim = None;
@@ -336,6 +367,23 @@ impl TouchControls {
                         || (bt == Button::RightTrigger && state.triggers[1] > 0.0)
                 });
             if control == Control::Move {
+                // The frame stays where the finger first landed; only the knob follows.
+                let anchor = self.fingers.values().find_map(|(role, _)| match role {
+                    Role::Move(anchor) => Some(*anchor),
+                    _ => None,
+                });
+                let dynamic = self.settings.dynamic_joystick && self.settings.mode != Mode::Dpad;
+                let (x, y) = match anchor {
+                    Some(anchor) if dynamic => {
+                        (anchor[0] * w - size / 2.0, anchor[1] * h - size / 2.0)
+                    }
+                    _ => (p.center[0] * w - size / 2.0, p.center[1] * h - size / 2.0),
+                };
+                // A dynamic joystick only exists where the player touches; the
+                // editor still shows its home position so it can be moved.
+                if dynamic && anchor.is_none() && self.editor.is_none() {
+                    continue;
+                }
                 if self.settings.mode == Mode::Dpad {
                     let cell = size / 3.0;
                     for (dx, dy, name) in [
@@ -556,6 +604,7 @@ impl TouchControls {
             return [0.0; 2];
         }
         if ended {
+            self.button_drags.remove(&id);
             if let Some((
                 Role::Look {
                     start,
@@ -589,7 +638,12 @@ impl TouchControls {
                         .values()
                         .any(|(r, _)| matches!(r, Role::Move(_))) =>
                 {
-                    Role::Move(self.placement(Control::Move).center)
+                    let anchor = if self.settings.dynamic_joystick {
+                        point
+                    } else {
+                        self.placement(Control::Move).center
+                    };
+                    Role::Move(anchor)
                 }
                 Some(Control::Shield) => {
                     self.clicked = true;
@@ -644,6 +698,16 @@ impl TouchControls {
                     Role::Ignore
                 }
                 Some(c) => Self::button(c).map_or(Role::Ignore, Role::Button),
+                None if self.settings.dynamic_joystick
+                    && self.settings.mode != Mode::Dpad
+                    && layout::contains(self.dynamic_area(), point)
+                    && !self
+                        .fingers
+                        .values()
+                        .any(|(r, _)| matches!(r, Role::Move(_))) =>
+                {
+                    Role::Move(point)
+                }
                 None => Role::Look {
                     start: point,
                     since: Instant::now(),
@@ -653,6 +717,12 @@ impl TouchControls {
                 },
             };
             self.fingers.insert(id, (role, point));
+            if matches!(
+                role,
+                Role::Button(Button::LeftTrigger | Button::RightTrigger)
+            ) {
+                self.button_drags.insert(id, (point, false));
+            }
             if let Role::Button(button) = role {
                 match button {
                     Button::LeftTrigger => self.pending.triggers[0] = 1.0,
@@ -681,6 +751,18 @@ impl TouchControls {
                 } else {
                     [0.0; 2]
                 }
+            } else if self.settings.button_look
+                && let Some((start, dragged)) = self.button_drags.get_mut(&id)
+            {
+                // #62: a finger holding Attack or Use also aims, as in Bedrock, so
+                // mining or blocking can follow a target. A small dead zone keeps a
+                // plain press from nudging the view.
+                *dragged |= ((point[0] - start[0]) * aspect).hypot(point[1] - start[1]) > 0.018;
+                if *dragged {
+                    [point[0] - previous[0], point[1] - previous[1]]
+                } else {
+                    [0.0; 2]
+                }
             } else {
                 [0.0; 2]
             };
@@ -689,9 +771,18 @@ impl TouchControls {
         }
         [0.0; 2]
     }
+    /// Releases every finger and held control but keeps the sprint toggle, as vanilla's
+    /// toggle keys survive opening a screen. Focus loss still calls [`Self::clear`].
+    pub fn release_fingers(&mut self) {
+        let sprint = self.sprint_latched;
+        self.clear();
+        self.sprint_latched = sprint;
+    }
     pub fn clear(&mut self) {
         self.clear_custom();
         self.fingers.clear();
+        self.button_drags.clear();
+        self.hotbar_finger = None;
         self.last_sneak_tap = None;
         self.sprint_latched = false;
         self.pending = PadState::default();
@@ -708,6 +799,75 @@ impl TouchControls {
     }
     /// A short world tap never holds a mouse button into the next tick.
     /// Its item-use intent is resolved against the current entity target.
+    /// A finger went down on hotbar `slot`; it belongs to the hotbar until it lifts.
+    pub fn hotbar_start(&mut self, id: u64, slot: usize, now: Instant) {
+        self.fingers.insert(id, (Role::Ignore, [0.0; 2]));
+        self.hotbar_finger = Some(HotbarFinger {
+            id,
+            slot,
+            since: now,
+            next_drop: None,
+            left: false,
+        });
+    }
+    pub fn hotbar_owns(&self, id: u64) -> bool {
+        self.hotbar_finger.is_some_and(|h| h.id == id)
+    }
+    /// The hotbar finger moved over `slot` (`None`: off the hotbar). Returns the slot
+    /// to select when it slid onto another one; sliding restarts the hold.
+    pub fn hotbar_move(&mut self, id: u64, slot: Option<usize>, now: Instant) -> Option<usize> {
+        let h = self.hotbar_finger.as_mut().filter(|h| h.id == id)?;
+        let Some(slot) = slot else {
+            h.left = true;
+            return None;
+        };
+        if slot == h.slot && !h.left {
+            return None;
+        }
+        let changed = slot != h.slot;
+        *h = HotbarFinger {
+            id,
+            slot,
+            since: now,
+            next_drop: None,
+            left: false,
+        };
+        changed.then_some(slot)
+    }
+    pub fn hotbar_end(&mut self, id: u64) {
+        if self.hotbar_owns(id) {
+            self.hotbar_finger = None;
+            self.fingers.remove(&id);
+        }
+    }
+    /// Every frame: a finger held still on a slot throws its item, then repeats,
+    /// through the player's own key.drop binding.
+    pub fn poll_hotbar(&mut self, now: Instant) {
+        if !self.settings.hotbar_hold_drop {
+            return;
+        }
+        let Some(h) = self.hotbar_finger.as_mut().filter(|h| !h.left) else {
+            return;
+        };
+        if now >= h.next_drop.unwrap_or(h.since + HOTBAR_DROP_DELAY) {
+            h.next_drop = Some(now + HOTBAR_DROP_REPEAT);
+            self.custom_events.push(("action:key.drop".into(), true));
+            self.custom_events.push(("action:key.drop".into(), false));
+        }
+    }
+    /// A world tap or hold, or a held Attack/Use button: actions a shield raised by
+    /// sneaking must not block (#65, #98). Camera drags are not interactions, so the
+    /// shield stays up while the player looks around.
+    pub fn world_interaction(&self) -> bool {
+        self.pending_tap.is_some()
+            || self.fingers.values().any(|(role, _)| match role {
+                Role::Look {
+                    dragged, committed, ..
+                } => !*dragged || *committed,
+                Role::Button(Button::LeftTrigger | Button::RightTrigger) => true,
+                _ => false,
+            })
+    }
     pub fn take_tap(&mut self) -> Option<bool> {
         self.pending_tap.take()
     }
@@ -1125,6 +1285,124 @@ mod tests {
         }
     }
     #[test]
+    fn the_hotbar_slides_between_slots_and_drops_only_when_held_still() {
+        let mut t = TouchControls::default();
+        let start = Instant::now();
+        let drops = |t: &mut TouchControls| {
+            t.key_events()
+                .into_iter()
+                .filter(|(k, down)| k == "action:key.drop" && *down)
+                .count()
+        };
+        t.hotbar_start(4, 2, start);
+        t.poll_hotbar(start + Duration::from_millis(300));
+        assert_eq!(drops(&mut t), 0, "a tap only selects");
+        assert_eq!(
+            t.hotbar_move(4, Some(3), start + Duration::from_millis(400)),
+            Some(3)
+        );
+        t.poll_hotbar(start + Duration::from_millis(900));
+        assert_eq!(drops(&mut t), 0, "sliding restarts the hold");
+        t.poll_hotbar(start + Duration::from_millis(1000));
+        assert_eq!(drops(&mut t), 1);
+        t.poll_hotbar(start + Duration::from_millis(1100));
+        assert_eq!(drops(&mut t), 0);
+        t.poll_hotbar(start + Duration::from_millis(1260));
+        assert_eq!(drops(&mut t), 1, "holding keeps throwing");
+        assert_eq!(
+            t.hotbar_move(4, None, start + Duration::from_millis(1300)),
+            None
+        );
+        t.poll_hotbar(start + Duration::from_millis(3000));
+        assert_eq!(drops(&mut t), 0, "sliding off the hotbar cancels the throw");
+        t.hotbar_end(4);
+        assert!(!t.hotbar_owns(4));
+        t.settings.hotbar_hold_drop = false;
+        t.hotbar_start(5, 0, start);
+        t.poll_hotbar(start + Duration::from_secs(2));
+        assert_eq!(drops(&mut t), 0);
+    }
+    #[test]
+    fn dragging_from_attack_turns_the_camera_while_it_stays_held() {
+        let mut t = TouchControls {
+            loaded: true,
+            aspect: 16.0 / 9.0,
+            ..Default::default()
+        };
+        t.settings.mode = Mode::Crosshair;
+        let attack = t.placement(Control::Attack).center;
+        t.update(1, attack, true, false);
+        let held = |t: &mut TouchControls| {
+            let s = t.poll_state();
+            s.triggers[0] > 0.0 || s.triggers[1] > 0.0
+        };
+        assert!(held(&mut t));
+        // Inside the dead zone the view stays put.
+        assert_eq!(
+            t.update(1, [attack[0] + 0.005, attack[1]], false, false),
+            [0.0; 2]
+        );
+        let delta = t.update(1, [attack[0] - 0.1, attack[1]], false, false);
+        assert!(delta[0] < -0.05, "the drag turns the camera: {delta:?}");
+        assert!(held(&mut t), "the button stays pressed while aiming");
+        t.update(1, [attack[0] - 0.1, attack[1]], false, true);
+        t.settings.button_look = false;
+        t.update(2, attack, true, false);
+        assert_eq!(
+            t.update(2, [attack[0] - 0.1, attack[1]], false, false),
+            [0.0; 2]
+        );
+    }
+    #[test]
+    fn dynamic_area_follows_the_configured_width_and_height() {
+        let mut t = TouchControls::default();
+        t.settings.dynamic_area_x = 0.25;
+        t.settings.dynamic_area_y = 0.5;
+        let area = t.dynamic_area();
+        assert_eq!([area[0], area[2], area[3]], [0.0, 0.25, 0.5]);
+        let move_y = t.placement(Control::Move).center[1];
+        let expected_y = (move_y - 0.25).clamp(0.0, 0.5);
+        assert!((area[1] - expected_y).abs() < 1e-4);
+        // The height is centred on the movement control, so a touch far above
+        // it stays a camera gesture.
+        t.settings.dynamic_joystick = true;
+        t.update(1, [0.1, 0.05], true, false);
+        assert!(matches!(t.fingers[&1].0, Role::Look { .. }));
+        t.update(1, [0.1, 0.05], false, true);
+        t.update(2, [0.1, move_y], true, false);
+        assert!(matches!(t.fingers[&2].0, Role::Move(_)));
+        // Y saturates at the surface edges instead of leaving the screen.
+        t.settings.dynamic_area_y = 1.0;
+        t.settings.left_handed = true;
+        let area = t.dynamic_area();
+        assert_eq!([area[0], area[1], area[3]], [0.75, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn dynamic_joystick_spawns_only_in_the_movement_strip_and_locks_its_frame() {
+        let mut t = TouchControls::default();
+        t.settings.dynamic_joystick = true;
+        // Outside the movement-side quarter this stays a camera gesture.
+        t.update(1, [0.5, 0.5], true, false);
+        assert!(matches!(t.fingers[&1].0, Role::Look { .. }));
+        t.update(1, [0.5, 0.5], false, true);
+        // Inside it, the frame is where the finger first landed.
+        t.update(2, [0.12, 0.6], true, false);
+        assert!(
+            matches!(t.fingers[&2].0, Role::Move(a) if (a[0] - 0.12).abs() < 1e-4 && (a[1] - 0.6).abs() < 1e-4)
+        );
+        t.update(2, [0.20, 0.6], false, false);
+        assert!(matches!(t.fingers[&2].0, Role::Move(a) if (a[0] - 0.12).abs() < 1e-4));
+        assert!(t.state().left[0] > 0.0);
+        // Right-handed layouts use the same strip on the other side.
+        t.settings.left_handed = true;
+        t.settings.mode = Mode::Crosshair;
+        t.update(2, [0.20, 0.6], false, true);
+        t.update(3, [0.80, 0.6], true, false);
+        assert!(matches!(t.fingers[&3].0, Role::Move(_)));
+    }
+
+    #[test]
     fn camera_calibration_uses_physical_distance_on_both_axes() {
         let mut settings = Settings::default();
         for (w, h) in [(2400, 1080), (1080, 2400)] {
@@ -1295,6 +1573,13 @@ mod tests {
         t.update(2, point, false, true);
         assert!(!t.poll_state().held(Button::LeftStick));
         t.update(3, point, true, false);
+        t.update(3, point, false, true);
+        t.release_fingers();
+        t.clear_world_gesture();
+        assert!(
+            t.poll_state().held(Button::LeftStick),
+            "opening a screen keeps the toggle"
+        );
         t.clear();
         assert!(!t.poll_state().held(Button::LeftStick));
         t.settings.sprint_toggle = false;

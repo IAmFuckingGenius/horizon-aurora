@@ -16291,6 +16291,27 @@ impl Game<'_> {
                 }
                 self.pad.in_use = true;
                 let size = self.window.as_ref().unwrap().inner_size();
+                if self.pad.touch.hotbar_owns(touch.id) {
+                    // A hotbar finger slides between slots; held still it throws
+                    // (polled each frame in pad.rs).
+                    if touch.phase == TouchPhase::Moved {
+                        let batch = HudBatch::new([size.width, size.height]);
+                        let point = [
+                            touch.location.x as f32 / batch.scale,
+                            touch.location.y as f32 / batch.scale,
+                        ];
+                        let slot =
+                            horizon_client::touch::hotbar_slot(batch.width, batch.height, point);
+                        if let Some(slot) =
+                            self.pad.touch.hotbar_move(touch.id, slot, Instant::now())
+                        {
+                            self.selected = slot;
+                        }
+                    } else {
+                        self.pad.touch.hotbar_end(touch.id);
+                    }
+                    return;
+                }
                 if touch.phase == TouchPhase::Started {
                     let batch = HudBatch::new([size.width, size.height]);
                     let point = [
@@ -16305,7 +16326,7 @@ impl Game<'_> {
                         ])
                     {
                         self.selected = slot;
-                        self.pad.touch.ignore(touch.id);
+                        self.pad.touch.hotbar_start(touch.id, slot, Instant::now());
                         return;
                     }
                 }
@@ -16327,13 +16348,22 @@ impl Game<'_> {
                     size.height,
                     &self.pad.touch.settings,
                 );
-                self.tutorial
-                    .mouse(f64::from(delta[0]), f64::from(delta[1]));
-                self.yaw += delta[0];
-                self.pitch = (self.pitch + delta[1]).clamp(-90.0, 90.0);
+                // Turn like the mouse does (MouseHandler.turnPlayer): the spyglass
+                // slows the view to an eighth, Invert Mouse flips the pitch, and
+                // Entity.turn keeps a rider within its boat's limits.
+                let scope = if self.scoping() { 0.125 } else { 1.0 };
+                let delta = [
+                    delta[0] * scope,
+                    delta[1] * scope * if self.settings.invert_y { -1.0 } else { 1.0 },
+                ];
+                if delta != [0.0; 2] {
+                    self.tutorial
+                        .mouse(f64::from(delta[0]), f64::from(delta[1]));
+                    self.turn_player(f64::from(delta[0] / 0.15), f64::from(delta[1] / 0.15));
+                }
                 if self.pad.touch.chat_requested {
                     self.audio.play_button_click();
-                    self.pad.touch.clear();
+                    self.pad.touch.release_fingers();
                     if let Err(error) = self.key_pressed(KeyCode::KeyT) {
                         log::warn!("Touch chat: {error}");
                     }
@@ -16341,7 +16371,9 @@ impl Game<'_> {
                 } else if self.pad.touch.settings_requested {
                     self.android_release_touch_keys(true);
                     self.audio.play_button_click();
-                    self.open_options(false);
+                    // The gear is labelled "Touch settings": open that page, and Back
+                    // returns straight to the game.
+                    self.open_options_at(false, horizon_client::options_ui::Page::Touch);
                 } else if std::mem::take(&mut self.pad.touch.debug_requested) {
                     self.audio.play_button_click();
                     if !self.pad.touch_ui.key_held(KeyCode::F3) {
@@ -16357,7 +16389,7 @@ impl Game<'_> {
                 }
             } else {
                 if !self.android_inventory_controls() {
-                    self.pad.touch.clear();
+                    self.pad.touch.release_fingers();
                 }
                 if !matches!(self.screen, Screen::Inventory | Screen::Creative) {
                     self.android_menu_touch(touch, event_loop, id);
@@ -16365,6 +16397,11 @@ impl Game<'_> {
                 }
                 if self.pad.touch_ui.virtual_mouse {
                     self.android_virtual_touch(touch, event_loop, id);
+                    return;
+                }
+                // One finger is the cursor: a second touch would move it and click
+                // in the middle of a drag.
+                if !self.pad.touch_ui.inventory_pointer(touch.id, touch.phase) {
                     return;
                 }
                 self.handle_window_event(

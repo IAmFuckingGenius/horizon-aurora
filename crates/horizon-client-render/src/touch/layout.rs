@@ -153,6 +153,17 @@ pub struct Settings {
     pub gyroscope: bool,
     pub gyro_sensitivity: f32,
     pub attack_indicator_left: bool,
+    pub dynamic_joystick: bool,
+    /// Dragging a finger that holds Attack or Use also turns the camera (#62).
+    pub button_look: bool,
+    /// Holding a hotbar slot throws its item, as in Bedrock.
+    pub hotbar_hold_drop: bool,
+    /// Fraction of the width, from the movement edge inward, where a dynamic
+    /// joystick may start.
+    pub dynamic_area_x: f32,
+    /// Fraction of the height the dynamic area spans, centred on the movement
+    /// control (1.0 is the full surface).
+    pub dynamic_area_y: f32,
     #[serde(deserialize_with = "deserialize_visibility")]
     pub button_visibility: [u8; 14],
     pub horizontal_margin: f32,
@@ -160,31 +171,34 @@ pub struct Settings {
     #[serde(deserialize_with = "deserialize_layouts")]
     pub layouts: [[Placement; 14]; 3],
 }
-// Append new buttons without resetting a player's existing ten-button layout.
+// Append new buttons without resetting a player's existing ten-button layout, and keep
+// the known controls of a file written by a newer version with more controls or schemes.
 fn deserialize_layouts<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<[[Placement; 14]; 3], D::Error> {
     let rows = Vec::<Vec<Placement>>::deserialize(deserializer)?;
-    if rows.len() != 3 || rows.iter().any(|r| !matches!(r.len(), 10 | 12 | 14)) {
+    if rows.len() < 3 || rows.iter().take(3).any(|r| r.len() < 10) {
         return Err(serde::de::Error::custom(
-            "expected three touch layouts of 10, 12 or 14 controls",
+            "expected three touch layouts of at least 10 controls",
         ));
     }
     let mut layouts = Settings::default().layouts;
     for (output, input) in layouts.iter_mut().zip(rows) {
-        output[..input.len()].copy_from_slice(&input);
+        let n = input.len().min(output.len());
+        output[..n].copy_from_slice(&input[..n]);
     }
     Ok(layouts)
 }
 fn deserialize_visibility<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[u8; 14], D::Error> {
     let old = Vec::<u8>::deserialize(d)?;
-    if !matches!(old.len(), 12 | 14) {
+    if old.len() < 12 {
         return Err(serde::de::Error::custom(
-            "expected 12 or 14 visibility values",
+            "expected at least 12 visibility values",
         ));
     }
     let mut values = [0; 14];
-    values[..old.len()].copy_from_slice(&old);
+    let n = old.len().min(values.len());
+    values[..n].copy_from_slice(&old[..n]);
     Ok(values)
 }
 impl Default for Settings {
@@ -232,6 +246,11 @@ impl Default for Settings {
             gyroscope: false,
             gyro_sensitivity: 1.0,
             attack_indicator_left: true,
+            dynamic_joystick: false,
+            button_look: true,
+            hotbar_hold_drop: true,
+            dynamic_area_x: 0.25,
+            dynamic_area_y: 1.0,
             button_visibility: [0; 14],
             horizontal_margin: 0.0,
             vertical_margin: 0.0,
@@ -244,10 +263,28 @@ impl Settings {
         Self::load_from(std::path::Path::new("horizon-touch.json"))
     }
     pub fn load_from(path: &std::path::Path) -> Self {
-        let mut s: Self = std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let mut s = match std::fs::read(path) {
+            Err(_) => Self::default(),
+            Ok(bytes) => {
+                let (settings, exact) = Self::parse_lenient(&bytes);
+                if !exact {
+                    // Keep the player's original file: the next save overwrites it.
+                    let backup = path.with_extension("json.bak");
+                    match std::fs::copy(path, &backup) {
+                        Ok(_) => log::warn!(
+                            "{} had unreadable touch settings; kept the readable ones, original saved as {}",
+                            path.display(),
+                            backup.display()
+                        ),
+                        Err(error) => log::warn!(
+                            "{} had unreadable touch settings; backup failed: {error}",
+                            path.display()
+                        ),
+                    }
+                }
+                settings
+            }
+        };
         s.sanitize();
         // Restore the original top-row spacing without moving custom layouts.
         for row in &mut s.layouts {
@@ -281,6 +318,38 @@ impl Settings {
             }
         }
         s
+    }
+    /// Reads touch settings, keeping every readable field when others are broken: a bad
+    /// value or one malformed custom button no longer resets the whole layout. Returns
+    /// whether the file was read exactly.
+    pub fn parse_lenient(bytes: &[u8]) -> (Self, bool) {
+        use serde_json::Value;
+        if let Ok(settings) = serde_json::from_slice::<Self>(bytes) {
+            return (settings, true);
+        }
+        let Ok(Value::Object(saved)) = serde_json::from_slice::<Value>(bytes) else {
+            return (Self::default(), false);
+        };
+        let Ok(Value::Object(mut merged)) = serde_json::to_value(Self::default()) else {
+            return (Self::default(), false);
+        };
+        for (key, mut value) in saved {
+            if key == "custom_buttons"
+                && let Value::Array(buttons) = &mut value
+            {
+                buttons
+                    .retain(|b| serde_json::from_value::<super::CustomButton>(b.clone()).is_ok());
+            }
+            let mut trial = merged.clone();
+            trial.insert(key.clone(), value.clone());
+            if serde_json::from_value::<Self>(Value::Object(trial)).is_ok() {
+                merged.insert(key, value);
+            }
+        }
+        (
+            serde_json::from_value(Value::Object(merged)).unwrap_or_default(),
+            false,
+        )
     }
     pub fn sanitize(&mut self) {
         if self.mode == Mode::Tap && self.split_controls {
@@ -321,6 +390,16 @@ impl Settings {
         }
         self.button_scale = if self.button_scale.is_finite() {
             self.button_scale.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
+        self.dynamic_area_x = if self.dynamic_area_x.is_finite() {
+            self.dynamic_area_x.clamp(0.0, 1.0)
+        } else {
+            0.25
+        };
+        self.dynamic_area_y = if self.dynamic_area_y.is_finite() {
+            self.dynamic_area_y.clamp(0.0, 1.0)
         } else {
             1.0
         };
@@ -393,6 +472,52 @@ pub fn contains([x, y, w, h]: [f32; 4], p: [f32; 2]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn one_broken_value_keeps_the_rest_and_backs_up_the_file() {
+        let mut saved = super::Settings::default();
+        saved.left_handed = true;
+        saved
+            .custom_buttons
+            .push(super::super::CustomButton::new("key.keyboard.z".into(), 0));
+        let mut json = serde_json::to_value(&saved).unwrap();
+        json["sensitivity"] = serde_json::json!("fast");
+        json["custom_buttons"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"key": 5}));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-touch-lenient-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("horizon-touch.json");
+        std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        let loaded = super::Settings::load_from(&path);
+        assert!(loaded.left_handed);
+        assert_eq!(loaded.sensitivity, 1.0);
+        assert_eq!(loaded.custom_buttons.len(), 1);
+        assert_eq!(loaded.custom_buttons[0].key, "key.keyboard.z");
+        let backup = std::fs::read(dir.join("horizon-touch.json.bak")).unwrap();
+        assert_eq!(backup, std::fs::read(&path).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn a_newer_file_with_more_controls_keeps_the_known_layout() {
+        let mut saved = super::Settings::default();
+        saved.layouts[0][0].center = [0.2, 0.7];
+        let mut json = serde_json::to_value(&saved).unwrap();
+        for row in json["layouts"].as_array_mut().unwrap() {
+            let extra = row[0].clone();
+            row.as_array_mut().unwrap().extend([extra.clone(), extra]);
+        }
+        let first = json["layouts"][0].clone();
+        json["layouts"].as_array_mut().unwrap().push(first);
+        json["button_visibility"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!(1));
+        let (loaded, exact) = super::Settings::parse_lenient(&serde_json::to_vec(&json).unwrap());
+        assert!(exact);
+        assert_eq!(loaded.layouts[0][0].center, [0.2, 0.7]);
+    }
     #[test]
     fn gyro_preferences_roundtrip_and_reject_bad_values() {
         let mut s = super::Settings::default();

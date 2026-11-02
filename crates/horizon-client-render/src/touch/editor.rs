@@ -70,10 +70,13 @@ impl TouchControls {
                 self.settings.layouts[self.settings.mode.index()] =
                     Settings::default().layouts[self.settings.mode.index()];
                 self.settings.button_visibility = [0; 14];
-                for (i, button) in self.settings.custom_buttons.iter_mut().enumerate() {
-                    button.layouts[self.settings.mode.index()] =
-                        CustomButton::new(button.key.clone(), i).layouts
-                            [self.settings.mode.index()];
+                // Custom buttons go back to free space, one after another, instead of
+                // onto a fixed grid over the action buttons.
+                let mode = self.settings.mode.index();
+                for i in 0..self.settings.custom_buttons.len() {
+                    let [x, y] = self.free_custom_spot(mode, i);
+                    self.settings.custom_buttons[i].layouts[mode] =
+                        layout::Placement::new(x, y, Self::NEW_CUSTOM_SIZE);
                 }
             } else if layout::contains([0.02, 0.13, 0.335, 0.075], p) {
                 e.palette = !e.palette;
@@ -144,13 +147,21 @@ impl TouchControls {
                 }
                 Drag::Slider(index) => {
                     let value = ((p[0] - 0.335) / 0.33).clamp(0.0, 1.0);
-                    for (i, place) in self.settings.layouts[self.settings.mode.index()]
-                        .iter_mut()
-                        .enumerate()
-                    {
-                        if i == slot || e.apply_all {
+                    let layout = &mut self.settings.layouts[self.settings.mode.index()];
+                    let size = 0.045 + value * 0.405;
+                    // "Apply to all" scales every control by the same factor, so the
+                    // joystick stays bigger than a button instead of all becoming equal.
+                    let factor = size / layout[slot].size.max(0.001);
+                    for (i, place) in layout.iter_mut().enumerate() {
+                        if i == slot {
                             if *index == 0 {
-                                place.size = 0.045 + value * 0.405;
+                                place.size = size;
+                            } else {
+                                place.opacity = value;
+                            }
+                        } else if e.apply_all {
+                            if *index == 0 {
+                                place.size = (place.size * factor).clamp(0.045, 0.45);
                             } else {
                                 place.opacity = value;
                             }
@@ -249,14 +260,8 @@ impl TouchControls {
             }
         }
         if e.palette {
-            b.fill(
-                a,
-                w * 0.2,
-                h * 0.14,
-                w * 0.6,
-                h * 0.72,
-                rgba(15, 15, 15, 245),
-            );
+            let [x, y, pw, ph] = PALETTE_PANEL;
+            b.fill(a, w * x, h * y, w * pw, h * ph, rgba(15, 15, 15, 245));
             for (index, control) in Control::ALL.into_iter().enumerate() {
                 let shown = self.visible(control);
                 plate(
@@ -281,13 +286,44 @@ impl TouchControls {
         }
     }
 }
+/// Two columns of seven rows that end above [`CREATE_RECT`], all inside the panel.
 fn palette_rect(index: usize) -> [f32; 4] {
     [
         0.22 + (index % 2) as f32 * 0.29,
-        0.17 + (index / 2) as f32 * 0.11,
+        0.16 + (index / 2) as f32 * 0.092,
         0.27,
-        0.09,
+        0.08,
     ]
+}
+const PALETTE_PANEL: [f32; 4] = [0.2, 0.14, 0.6, 0.76];
+/// Hold or Toggle, above the selected custom button's Action row.
+const MODE_RECT: [f32; 4] = [0.32, 0.46, 0.36, 0.07];
+const CREATE_RECT: [f32; 4] = [0.22, 0.81, 0.56, 0.07];
+const TOOLBAR: [[f32; 4]; 4] = [
+    [0.02, 0.04, 0.105, 0.075],
+    [0.135, 0.04, 0.105, 0.075],
+    [0.25, 0.04, 0.105, 0.075],
+    [0.02, 0.13, 0.335, 0.075],
+];
+const REMOVE_RECT: [f32; 4] = [0.32, 0.88, 0.36, 0.07];
+const OPACITY_RECT: [f32; 4] = [0.32, 0.79, 0.17, 0.07];
+const SIZE_RECT: [f32; 4] = [0.51, 0.79, 0.17, 0.07];
+const APPLY_ALL_RECT: [f32; 4] = [0.32, 0.61, 0.36, 0.06];
+const SLIDER_RECT: [f32; 4] = [0.32, 0.68, 0.36, 0.07];
+fn toolbar_at(p: [f32; 2]) -> bool {
+    TOOLBAR.iter().any(|r| layout::contains(*r, p))
+}
+/// The option panel of a selected built-in control takes its taps before any custom
+/// button drawn underneath it.
+fn builtin_panel_at(e: &Editor, p: [f32; 2]) -> bool {
+    e.selected.is_some()
+        && ([REMOVE_RECT, OPACITY_RECT, SIZE_RECT]
+            .iter()
+            .any(|r| layout::contains(*r, p))
+            || (e.option.is_some()
+                && [APPLY_ALL_RECT, SLIDER_RECT]
+                    .iter()
+                    .any(|r| layout::contains(*r, p))))
 }
 fn plate(b: &mut HudBatch, a: &HudAtlas, [x, y, w, h]: [f32; 4], label: &str, on: bool) {
     let (bw, bh) = (b.width, b.height);
@@ -345,7 +381,9 @@ impl TouchControls {
         started: bool,
         ended: bool,
     ) -> bool {
-        if p[1] < 0.13 && started {
+        // Only the toolbar and an open built-in panel outrank custom buttons; a custom
+        // button anywhere else, the top of the screen included, stays selectable.
+        if started && (toolbar_at(p) || builtin_panel_at(e, p)) {
             return false;
         }
         if e.key_picker {
@@ -382,12 +420,11 @@ impl TouchControls {
             }
             return true;
         }
-        if e.palette && started && layout::contains([0.22, 0.84, 0.56, 0.07], p) {
+        if e.palette && started && layout::contains(CREATE_RECT, p) {
             if self.settings.custom_buttons.len() < 32 {
                 let index = self.settings.custom_buttons.len();
-                self.settings
-                    .custom_buttons
-                    .push(CustomButton::new("key.keyboard.unknown".into(), index));
+                let button = self.new_custom_button("key.keyboard.unknown".into());
+                self.settings.custom_buttons.push(button);
                 e.selected = None;
                 e.selected_custom = Some(index);
                 e.key_picker = true;
@@ -403,6 +440,12 @@ impl TouchControls {
             return false;
         }
         if started && e.selected_custom.is_some() {
+            if layout::contains(MODE_RECT, p) {
+                let button = &mut self.settings.custom_buttons[e.selected_custom.unwrap()];
+                button.toggle ^= true;
+                e.drag = None;
+                return true;
+            }
             if layout::contains([0.32, 0.54, 0.36, 0.07], p) {
                 e.key_picker = true;
                 e.key_page = 0;
@@ -501,13 +544,24 @@ impl TouchControls {
     fn draw_custom_editor(&self, b: &mut HudBatch, a: &HudAtlas, e: &Editor) {
         let (w, h) = (b.width, b.height);
         if e.palette {
-            plate(b, a, [0.22, 0.84, 0.56, 0.07], "Create button...", false);
+            plate(b, a, CREATE_RECT, "Create button...", false);
         }
         if let Some(i) = e.selected_custom
             && !e.palette
             && !e.key_picker
         {
             let p = self.settings.custom_buttons[i].layouts[self.settings.mode.index()];
+            plate(
+                b,
+                a,
+                MODE_RECT,
+                if self.settings.custom_buttons[i].toggle {
+                    "Mode: Toggle (tap on/off)"
+                } else {
+                    "Mode: Hold"
+                },
+                self.settings.custom_buttons[i].toggle,
+            );
             plate(
                 b,
                 a,

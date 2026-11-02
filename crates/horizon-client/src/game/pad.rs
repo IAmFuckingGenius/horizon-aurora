@@ -201,6 +201,9 @@ impl Game<'_> {
                 &crate::backend::game_home(),
             );
             self.pad.touch.inventory_mode = self.android_inventory_controls();
+            if !matches!(self.screen, Screen::Inventory | Screen::Creative) {
+                self.pad.touch_ui.reset_inventory_pointer();
+            }
             self.android_virtual_mouse_clicks(event_loop);
             let active = horizon_client::android_runtime::active_input();
             if self.pad.last_input_mode.replace(active).is_some_and(|old| {
@@ -211,12 +214,16 @@ impl Game<'_> {
                 }
                 horizon_client::android_runtime::clear_keypad();
             }
-            if (self.pad_in_menu() && !self.android_inventory_controls())
-                || !self.focused
-                || (!crate::touch_visible() && !self.settings.keypad.enabled)
-            {
+            if !self.focused || (!crate::touch_visible() && !self.settings.keypad.enabled) {
                 self.pad.touch.clear();
                 horizon_client::android_runtime::clear_keypad();
+            } else if self.pad_in_menu() && !self.android_inventory_controls() {
+                // A screen releases fingers but keeps the sprint toggle, as vanilla does.
+                self.pad.touch.release_fingers();
+                horizon_client::android_runtime::clear_keypad();
+            }
+            if !self.pad_in_menu() {
+                self.pad.touch.poll_hotbar(Instant::now());
             }
             self.android_custom_events();
         }
@@ -265,17 +272,24 @@ impl Game<'_> {
                 self.sync_toggle(SNEAK);
             }
             let mut touch = self.pad.touch.poll_state();
+            let was_shielding = self.pad.touch_shield;
+            // A shield raised by sneaking lowers while the player taps, holds, attacks
+            // or uses (#65, #98): it holds Use, which would swallow those presses.
+            let interacting = self.pad.touch.world_interaction();
             self.pad.touch_shield = crate::touch_visible()
                 && !self.pad_in_menu()
                 && self.touch_shield_available()
                 && if self.settings.touch.shield_button {
                     self.pad.touch.shield_held()
                 } else {
-                    self.pad.touch.sneaking || touch.held(Button::RightStick)
+                    (self.pad.touch.sneaking || touch.held(Button::RightStick)) && !interacting
                 };
             if self.pad.touch_shield {
                 touch.triggers[0] = 1.0;
             }
+            // One frame with Use released, so the action that lowered the shield reaches
+            // the game as a new press instead of continuing the shield's hold.
+            let release_frame = was_shielding && !self.pad.touch_shield && interacting;
             if let Some(point) = self.pad.touch.aim {
                 self.pad.touch_aim = Some(point);
             }
@@ -288,7 +302,7 @@ impl Game<'_> {
                 touch.triggers = [1.0, 0.0];
                 self.pad.touch.latch_use();
             }
-            if let Some(held_use) = self.pad.touch.take_tap() {
+            if !release_frame && let Some(held_use) = self.pad.touch.take_tap() {
                 if self.entity_targeted() && self.using.is_none() && self.screen == Screen::Playing
                 {
                     // Resolve the entity attack now, never as held LMB. A mob
@@ -303,6 +317,9 @@ impl Game<'_> {
                     // Items with a use action wait for the long-press instead.
                     touch.triggers[0] = 1.0;
                 }
+            }
+            if release_frame {
+                touch.triggers[0] = 0.0;
             }
             state.merge(&touch)
         };

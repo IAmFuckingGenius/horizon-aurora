@@ -210,6 +210,11 @@ impl Opt {
             Opt::TouchSprintButton => "Sprint button",
             Opt::TouchSprintToggle => "Toggle sprint button",
             Opt::TouchInventoryControls => "Controls in inventory",
+            Opt::TouchDynamicJoystick => "Dynamic joystick",
+            Opt::TouchButtonLook => "Aim while holding Attack/Use",
+            Opt::TouchHotbarDrop => "Hold hotbar slot to drop",
+            Opt::TouchDynamicAreaX => "Dynamic joystick width",
+            Opt::TouchDynamicAreaY => "Dynamic joystick height",
             Opt::AndroidGyroscope => "Gyroscope aiming",
             Opt::AndroidGyroSensitivity => "Gyroscope sensitivity",
             Opt::AndroidInputMode => "Input device",
@@ -349,6 +354,8 @@ impl Opt {
             | Opt::GlintStrength
             | Opt::PanoramaSpeed => Kind::Slider(s.file.double(self.file_key().unwrap()) as f32),
             Opt::TouchCircleSize => unit(s.touch.circle_size, 16.0, 64.0),
+            Opt::TouchDynamicAreaX => unit(s.touch.dynamic_area_x, 0.0, 1.0),
+            Opt::TouchDynamicAreaY => unit(s.touch.dynamic_area_y, 0.0, 1.0),
             Opt::TouchHorizontalMargin => unit(s.touch.horizontal_margin, 0.0, 0.12),
             Opt::TouchVerticalMargin => unit(s.touch.vertical_margin, 0.0, 0.12),
             Opt::DebugGuiScale => unit(s.file.int("debugGuiScale").max(0) as f32, 0.0, 6.0),
@@ -581,6 +588,25 @@ impl Opt {
                 }
                 .into(),
             ),
+            Opt::TouchButtonLook => Some(if s.touch.button_look { "ON" } else { "OFF" }.into()),
+            Opt::TouchHotbarDrop => Some(
+                if s.touch.hotbar_hold_drop {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+                .into(),
+            ),
+            Opt::TouchDynamicJoystick => Some(
+                if s.touch.dynamic_joystick {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+                .into(),
+            ),
+            Opt::TouchDynamicAreaX => Some(format!("{:.0}%", s.touch.dynamic_area_x * 100.0)),
+            Opt::TouchDynamicAreaY => Some(format!("{:.0}%", s.touch.dynamic_area_y * 100.0)),
             Opt::AndroidInputMode => Some(crate::android_runtime::input_mode().label().into()),
             Opt::TouchSwapJumpSneak => {
                 Some(if s.touch.swap_jump_sneak { "ON" } else { "OFF" }.into())
@@ -964,6 +990,8 @@ impl Opt {
         let step = |lo: f32, hi: f32| (lo + v * (hi - lo)).round();
         match self {
             Opt::TouchCircleSize => s.touch.circle_size = step(16.0, 64.0),
+            Opt::TouchDynamicAreaX => s.touch.dynamic_area_x = (v * 100.0).round() / 100.0,
+            Opt::TouchDynamicAreaY => s.touch.dynamic_area_y = (v * 100.0).round() / 100.0,
             Opt::TouchHorizontalMargin => s.touch.horizontal_margin = (v * 120.0).round() / 1000.0,
             Opt::TouchVerticalMargin => s.touch.vertical_margin = (v * 120.0).round() / 1000.0,
             Opt::DebugGuiScale => s.file.set(
@@ -1098,6 +1126,9 @@ impl Opt {
             Opt::TouchSprintButton => s.touch.sprint_button ^= true,
             Opt::TouchSprintToggle => s.touch.sprint_toggle ^= true,
             Opt::TouchInventoryControls => s.touch.inventory_controls ^= true,
+            Opt::TouchDynamicJoystick => s.touch.dynamic_joystick ^= true,
+            Opt::TouchButtonLook => s.touch.button_look ^= true,
+            Opt::TouchHotbarDrop => s.touch.hotbar_hold_drop ^= true,
             Opt::TouchCrosshairGestures => s.touch.crosshair_gestures ^= true,
             Opt::AndroidInputMode => {
                 let all = crate::android_gamepad::InputMode::ALL;
@@ -1808,7 +1839,12 @@ fn inactive(mut w: Widget) -> Widget {
 }
 fn option_widget(s: &Settings, opt: Opt, x: f32, y: f32, w: f32) -> Widget {
     let touch_available = match opt {
-        Opt::TouchAnalog | Opt::TouchAutoSprint => s.touch.mode != crate::touch::Mode::Dpad,
+        Opt::TouchAnalog | Opt::TouchAutoSprint | Opt::TouchDynamicJoystick => {
+            s.touch.mode != crate::touch::Mode::Dpad
+        }
+        Opt::TouchDynamicAreaX | Opt::TouchDynamicAreaY => {
+            s.touch.dynamic_joystick && s.touch.mode != crate::touch::Mode::Dpad
+        }
         Opt::TouchSprintButton => {
             s.touch.mode != crate::touch::Mode::Dpad && !s.touch.sprint_with_joystick
         }
@@ -2755,6 +2791,11 @@ impl OptionsUi {
                     Opt::TouchInventoryControls,
                     Opt::TouchInteract,
                     Opt::TouchMouseSensitivity,
+                    Opt::TouchDynamicJoystick,
+                    Opt::TouchDynamicAreaX,
+                    Opt::TouchDynamicAreaY,
+                    Opt::TouchButtonLook,
+                    Opt::TouchHotbarDrop,
                     Opt::AndroidGyroscope,
                     Opt::AndroidGyroSensitivity,
                     Opt::TouchLeftHand,

@@ -959,7 +959,7 @@ impl Game<'_> {
         }
         let Some(style) = self.ui.chat.style_at(
             &self.gui.atlas.font,
-            height as i32,
+            self.chat_height(height) as i32,
             cursor.0 as f64,
             cursor.1 as f64,
         ) else {
@@ -1101,9 +1101,34 @@ impl Game<'_> {
         if self.ui.hide_gui && !focused {
             return;
         }
+        // The open chat lays out above the on-screen keyboard; the rest of the HUD
+        // keeps the full screen.
+        let full = batch.height;
+        batch.height = self.chat_height(full);
         self.ui
             .chat
             .draw(batch, &self.gui.atlas, self.ticks, focused);
+        batch.height = full;
+    }
+    /// The GUI height the open chat lays out in. On Android, while its keyboard is
+    /// up, only the part above the keyboard, so the input line, command suggestions
+    /// and latest messages stay visible (#70).
+    pub(super) fn chat_height(&self, gui_height: f32) -> f32 {
+        #[cfg(target_os = "android")]
+        if self.screen == Screen::Chat
+            && crate::platform::active()
+            && let Some(renderer) = self.renderer.as_ref()
+            && let Some(bottom) = crate::native_ime::viewport_bottom()
+        {
+            let render_height = renderer.config.height.max(1) as f32;
+            let covered = (render_height - bottom as f32).max(0.0);
+            let lifted = gui_height * (1.0 - covered / render_height);
+            // A keyboard leaving almost no room keeps the vanilla layout.
+            if covered > 0.0 && lifted >= 60.0 {
+                return lifted.floor();
+            }
+        }
+        gui_height
     }
     /// `HoverEvent.EntityTooltipInfo.getTooltipLines`: the name when the
     /// event has one, the entity type and the UUID.
@@ -1160,7 +1185,8 @@ impl Game<'_> {
             dispatcher: chat_tree(&self.remote, &self.mods),
             registries: &self.ui.registries,
         };
-        screen.resize(&m, &c, batch.width as i32, batch.height as i32);
+        let chat_height = self.chat_height(batch.height);
+        screen.resize(&m, &c, batch.width as i32, chat_height as i32);
         // Options.getBackgroundColor(Integer.MIN_VALUE).
         let background = if self.settings.file.bool("backgroundForChatOnly") {
             i32::MIN
@@ -1197,7 +1223,7 @@ impl Game<'_> {
         }
         // The hovered message part's tooltip (`renderComponentHoverEffect`),
         // or the text of the message tag under the cursor.
-        let height = batch.height as i32;
+        let height = chat_height as i32;
         let (cx, cy) = (f64::from(self.cursor.0), f64::from(self.cursor.1));
         let wrap = (batch.width as i32 / 2).max(200);
         // handleTagIcon: the chat-modified icons over the cursor or its message.

@@ -277,6 +277,18 @@ impl Game<'_> {
         events: &dyn super::event_loop::EventLoopCtl,
         id: WindowId,
     ) -> Result<bool> {
+        // A finger belongs to the drawer only if it went down on it. Ownership, not the
+        // finger's current position, decides: a joystick finger sliding over the
+        // expanded drawer keeps walking, and a drawer finger never turns the camera.
+        let drawer_finger = match t.phase {
+            TouchPhase::Started => {
+                // Android reuses pointer ids; a missed lift must not leak into this touch.
+                self.pad.touch_ui.release_finger(t.id);
+                false
+            }
+            TouchPhase::Moved => self.pad.touch_ui.owns_finger(t.id),
+            TouchPhase::Ended | TouchPhase::Cancelled => self.pad.touch_ui.release_finger(t.id),
+        };
         if t.phase == TouchPhase::Ended
             && let Some((right, last)) = self.pad.touch_ui.release_mouse(t.id)
         {
@@ -296,6 +308,12 @@ impl Game<'_> {
             }
             return Ok(true);
         }
+        if drawer_finger {
+            return Ok(true);
+        }
+        if t.phase != TouchPhase::Started {
+            return Ok(false);
+        }
         let size = self.window.as_ref().unwrap().inner_size();
         let b = HudBatch::new([size.width, size.height]);
         let p = [t.location.x as f32 / b.scale, t.location.y as f32 / b.scale];
@@ -304,96 +322,94 @@ impl Game<'_> {
             .touch_ui
             .action(b.width, b.height, p, self.pad_in_menu())
         {
-            if t.phase == TouchPhase::Started {
-                self.pad.touch.clear();
-                self.pad.touch.ignore(t.id);
-                match action {
-                    Action::LatchF3 => {
-                        let was = self.pad.touch_ui.key_held(KeyCode::F3);
-                        self.pad.touch_ui.f3_latched = !self.pad.touch_ui.f3_latched;
-                        let now = self.pad.touch_ui.key_held(KeyCode::F3);
-                        if !was && now {
-                            self.physical_keys.insert(KeyCode::F3);
-                            self.debug_key(KeyCode::F3, KeyAction::Press);
-                        }
-                        if was && !now {
-                            self.android_key_up(KeyCode::F3);
-                        }
+            // Other fingers keep their joystick, camera and held buttons.
+            self.pad.touch_ui.claim_finger(t.id);
+            match action {
+                Action::LatchF3 => {
+                    let was = self.pad.touch_ui.key_held(KeyCode::F3);
+                    self.pad.touch_ui.f3_latched = !self.pad.touch_ui.f3_latched;
+                    let now = self.pad.touch_ui.key_held(KeyCode::F3);
+                    if !was && now {
+                        self.physical_keys.insert(KeyCode::F3);
+                        self.debug_key(KeyCode::F3, KeyAction::Press);
                     }
-                    Action::Pick => {
-                        self.play_mouse(MouseButton::Middle, true)?;
-                        self.play_mouse(MouseButton::Middle, false)?;
+                    if was && !now {
+                        self.android_key_up(KeyCode::F3);
+                    }
+                }
+                Action::Pick => {
+                    self.play_mouse(MouseButton::Middle, true)?;
+                    self.play_mouse(MouseButton::Middle, false)?;
+                    self.pad.touch_ui.expanded = false;
+                }
+                Action::DebugCombo(key) => {
+                    let held = self.pad.touch_ui.key_held(KeyCode::F3);
+                    if !held {
+                        self.debug_key(KeyCode::F3, KeyAction::Press);
+                    }
+                    self.debug_key(key, KeyAction::Press);
+                    self.debug_key(key, KeyAction::Release);
+                    if !held {
+                        self.debug_key(KeyCode::F3, KeyAction::Release);
+                    }
+                    self.pad.touch_ui.expanded = false;
+                }
+                Action::MouseButton(right) => {
+                    if self.pad.touch_ui.press_mouse(t.id, right) {
+                        self.android_menu_mouse(events, id, right, true)?;
+                    }
+                }
+                Action::VirtualMouse => {
+                    if matches!(self.screen, Screen::Inventory | Screen::Creative) {
+                        // Cancel a prior drag without clicking/dropping at
+                        // the toggle button, which is outside the inventory.
+                        self.inv_clicks = Default::default();
+                        self.inv_drag = None;
+                        self.creative_screen.release();
+                        self.loom_release();
+                    }
+                    for right in self.pad.touch_ui.release_all_mouse() {
+                        self.android_menu_mouse(events, id, right, false)?;
+                    }
+                    self.pad.touch_ui.cancel();
+                    self.pad.touch_ui.virtual_mouse ^= true;
+                }
+                Action::More => self.pad.touch_ui.expanded = !self.pad.touch_ui.expanded,
+                Action::Keyboard => {
+                    if crate::platform::active() {
+                        crate::platform::hide();
+                    } else {
+                        self.android_show_keyboard();
+                    }
+                }
+                Action::Key(key) => {
+                    if key != KeyCode::F3 && !self.pad.touch_ui.key_held(KeyCode::F3) {
                         self.pad.touch_ui.expanded = false;
                     }
-                    Action::DebugCombo(key) => {
-                        let held = self.pad.touch_ui.key_held(KeyCode::F3);
-                        if !held {
-                            self.debug_key(KeyCode::F3, KeyAction::Press);
-                        }
-                        self.debug_key(key, KeyAction::Press);
-                        self.debug_key(key, KeyAction::Release);
-                        if !held {
-                            self.debug_key(KeyCode::F3, KeyAction::Release);
-                        }
-                        self.pad.touch_ui.expanded = false;
-                    }
-                    Action::MouseButton(right) => {
-                        if self.pad.touch_ui.press_mouse(t.id, right) {
-                            self.android_menu_mouse(events, id, right, true)?;
-                        }
-                    }
-                    Action::VirtualMouse => {
-                        if matches!(self.screen, Screen::Inventory | Screen::Creative) {
-                            // Cancel a prior drag without clicking/dropping at
-                            // the toggle button, which is outside the inventory.
-                            self.inv_clicks = Default::default();
-                            self.inv_drag = None;
-                            self.creative_screen.release();
-                            self.loom_release();
-                        }
-                        for right in self.pad.touch_ui.release_all_mouse() {
-                            self.android_menu_mouse(events, id, right, false)?;
-                        }
-                        self.pad.touch_ui.cancel();
-                        self.pad.touch_ui.virtual_mouse ^= true;
-                    }
-                    Action::More => self.pad.touch_ui.expanded = !self.pad.touch_ui.expanded,
-                    Action::Keyboard => {
-                        if crate::platform::active() {
-                            crate::platform::hide();
-                        } else {
-                            self.android_show_keyboard();
-                        }
-                    }
-                    Action::Key(key) => {
-                        if key != KeyCode::F3 && !self.pad.touch_ui.key_held(KeyCode::F3) {
-                            self.pad.touch_ui.expanded = false;
-                        }
-                        if key == KeyCode::Escape {
-                            crate::platform::hide();
-                            self.pad_back()?;
-                        } else if matches!(
-                            key,
-                            KeyCode::Tab | KeyCode::ShiftLeft | KeyCode::ControlLeft
-                        ) {
-                            let down = !self.physical_keys.remove(&key);
-                            if down {
-                                self.physical_keys.insert(key);
-                            }
-                            self.mapped_key(key, down, false)?;
-                        } else {
-                            if !self.pad.touch_ui.key_down(t.id, key) {
-                                return Ok(true);
-                            }
+                    if key == KeyCode::Escape {
+                        crate::platform::hide();
+                        self.pad_back()?;
+                    } else if matches!(
+                        key,
+                        KeyCode::Tab | KeyCode::ShiftLeft | KeyCode::ControlLeft
+                    ) {
+                        let down = !self.physical_keys.remove(&key);
+                        if down {
                             self.physical_keys.insert(key);
-                            if !self.debug_key(key, KeyAction::Press) {
-                                self.key_pressed(key)?;
-                            }
-                            if matches!(key, KeyCode::KeyT | KeyCode::Slash)
-                                && self.screen == Screen::Chat
-                            {
-                                self.android_show_keyboard();
-                            }
+                        }
+                        self.mapped_key(key, down, false)?;
+                    } else {
+                        if !self.pad.touch_ui.key_down(t.id, key) {
+                            return Ok(true);
+                        }
+                        self.physical_keys.insert(key);
+                        if !self.debug_key(key, KeyAction::Press) {
+                            self.key_pressed(key)?;
+                        }
+                        if matches!(key, KeyCode::KeyT | KeyCode::Slash)
+                            && self.screen == Screen::Chat
+                        {
+                            self.android_show_keyboard();
                         }
                     }
                 }
