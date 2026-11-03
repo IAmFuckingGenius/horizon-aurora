@@ -140,7 +140,7 @@ impl Game<'_> {
         self.capture(false);
         self.boost_screen = Some(BoostScreen {
             ui: Default::default(),
-            cursor: [self.cursor.0 as f32, self.cursor.1 as f32],
+            cursor: [self.cursor.0, self.cursor.1],
             finger: None,
         });
     }
