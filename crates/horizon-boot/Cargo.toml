@@ -1,0 +1,14 @@
+[package]
+name = "horizon-boot"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Horizon Android's boot library: hands the activity to the APK's engine or an installed one"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The NativeActivity entry point. Only the boot library's own build enables it; the
+# engine links this crate for the request format and must keep its own entry point.
+entry = []

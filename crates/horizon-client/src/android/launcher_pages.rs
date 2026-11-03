@@ -51,6 +51,11 @@ pub(super) enum Action {
     CancelLogin,
     ReviewApp,
     Repository,
+    /// Settings › Engines.
+    ImportEngine,
+    LaunchEngine(usize),
+    DeleteEngine(usize),
+    BuiltInEngine,
     SignOut,
     LoginLink,
     CloseLogin,
@@ -513,6 +518,48 @@ impl Launcher {
             Some(Action::ConfirmDeleteLocal) => {
                 self.catalog.remove_local(&self.home);
                 self.chooser = None;
+            }
+            Some(Action::ImportEngine) => {
+                if let Err(error) = crate::transfers::import_engine(self.home.clone()) {
+                    self.toast(super::text::t("Could not install the engine"), error, true);
+                }
+            }
+            Some(Action::LaunchEngine(index)) => {
+                if let Some(engine) = self.view.engines.get(index).cloned() {
+                    self.start_engine(Some(&engine.manifest.id));
+                }
+            }
+            Some(Action::BuiltInEngine) => self.start_engine(None),
+            Some(Action::DeleteEngine(index)) => {
+                let confirmed = self.view.engine_delete.is_some_and(|(at, when)| {
+                    at == index && when.elapsed() < std::time::Duration::from_secs(5)
+                });
+                if !confirmed {
+                    self.view.engine_delete = Some((index, std::time::Instant::now()));
+                } else if let Some(engine) = self.view.engines.get(index).cloned() {
+                    self.view.engine_delete = None;
+                    if crate::engines::running().as_deref() == Some(engine.manifest.id.as_str()) {
+                        self.toast(
+                            super::text::t("This engine is running"),
+                            super::text::t("Switch to the built-in engine first, then delete it."),
+                            true,
+                        );
+                    } else {
+                        match crate::engines::remove(&self.home, &engine.manifest.id) {
+                            Ok(()) => self.toast(
+                                super::text::tf("«{}» deleted", &[&engine.manifest.name]),
+                                String::new(),
+                                false,
+                            ),
+                            Err(error) => self.toast(
+                                super::text::t("Could not delete the engine"),
+                                error,
+                                true,
+                            ),
+                        }
+                        self.refresh_engines();
+                    }
+                }
             }
             Some(Action::Repository) => {
                 self.catalog.status = if crate::platform::open_repository() {

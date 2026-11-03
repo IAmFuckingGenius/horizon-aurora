@@ -143,7 +143,9 @@ def main():
     legacy = args.abi in ('armeabi-v7a', 'x86')
     min_sdk = 27 if legacy else 28
     features = ['--no-default-features', '--features', 'audio'] if legacy else []
-    manifests = [(['-p', 'horizon-android'], features)]
+    # The engine, and the small boot library NativeActivity loads first: it starts the
+    # APK's engine or one installed in files/engines (crates/horizon-boot).
+    manifests = [(['-p', 'horizon-android'], features), (['-p', 'horizon-boot'], ['--features', 'entry'])]
     environment = dict(os.environ)
     environment['PATH'] = os.pathsep.join([str(ndk / 'bin'), str(args.java_home / 'bin'), environment['PATH']])
     environment['JAVA_HOME'] = str(args.java_home)
@@ -190,7 +192,7 @@ def main():
     staging = ROOT / '.local/android/gradle-jni' / args.abi
     staging.mkdir(parents=True, exist_ok=True)
     (staging / 'libhorizon_android_native.so').unlink(missing_ok=True)
-    for name in ('libhorizon_android.so',):
+    for name in ('libhorizon_android.so', 'libhorizon_boot.so'):
         library = target_dir / target / ('debug' if args.profile == 'dev' else args.profile) / name
         if not library.is_file():
             raise FileNotFoundError(library)

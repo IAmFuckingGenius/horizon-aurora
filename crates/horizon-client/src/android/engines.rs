@@ -1,0 +1,442 @@
+//! Installed engines: game libraries built on a computer (`tools/android_engine_pack.py`,
+//! a `.hengine` ZIP of `engine.json` and `libhorizon_android.so`) that the boot library
+//! (`crates/horizon-boot`) starts in place of the APK's own engine for one launch. Each
+//! lives in `files/engines/<id>/`. Starting one writes the boot library's request and
+//! restarts the app, since a process holds one engine.
+use horizon_boot::{ENGINES, ERROR, LIBRARY, REQUEST, TAKEN, valid_id};
+use sha2::{Digest, Sha256};
+use std::{
+    fs,
+    io::{Read, Seek, Write},
+    path::{Path, PathBuf},
+};
+
+/// The `engine.json` format this launcher reads.
+pub const FORMAT: u32 = 1;
+/// The largest engine library accepted, in bytes.
+const LIMIT: u64 = 512 << 20;
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Manifest {
+    pub format: u32,
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub commit: String,
+    #[serde(default)]
+    pub dirty: bool,
+    pub abi: String,
+    #[serde(default)]
+    pub built: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// An engine installed on this device.
+#[derive(Clone, Debug)]
+pub struct Engine {
+    pub manifest: Manifest,
+}
+
+/// This build's ABI as Android names it.
+pub fn abi() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64-v8a",
+        "arm" => "armeabi-v7a",
+        "x86_64" => "x86_64",
+        "x86" => "x86",
+        _ => "unknown",
+    }
+}
+/// ELF `e_machine` for an ABI.
+fn machine(abi: &str) -> Option<u16> {
+    Some(match abi {
+        "arm64-v8a" => 183,
+        "armeabi-v7a" => 40,
+        "x86_64" => 62,
+        "x86" => 3,
+        _ => return None,
+    })
+}
+
+pub fn folder(home: &Path) -> PathBuf {
+    home.join(ENGINES)
+}
+
+/// The installed engines, newest build first.
+pub fn list(home: &Path) -> Vec<Engine> {
+    let mut out: Vec<Engine> = fs::read_dir(folder(home))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| {
+            let dir = e.path();
+            let manifest: Manifest =
+                serde_json::from_slice(&fs::read(dir.join("engine.json")).ok()?).ok()?;
+            let name = dir.file_name()?.to_str()?;
+            (manifest.id == name && dir.join(LIBRARY).is_file()).then_some(Engine { manifest })
+        })
+        .collect();
+    out.sort_by(|a, b| b.manifest.built.cmp(&a.manifest.built));
+    out
+}
+
+/// Why an engine file is refused, in English for `t_dyn`.
+fn check(manifest: &Manifest) -> Result<(), String> {
+    if manifest.format != FORMAT {
+        return Err(
+            "This engine was packed for another launcher version. Pack it again with this tree's tools/android_engine_pack.py."
+                .into(),
+        );
+    }
+    if !valid_id(&manifest.id) {
+        return Err("The engine's id is not a valid folder name.".into());
+    }
+    if manifest.abi != abi() {
+        return Err(format!(
+            "This engine is built for {}, and this device needs {}.",
+            manifest.abi,
+            abi()
+        ));
+    }
+    if manifest.size == 0 || manifest.size > LIMIT {
+        return Err("The engine library has an impossible size.".into());
+    }
+    if manifest.sha256.len() != 64 || !manifest.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("The engine has no valid checksum.".into());
+    }
+    Ok(())
+}
+
+/// Installs the `.hengine` in `file` (replacing an engine with the same id), checking
+/// its manifest, ABI, ELF header, size and SHA-256. The library ends up read-only, as
+/// Android 14 requires of code an app loads from its own files.
+pub fn install(home: &Path, file: impl Read + Seek) -> Result<Manifest, String> {
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|_| "This file is not an engine: it is not a ZIP archive.".to_owned())?;
+    let manifest: Manifest = {
+        let entry = zip
+            .by_name("engine.json")
+            .map_err(|_| "This file is not an engine: it has no engine.json.".to_owned())?;
+        let mut text = Vec::new();
+        entry
+            .take(64 << 10)
+            .read_to_end(&mut text)
+            .map_err(|e| e.to_string())?;
+        serde_json::from_slice(&text)
+            .map_err(|_| "The engine's engine.json cannot be read.".to_owned())?
+    };
+    check(&manifest)?;
+    let engines = folder(home);
+    fs::create_dir_all(&engines).map_err(|e| e.to_string())?;
+    let partial = engines.join(format!(".{}.partial", manifest.id));
+    let _ = fs::remove_dir_all(&partial);
+    fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
+    let result = (|| -> Result<(), String> {
+        let mut entry = zip
+            .by_name(LIBRARY)
+            .map_err(|_| format!("This engine has no {LIBRARY}."))?;
+        let path = partial.join(LIBRARY);
+        let mut out = fs::File::create(&path).map_err(|e| e.to_string())?;
+        let mut hash = Sha256::new();
+        let mut head = Vec::with_capacity(20);
+        let mut buffer = vec![0u8; 256 << 10];
+        let mut total = 0u64;
+        loop {
+            let n = entry.read(&mut buffer).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            total += n as u64;
+            if total > manifest.size {
+                return Err("The engine library is larger than its manifest says.".into());
+            }
+            if head.len() < 20 {
+                head.extend_from_slice(&buffer[..n.min(20 - head.len())]);
+            }
+            hash.update(&buffer[..n]);
+            out.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+        }
+        out.sync_all().map_err(|e| e.to_string())?;
+        drop(out);
+        if total != manifest.size {
+            return Err("The engine library is incomplete.".into());
+        }
+        let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if !digest.eq_ignore_ascii_case(&manifest.sha256) {
+            return Err("The engine library is damaged: its checksum does not match.".into());
+        }
+        let elf_machine = (head.len() >= 20).then(|| u16::from_le_bytes([head[18], head[19]]));
+        if !head.starts_with(b"\x7fELF") || elf_machine != machine(&manifest.abi) {
+            return Err("The engine library is not a library for this device.".into());
+        }
+        set_read_only(&path)?;
+        fs::write(
+            partial.join("engine.json"),
+            serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let dir = engines.join(&manifest.id);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        }
+        fs::rename(&partial, &dir).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&partial);
+    }
+    result.map(|()| manifest)
+}
+fn set_read_only(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o444)).map_err(|e| e.to_string())
+}
+
+/// Removes an installed engine.
+pub fn remove(home: &Path, id: &str) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err("Invalid engine".into());
+    }
+    let dir = folder(home).join(id);
+    // The library is read-only; its folder is not, so it can go.
+    fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
+/// Asks the boot library to start engine `id` on the next start, with `target` (what
+/// to open: the title screen, a world, a server) for the engine to read.
+pub fn request(home: &Path, id: &str, target: serde_json::Value) -> Result<(), String> {
+    if !valid_id(id) || !folder(home).join(id).join(LIBRARY).is_file() {
+        return Err("This engine is not installed.".into());
+    }
+    let engines = folder(home);
+    let json = serde_json::json!({ "engine": id, "target": target });
+    let partial = engines.join(".launch.partial");
+    fs::write(&partial, json.to_string()).map_err(|e| e.to_string())?;
+    fs::rename(&partial, engines.join(REQUEST)).map_err(|e| e.to_string())
+}
+
+/// The request this start was made for (the boot library took it), read once.
+pub fn take_started(home: &Path) -> Option<serde_json::Value> {
+    let path = folder(home).join(TAKEN);
+    let text = fs::read(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    serde_json::from_slice(&text).ok()
+}
+/// The engine that failed to start and why, when the boot library fell back to the
+/// APK's engine.
+pub fn take_boot_error(home: &Path) -> Option<(String, String)> {
+    let path = folder(home).join(ERROR);
+    let text = fs::read_to_string(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    let (id, reason) = text.split_once('\n').unwrap_or((&text, ""));
+    Some((id.trim().to_owned(), short_paths(reason.trim())))
+}
+/// `reason` with each quoted absolute path (the linker quotes the library's) cut to
+/// its file name, so the message fits a phone's dialog.
+fn short_paths(reason: &str) -> String {
+    let mut out = String::new();
+    let mut rest = reason;
+    while let Some(at) = rest.find("\"/") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + 1..];
+        let Some(end) = tail.find('"') else {
+            out.push_str(&rest[at..]);
+            return out;
+        };
+        let path = &tail[..end];
+        out.push('«');
+        out.push_str(path.rsplit('/').next().unwrap_or(path));
+        out.push('»');
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The installed engine this code runs from, or `None` for the APK's engine.
+pub fn running() -> Option<String> {
+    let path = own_path()?;
+    let dir = path.parent()?;
+    (dir.parent()?.file_name()? == ENGINES)
+        .then(|| dir.file_name()?.to_str().map(str::to_owned))
+        .flatten()
+}
+#[cfg(target_os = "android")]
+fn own_path() -> Option<PathBuf> {
+    #[repr(C)]
+    struct DlInfo {
+        fname: *const std::ffi::c_char,
+        fbase: *mut std::ffi::c_void,
+        sname: *const std::ffi::c_char,
+        saddr: *mut std::ffi::c_void,
+    }
+    #[link(name = "dl")]
+    unsafe extern "C" {
+        fn dladdr(addr: *const std::ffi::c_void, info: *mut DlInfo) -> std::ffi::c_int;
+    }
+    let mut info = DlInfo {
+        fname: std::ptr::null(),
+        fbase: std::ptr::null_mut(),
+        sname: std::ptr::null(),
+        saddr: std::ptr::null_mut(),
+    };
+    let ok = unsafe { dladdr(own_path as *const std::ffi::c_void, &mut info) };
+    if ok == 0 || info.fname.is_null() {
+        return None;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(info.fname) };
+    Some(PathBuf::from(name.to_string_lossy().as_ref()))
+}
+#[cfg(not(target_os = "android"))]
+fn own_path() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn library(abi: &str) -> Vec<u8> {
+        let mut bytes = b"\x7fELF".to_vec();
+        bytes.resize(18, 0);
+        bytes.extend_from_slice(&machine(abi).unwrap().to_le_bytes());
+        bytes.resize(4096, 7);
+        bytes
+    }
+    fn pack(manifest: &Manifest, lib: &[u8]) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("engine.json", options).unwrap();
+        zip.write_all(&serde_json::to_vec(manifest).unwrap())
+            .unwrap();
+        zip.start_file(LIBRARY, options).unwrap();
+        zip.write_all(lib).unwrap();
+        zip.finish().unwrap();
+        out.into_inner()
+    }
+    fn manifest(lib: &[u8]) -> Manifest {
+        Manifest {
+            format: FORMAT,
+            id: "pvp-1".into(),
+            name: "PvP".into(),
+            version: "0.7.7".into(),
+            commit: "abc".into(),
+            dirty: false,
+            abi: abi().into(),
+            built: "2026-11-03T10:00:00Z".into(),
+            size: lib.len() as u64,
+            sha256: Sha256::digest(lib)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+        }
+    }
+    fn home(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-engines-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_engine_installs_read_only_lists_and_is_requested_for_one_start() {
+        if abi() == "unknown" {
+            return;
+        }
+        let home = home("install");
+        let lib = library(abi());
+        let m = manifest(&lib);
+        assert_eq!(install(&home, Cursor::new(pack(&m, &lib))).unwrap(), m);
+        let engines = list(&home);
+        assert_eq!(engines.len(), 1);
+        assert_eq!(engines[0].manifest.name, "PvP");
+        let path = folder(&home).join("pvp-1").join(LIBRARY);
+        assert_eq!(fs::read(&path).unwrap(), lib);
+        assert!(fs::metadata(&path).unwrap().permissions().readonly());
+        // A new build of the same id replaces it.
+        let mut newer = lib.clone();
+        newer.push(1);
+        let mut m2 = manifest(&newer);
+        m2.name = "PvP 2".into();
+        install(&home, Cursor::new(pack(&m2, &newer))).unwrap();
+        assert_eq!(list(&home)[0].manifest.name, "PvP 2");
+        // The boot library's side of a request.
+        request(&home, "pvp-1", serde_json::json!({"world": "W"})).unwrap();
+        let (id, library) = horizon_boot::take_request(&home).unwrap();
+        assert_eq!((id.as_str(), library), ("pvp-1", path.clone()));
+        assert_eq!(take_started(&home).unwrap()["target"]["world"], "W");
+        assert_eq!(take_started(&home), None);
+        assert!(request(&home, "missing", serde_json::Value::Null).is_err());
+        remove(&home, "pvp-1").unwrap();
+        assert!(list(&home).is_empty());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_boot_failure_reads_once_with_short_paths() {
+        let home = home("boot-error");
+        fs::create_dir_all(folder(&home)).unwrap();
+        fs::write(
+            folder(&home).join(ERROR),
+            "bad\ndlopen failed: \"/data/user/0/app/files/engines/bad/libhorizon_android.so\" is too small\n",
+        )
+        .unwrap();
+        assert_eq!(
+            take_boot_error(&home),
+            Some((
+                "bad".into(),
+                "dlopen failed: «libhorizon_android.so» is too small".into()
+            ))
+        );
+        assert_eq!(take_boot_error(&home), None);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn damaged_foreign_and_lying_engines_are_refused_and_leave_nothing() {
+        if abi() == "unknown" {
+            return;
+        }
+        let home = home("refuse");
+        let lib = library(abi());
+        let mut bad_sum = manifest(&lib);
+        bad_sum.sha256 = "0".repeat(64);
+        let mut other_abi = manifest(&lib);
+        other_abi.abi = if abi() == "x86_64" {
+            "arm64-v8a"
+        } else {
+            "x86_64"
+        }
+        .into();
+        let mut escape = manifest(&lib);
+        escape.id = "../x".into();
+        let mut short = manifest(&lib);
+        short.size += 10;
+        let mut future = manifest(&lib);
+        future.format = FORMAT + 1;
+        let not_elf = vec![0u8; 64];
+        for (name, file) in [
+            ("checksum", pack(&bad_sum, &lib)),
+            ("abi", pack(&other_abi, &lib)),
+            ("id", pack(&escape, &lib)),
+            ("size", pack(&short, &lib)),
+            ("format", pack(&future, &lib)),
+            ("elf", pack(&manifest(&not_elf), &not_elf)),
+            ("zip", b"hello".to_vec()),
+        ] {
+            assert!(install(&home, Cursor::new(file)).is_err(), "{name}");
+        }
+        assert!(list(&home).is_empty());
+        let leftovers: Vec<_> = fs::read_dir(folder(&home))
+            .map(|d| d.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        fs::remove_dir_all(home).unwrap();
+    }
+}

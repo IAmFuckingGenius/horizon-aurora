@@ -1612,6 +1612,7 @@ dependencies = [
  "horizon-anticheat",
  "horizon-assets",
  "horizon-bench",
+ "horizon-boot",
  "horizon-chat-filter",
  "horizon-client",
  "horizon-client-input",
@@ -1678,6 +1679,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "horizon-boot"
+version = "0.1.0"
 
 [[package]]
 name = "horizon-bots"

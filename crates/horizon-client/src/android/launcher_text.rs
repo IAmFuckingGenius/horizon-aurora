@@ -846,52 +846,250 @@ static RU: &[(&str, &str)] = &[
     ("Play without signing in", "Игра без входа"),
     ("Microsoft account", "Аккаунт Microsoft"),
     ("Now playing as {} ({})", "Сейчас вы играете как {} ({})"),
-    ("Now playing as {} (offline)", "Сейчас вы играете как {} (без входа)"),
-    ("Any name. Singleplayer and servers without licence checks.", "Любое имя. Одиночная игра и серверы без проверки лицензии."),
-    ("A licensed Minecraft account. Needed for most public servers.", "Лицензионный аккаунт Minecraft. Нужен для большинства публичных серверов."),
-    ("A free account with skins, for servers that use Ely.by.", "Бесплатный аккаунт со скинами для серверов, которые работают с Ely.by."),
-    ("Switch between accounts signed in before: {}.", "Переключение между аккаунтами, в которые вы уже входили: {}."),
-    ("No saved accounts yet. Sign in with Microsoft or Ely.by and the account stays here.", "Сохранённых аккаунтов пока нет. Войдите через Microsoft или Ely.by, и аккаунт появится здесь."),
+    (
+        "Now playing as {} (offline)",
+        "Сейчас вы играете как {} (без входа)",
+    ),
+    (
+        "Any name. Singleplayer and servers without licence checks.",
+        "Любое имя. Одиночная игра и серверы без проверки лицензии.",
+    ),
+    (
+        "A licensed Minecraft account. Needed for most public servers.",
+        "Лицензионный аккаунт Minecraft. Нужен для большинства публичных серверов.",
+    ),
+    (
+        "A free account with skins, for servers that use Ely.by.",
+        "Бесплатный аккаунт со скинами для серверов, которые работают с Ely.by.",
+    ),
+    (
+        "Switch between accounts signed in before: {}.",
+        "Переключение между аккаунтами, в которые вы уже входили: {}.",
+    ),
+    (
+        "No saved accounts yet. Sign in with Microsoft or Ely.by and the account stays here.",
+        "Сохранённых аккаунтов пока нет. Войдите через Microsoft или Ely.by, и аккаунт появится здесь.",
+    ),
     ("Previous", "Назад"),
     ("Next", "Дальше"),
     ("Username or email", "Логин или почта"),
     ("Password (not saved)", "Пароль (не сохраняется)"),
-    ("Two-factor code, if you set one up", "Код двухфакторной защиты, если она включена"),
-    ("Your password goes only to authserver.ely.by and is not stored on the phone.", "Пароль отправляется только на authserver.ely.by и не хранится на телефоне."),
+    (
+        "Two-factor code, if you set one up",
+        "Код двухфакторной защиты, если она включена",
+    ),
+    (
+        "Your password goes only to authserver.ely.by and is not stored on the phone.",
+        "Пароль отправляется только на authserver.ely.by и не хранится на телефоне.",
+    ),
     ("Done", "Готово"),
     ("Sign in to Ely.by", "Войти в Ely.by"),
-    ("Singleplayer worlds and servers without licence checks. The name is up to 16 letters, digits or _.", "Одиночные миры и серверы без проверки лицензии. Имя — до 16 латинских букв, цифр или _."),
+    (
+        "Singleplayer worlds and servers without licence checks. The name is up to 16 letters, digits or _.",
+        "Одиночные миры и серверы без проверки лицензии. Имя — до 16 латинских букв, цифр или _.",
+    ),
     ("Play offline", "Играть без входа"),
     ("Skins", "Скины"),
     ("Capes", "Плащи"),
     ("Skins & capes", "Скины и плащи"),
     ("Import PNG", "Добавить PNG"),
     ("On the account", "В аккаунте"),
-    ("On the account · tap to wear it", "В аккаунте · нажмите, чтобы надеть"),
+    (
+        "On the account · tap to wear it",
+        "В аккаунте · нажмите, чтобы надеть",
+    ),
     ("On this phone", "На этом телефоне"),
     ("Model: Alex (slim arms)", "Модель: Алекс (тонкие руки)"),
     ("Model: Steve (classic)", "Модель: Стив (обычная)"),
-    ("Use the account's own appearance", "Вернуть облик из аккаунта"),
+    (
+        "Use the account's own appearance",
+        "Вернуть облик из аккаунта",
+    ),
     ("Refresh from the account", "Обновить из аккаунта"),
-    ("Upload the chosen skin to Microsoft", "Загрузить выбранный скин в Microsoft"),
-    ("Change the Ely.by skin on the website", "Сменить скин Ely.by на сайте"),
+    (
+        "Upload the chosen skin to Microsoft",
+        "Загрузить выбранный скин в Microsoft",
+    ),
+    (
+        "Change the Ely.by skin on the website",
+        "Сменить скин Ely.by на сайте",
+    ),
     ("Back to the default look", "Вернуть стандартный облик"),
     ("Hide or show the cape", "Скрыть или показать плащ"),
-    ("Cloud profile synchronized. Local overrides are kept separate.", "Профиль из аккаунта обновлён. Ваш выбор на телефоне сохранён отдельно."),
-    ("Applied locally. The account's cloud profile is unchanged.", "Применено на этом телефоне. В аккаунте ничего не изменилось."),
-    ("Choose a PNG image in Android Files.", "Выберите картинку PNG в файлах Android."),
-    ("Using the account's cloud appearance. No cloud changes were made.", "Используется облик из аккаунта. В аккаунте ничего не изменено."),
-    ("Local override cleared. Using the default appearance.", "Выбор на телефоне сброшен. Используется стандартный облик."),
-    ("Offline appearance is local to this installation.", "Облик без входа хранится только на этом телефоне."),
-    ("Ely.by cloud skins are managed at ely.by. Custom capes can be applied locally.", "Скин Ely.by меняется на сайте ely.by. Свои плащи можно надеть на телефоне."),
-    ("Select a local skin before uploading to your Microsoft profile.", "Сначала выберите скин на телефоне, потом загружайте его в Microsoft."),
-    ("Contacting account service...", "Связываемся с сервисом аккаунтов…"),
-    ("Sign in before synchronizing your cloud appearance.", "Войдите в аккаунт, чтобы обновить облик из него."),
-    ("The selected account changed. Open the gallery again.", "Выбранный аккаунт сменился. Откройте вкладку скинов заново."),
-    ("Signed out. Offline play is available.", "Вы вышли из аккаунта. Можно играть без входа."),
-    ("Code copied. Paste it on the Microsoft page.", "Код скопирован. Вставьте его на странице Microsoft."),
-    ("Could not copy the code. Try again.", "Не удалось скопировать код. Попробуйте ещё раз."),
+    (
+        "Cloud profile synchronized. Local overrides are kept separate.",
+        "Профиль из аккаунта обновлён. Ваш выбор на телефоне сохранён отдельно.",
+    ),
+    (
+        "Applied locally. The account's cloud profile is unchanged.",
+        "Применено на этом телефоне. В аккаунте ничего не изменилось.",
+    ),
+    (
+        "Choose a PNG image in Android Files.",
+        "Выберите картинку PNG в файлах Android.",
+    ),
+    (
+        "Using the account's cloud appearance. No cloud changes were made.",
+        "Используется облик из аккаунта. В аккаунте ничего не изменено.",
+    ),
+    (
+        "Local override cleared. Using the default appearance.",
+        "Выбор на телефоне сброшен. Используется стандартный облик.",
+    ),
+    (
+        "Offline appearance is local to this installation.",
+        "Облик без входа хранится только на этом телефоне.",
+    ),
+    (
+        "Ely.by cloud skins are managed at ely.by. Custom capes can be applied locally.",
+        "Скин Ely.by меняется на сайте ely.by. Свои плащи можно надеть на телефоне.",
+    ),
+    (
+        "Select a local skin before uploading to your Microsoft profile.",
+        "Сначала выберите скин на телефоне, потом загружайте его в Microsoft.",
+    ),
+    (
+        "Contacting account service...",
+        "Связываемся с сервисом аккаунтов…",
+    ),
+    (
+        "Sign in before synchronizing your cloud appearance.",
+        "Войдите в аккаунт, чтобы обновить облик из него.",
+    ),
+    (
+        "The selected account changed. Open the gallery again.",
+        "Выбранный аккаунт сменился. Откройте вкладку скинов заново.",
+    ),
+    (
+        "Signed out. Offline play is available.",
+        "Вы вышли из аккаунта. Можно играть без входа.",
+    ),
+    (
+        "Code copied. Paste it on the Microsoft page.",
+        "Код скопирован. Вставьте его на странице Microsoft.",
+    ),
+    (
+        "Could not copy the code. Try again.",
+        "Не удалось скопировать код. Попробуйте ещё раз.",
+    ),
     ("Signed in as {}", "Вы вошли как {}"),
+    ("Engines", "Движки"),
+    ("Installing an engine", "Установка движка"),
+    (
+        "Copying the engine into Horizon",
+        "Копируем движок в Horizon",
+    ),
+    (
+        "Checking and installing the engine",
+        "Проверяем и устанавливаем движок",
+    ),
+    ("Engine installed", "Движок установлен"),
+    ("Engine import cancelled", "Установка движка отменена"),
+    (
+        "Could not install the engine",
+        "Не удалось установить движок",
+    ),
+    (
+        "«{}» is in Settings › Engines. Start it from there.",
+        "«{}» теперь в Настройки › Движки. Запускайте его оттуда.",
+    ),
+    (
+        "Engine in use: built into the app",
+        "Сейчас работает встроенный движок",
+    ),
+    ("Engine in use: «{}»", "Сейчас работает движок «{}»"),
+    (
+        "Started for this launch only. The next start of the app uses the built-in engine again.",
+        "Он запущен только на этот раз. При следующем запуске приложения снова будет встроенный движок.",
+    ),
+    ("Built-in engine", "Встроенный движок"),
+    ("Add an engine", "Добавить движок"),
+    (
+        "An engine is the game built on a computer, with your native mods compiled in, and packed into a .hengine file by tools/android_engine_pack.py. It runs without reinstalling the app; your worlds, settings and account stay shared.",
+        "Движок — это игра, собранная на компьютере вместе с вашими нативными модами и упакованная в файл .hengine скриптом tools/android_engine_pack.py. Он запускается без переустановки приложения; миры, настройки и аккаунт остаются общими.",
+    ),
+    ("Import", "Импорт"),
+    ("uncommitted changes", "есть незакоммиченные правки"),
+    ("Start", "Запустить"),
+    ("Tap again", "Нажмите ещё раз"),
+    ("Delete", "Удалить"),
+    ("This engine is running", "Этот движок сейчас работает"),
+    (
+        "Switch to the built-in engine first, then delete it.",
+        "Сначала переключитесь на встроенный движок, потом удаляйте.",
+    ),
+    ("«{}» deleted", "«{}» удалён"),
+    ("Could not delete the engine", "Не удалось удалить движок"),
+    ("Could not start the engine", "Не удалось запустить движок"),
+    (
+        "Could not restart Horizon",
+        "Не удалось перезапустить Horizon",
+    ),
+    (
+        "Close the app and open it again to switch the engine.",
+        "Закройте приложение и откройте снова, чтобы сменить движок.",
+    ),
+    ("Engine «{}» did not start", "Движок «{}» не запустился"),
+    (
+        "The built-in engine started instead. Android said: {}",
+        "Вместо него запущен встроенный движок. Ответ Android: {}",
+    ),
+    (
+        "No capes on this phone yet. Add a cape PNG (64×32) with the button above; it shows only for you.",
+        "На телефоне пока нет плащей. Добавьте PNG плаща (64×32) кнопкой выше; его будете видеть только вы.",
+    ),
+    (
+        "No skins on this phone yet. Add a skin PNG (64×64) with the button above, then tap it to wear it.",
+        "На телефоне пока нет скинов. Добавьте PNG скина (64×64) кнопкой выше и нажмите на него, чтобы надеть.",
+    ),
+    (
+        "This file is not an engine: it is not a ZIP archive.",
+        "Это не движок: файл не является ZIP-архивом.",
+    ),
+    (
+        "This file is not an engine: it has no engine.json.",
+        "Это не движок: в нём нет engine.json.",
+    ),
+    (
+        "The engine's engine.json cannot be read.",
+        "Не удаётся прочитать engine.json движка.",
+    ),
+    (
+        "This engine was packed for another launcher version. Pack it again with this tree's tools/android_engine_pack.py.",
+        "Движок упакован для другой версии лаунчера. Упакуйте его заново скриптом tools/android_engine_pack.py из этой версии.",
+    ),
+    (
+        "The engine's id is not a valid folder name.",
+        "Имя (id) движка не подходит для папки.",
+    ),
+    (
+        "The engine library has an impossible size.",
+        "У библиотеки движка невозможный размер.",
+    ),
+    (
+        "The engine has no valid checksum.",
+        "У движка нет правильной контрольной суммы.",
+    ),
+    (
+        "The engine library is larger than its manifest says.",
+        "Библиотека движка больше, чем указано в его описании.",
+    ),
+    (
+        "The engine library is incomplete.",
+        "Библиотека движка неполная.",
+    ),
+    (
+        "The engine library is damaged: its checksum does not match.",
+        "Библиотека движка повреждена: контрольная сумма не совпадает.",
+    ),
+    (
+        "The engine library is not a library for this device.",
+        "Библиотека движка не подходит для этого устройства.",
+    ),
+    (
+        "This engine is not installed.",
+        "Этот движок не установлен.",
+    ),
 ];
 
 #[cfg(test)]

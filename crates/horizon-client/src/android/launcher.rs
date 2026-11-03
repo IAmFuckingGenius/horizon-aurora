@@ -79,6 +79,9 @@ pub(super) struct Launcher {
     /// Where Play goes once the session is ready: the title screen, the quick-join
     /// server or straight into a world.
     launch_target: LaunchTarget,
+    /// What the launch request this start was made for asks to open (an installed
+    /// engine started from Settings › Engines); opened once the launcher is ready.
+    start_request: Option<serde_json::Value>,
     view: view::ViewState,
     fling: Option<gesture::Fling>,
 }
@@ -92,6 +95,38 @@ pub(super) enum LaunchTarget {
 }
 
 impl Launcher {
+    /// Restarts the app on engine `id` (or the built-in one) for one launch: the boot
+    /// library reads the request on the next start (`crates/horizon-boot`). The
+    /// process ends here; Android starts a new one for the restarted activity.
+    pub(super) fn start_engine(&mut self, id: Option<&str>) {
+        if let Some(id) = id
+            && let Err(error) =
+                crate::engines::request(&self.home, id, serde_json::json!({ "open": "title" }))
+        {
+            self.toast(
+                text::t("Could not start the engine"),
+                text::t_dyn(&error),
+                true,
+            );
+            return;
+        }
+        if let Err(error) = self.catalog.config.save(&self.home) {
+            log::warn!("Launcher settings before an engine switch: {error}");
+        }
+        if !crate::platform::restart_app() {
+            let _ = std::fs::remove_file(crate::engines::folder(&self.home).join("launch.json"));
+            self.toast(
+                text::t("Could not restart Horizon"),
+                text::t("Close the app and open it again to switch the engine."),
+                true,
+            );
+            return;
+        }
+        log::info!("Restarting on engine {}", id.unwrap_or("built-in"));
+        crate::diagnostics::finish();
+        crate::platform::finish();
+        std::process::exit(0);
+    }
     pub(super) fn refresh_wardrobe_account(&mut self) {
         if self.catalog.page == Page::Skins {
             self.catalog.scroll = 0.0;
@@ -136,7 +171,13 @@ impl Launcher {
         }
         crate::configure_input_mode(catalog.config.input_host);
         crate::device_runtime::configure(catalog.config.device);
-        Self {
+        let start_request = crate::engines::take_started(&home);
+        let boot_error = crate::engines::take_boot_error(&home);
+        // A request whose engine failed to load is not this engine's to open: the
+        // launcher shows why instead of going straight into the game.
+        let start_request = start_request.filter(|_| boot_error.is_none());
+        let mut launcher = Self {
+            start_request,
             wardrobe: wardrobe::Wardrobe::new(&home),
             home,
             controller_edges: Default::default(),
@@ -169,7 +210,19 @@ impl Launcher {
             launch_target: LaunchTarget::Title,
             view: view::ViewState::default(),
             fling: None,
+        };
+        // Shown as a dialog until dismissed: a toast could expire before the
+        // window is up.
+        if let Some((id, reason)) = boot_error {
+            launcher.view.transfer_error = Some((
+                text::tf("Engine «{}» did not start", &[&id]),
+                text::tf(
+                    "The built-in engine started instead. Android said: {}",
+                    &[&reason],
+                ),
+            ));
         }
+        launcher
     }
 
     fn restore_launcher(&mut self, events: &ActiveEventLoop) {
@@ -693,6 +746,27 @@ impl ApplicationHandler for Launcher {
             match result {
                 Ok(path) => self.send_report(path, crate::transfers::Report::Diagnostics, delivery),
                 Err(error) => self.toast(text::t("Could not prepare the report"), error, true),
+            }
+        }
+        // An installed engine started for a launch: open what was asked, once the
+        // launcher has its window and the game files are in place.
+        if self.renderer.is_some()
+            && self.start_request.is_some()
+            && horizon_client::official_install::ready(&self.home)
+            && let Some(request) = self.start_request.take()
+        {
+            let target = &request["target"];
+            self.launch_target = if let Some(world) = target["world"].as_str() {
+                LaunchTarget::World(world.to_owned())
+            } else if let Some(server) = target["server"].as_str() {
+                self.catalog.config.server = server.to_owned();
+                LaunchTarget::Server
+            } else {
+                LaunchTarget::Title
+            };
+            log::info!("Engine launch request: {target}");
+            if let Err(error) = self.action(events) {
+                self.fail(error);
             }
         }
         while let Some(notice) = crate::transfers::poll() {

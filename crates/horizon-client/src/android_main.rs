@@ -53,6 +53,8 @@ mod platform;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/proxy.rs"]
 mod proxy;
+#[path = "android/engines.rs"]
+mod engines;
 #[path = "android/memory.rs"]
 mod memory;
 #[path = "android/search_queue.rs"]

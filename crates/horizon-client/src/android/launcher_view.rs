@@ -48,6 +48,11 @@ pub(super) struct ViewState {
     pub landscape: Option<bool>,
     /// A failed world or report transfer: its title and reason, until dismissed.
     pub transfer_error: Option<(String, String)>,
+    /// Installed engines (`engines.rs`), read again every few seconds.
+    pub engines: Vec<crate::engines::Engine>,
+    pub engines_loaded: Option<Instant>,
+    /// The engine Delete was tapped for once, and when: a second tap deletes.
+    pub engine_delete: Option<(usize, Instant)>,
 }
 impl Default for ViewState {
     fn default() -> Self {
@@ -65,6 +70,9 @@ impl Default for ViewState {
             free: None,
             landscape: None,
             transfer_error: None,
+            engines: Vec::new(),
+            engines_loaded: None,
+            engine_delete: None,
         }
     }
 }
@@ -194,6 +202,10 @@ impl Launcher {
         }
         self.view.free.map(|(_, f)| f)
     }
+    pub(super) fn refresh_engines(&mut self) {
+        self.view.engines = crate::engines::list(&self.home);
+        self.view.engines_loaded = Some(Instant::now());
+    }
     pub(super) fn refresh_worlds(&mut self) {
         let saves = self.catalog.config.game_home(&self.home).join("saves");
         self.view.worlds = load_worlds(&saves);
@@ -229,6 +241,14 @@ impl Launcher {
             .is_none_or(|at| at.elapsed() > Duration::from_secs(30))
         {
             self.refresh_worlds();
+        }
+        if self.catalog.page == Page::Settings
+            && self
+                .view
+                .engines_loaded
+                .is_none_or(|at| at.elapsed() > Duration::from_secs(3))
+        {
+            self.refresh_engines();
         }
         // Messages the old status line showed become toasts, except on the
         // add-on pages, which show their catalogue status in the list.
@@ -1954,7 +1974,7 @@ impl Launcher {
             col::INK,
             t("Skins & capes"),
         );
-        let owner = self.wardrobe.owner();
+        let owner = self.wardrobe.owner(&self.catalog.config.name);
         k.text_fit(
             Face::Mono,
             12.0,
@@ -2074,6 +2094,11 @@ impl Launcher {
                             Control::Text(_) => 0.0,
                             Control::Button(style, icon, label, _) => {
                                 k.button_width(*style, Some(Icon::Pixel(icon)), label)
+                            }
+                            Control::Pair(a, b) => {
+                                k.button_width(a.0, Some(Icon::Pixel(a.1)), a.2)
+                                    + 8.0
+                                    + k.button_width(b.0, Some(Icon::Pixel(b.1)), b.2)
                             }
                             _ => control_w,
                         };
@@ -2215,6 +2240,30 @@ impl Launcher {
                                 [cx + cw - 14.0 - bw, control_rect[1], bw, 48.0]
                             };
                             k.button(r, *style, Some(Icon::Pixel(icon)), label, Some(*action));
+                        }
+                        Control::Pair(a, b) => {
+                            let aw = k.button_width(a.0, Some(Icon::Pixel(a.1)), a.2);
+                            let bw = k.button_width(b.0, Some(Icon::Pixel(b.1)), b.2);
+                            let x = if below {
+                                control_rect[0]
+                            } else {
+                                cx + cw - 14.0 - bw - 8.0 - aw
+                            };
+                            let y = control_rect[1];
+                            k.button(
+                                [x, y, aw, 48.0],
+                                a.0,
+                                Some(Icon::Pixel(a.1)),
+                                a.2,
+                                Some(a.3),
+                            );
+                            k.button(
+                                [x + aw + 8.0, y, bw, 48.0],
+                                b.0,
+                                Some(Icon::Pixel(b.1)),
+                                b.2,
+                                Some(b.3),
+                            );
                         }
                         Control::Segmented(items) => {
                             let items: Vec<_> = items
@@ -2456,6 +2505,7 @@ impl Launcher {
                     ),
                 ],
             ),
+            ("box", "Engines", self.engine_rows()),
             (
                 "bug",
                 "Diagnostics & about",
@@ -2538,6 +2588,85 @@ impl Launcher {
         ]
     }
 
+    /// Settings › Engines: the engine running now, import, and each installed one.
+    fn engine_rows(&self) -> Vec<Row> {
+        let commit = option_env!("HORIZON_ANDROID_BUILD_COMMIT").unwrap_or("local");
+        let running = crate::engines::running();
+        let mut rows = vec![match &running {
+            None => Row::mono(
+                t("Engine in use: built into the app"),
+                &format!("Horizon {} · {commit}", crate::backend::VERSION),
+                Control::Text(()),
+            ),
+            Some(id) => {
+                let name = self
+                    .view
+                    .engines
+                    .iter()
+                    .find(|e| &e.manifest.id == id)
+                    .map_or(id.clone(), |e| e.manifest.name.clone());
+                Row::new(
+                    &tf("Engine in use: «{}»", &[&name]),
+                    t(
+                        "Started for this launch only. The next start of the app uses the built-in engine again.",
+                    ),
+                    Control::Button(
+                        Style::Secondary,
+                        "reload",
+                        t("Built-in engine"),
+                        Action::BuiltInEngine,
+                    ),
+                )
+            }
+        }];
+        rows.push(Row::new(
+            t("Add an engine"),
+            t("An engine is the game built on a computer, with your native mods compiled in, and packed into a .hengine file by tools/android_engine_pack.py. It runs without reinstalling the app; your worlds, settings and account stay shared."),
+            Control::Button(Style::Secondary, "plus", t("Import"), Action::ImportEngine),
+        ));
+        for (i, engine) in self.view.engines.iter().enumerate() {
+            let m = &engine.manifest;
+            let confirming = self
+                .view
+                .engine_delete
+                .is_some_and(|(at, when)| at == i && when.elapsed() < Duration::from_secs(5));
+            let mut details = format!(
+                "{} · {} · {}",
+                if m.version.is_empty() {
+                    "?"
+                } else {
+                    &m.version
+                },
+                if m.commit.is_empty() { "?" } else { &m.commit },
+                size(m.size)
+            );
+            if m.dirty {
+                details.push_str(&format!(" · {}", t("uncommitted changes")));
+            }
+            if let Some(day) = m.built.get(..10) {
+                details.push_str(&format!(" · {day}"));
+            }
+            rows.push(Row::mono(
+                &m.name,
+                &details,
+                Control::Pair(
+                    (Style::Primary, "play", t("Start"), Action::LaunchEngine(i)),
+                    (
+                        Style::Danger,
+                        "trash",
+                        if confirming {
+                            t("Tap again")
+                        } else {
+                            t("Delete")
+                        },
+                        Action::DeleteEngine(i),
+                    ),
+                ),
+            ));
+        }
+        rows
+    }
+
     // ---- dialogs ----
 
     /// The exit question.
@@ -2602,6 +2731,7 @@ impl Launcher {
                     Job::ExportWorld => t("Exporting the world"),
                     Job::ImportWorld => t("Importing a world"),
                     Job::SaveFile => t("Saving the file"),
+                    Job::ImportEngine => t("Installing an engine"),
                 }
                 .to_owned(),
                 r.name.clone(),
@@ -2636,6 +2766,8 @@ impl Launcher {
         if let Some(r) = &running {
             let stage = match (r.cancelling, r.stage, r.job) {
                 (true, ..) => t("Stopping and cleaning up"),
+                (_, Stage::Receiving, Job::ImportEngine) => t("Copying the engine into Horizon"),
+                (_, _, Job::ImportEngine) => t("Checking and installing the engine"),
                 (_, Stage::Receiving, _) => t("Copying the ZIP into Horizon"),
                 (_, Stage::Checking, _) => t("Checking the ZIP"),
                 (_, Stage::Writing, Job::ExportWorld) => t("Packing the world into a ZIP"),
@@ -2804,10 +2936,13 @@ impl Row {
         }
     }
 }
+type ButtonSpec = (Style, &'static str, &'static str, Action);
 enum Control {
     Dropdown(String, Action),
     Switch(bool, Action),
     Button(Style, &'static str, &'static str, Action),
+    /// Two buttons side by side (start and delete).
+    Pair(ButtonSpec, ButtonSpec),
     Segmented(Vec<(String, Action, bool)>),
     Text(()),
 }
@@ -2815,6 +2950,7 @@ impl Control {
     fn actions(&self) -> Vec<Action> {
         match self {
             Self::Dropdown(_, a) | Self::Switch(_, a) | Self::Button(_, _, _, a) => vec![*a],
+            Self::Pair(a, b) => vec![a.3, b.3],
             Self::Segmented(items) => items.iter().map(|(_, a, _)| *a).collect(),
             Self::Text(_) => Vec::new(),
         }

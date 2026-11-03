@@ -69,6 +69,7 @@ pub enum Job {
     ExportWorld,
     ImportWorld,
     SaveFile,
+    ImportEngine,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
@@ -97,9 +98,20 @@ pub struct Notice {
 }
 
 enum Pending {
-    Import { saves: PathBuf },
-    World { dir: PathBuf, name: String },
-    File { path: PathBuf },
+    Import {
+        saves: PathBuf,
+    },
+    /// An engine (`.hengine`) for `files/engines` under `home`.
+    Engine {
+        home: PathBuf,
+    },
+    World {
+        dir: PathBuf,
+        name: String,
+    },
+    File {
+        path: PathBuf,
+    },
 }
 struct State {
     pending: Option<Pending>,
@@ -178,6 +190,18 @@ pub fn export_world(dir: PathBuf, name: &str) -> Result<(), String> {
 pub fn import_world(saves: PathBuf) -> Result<(), String> {
     begin(
         Pending::Import { saves },
+        crate::native_ime::Picker {
+            request: IMPORT_WORLD,
+            create: false,
+            mimes: ZIP_TYPES.to_vec(),
+            title: String::new(),
+        },
+    )
+}
+/// Asks for an engine file (`.hengine`), then installs it (`engines.rs`).
+pub fn import_engine(home: PathBuf) -> Result<(), String> {
+    begin(
+        Pending::Engine { home },
         crate::native_ime::Picker {
             request: IMPORT_WORLD,
             create: false,
@@ -319,7 +343,7 @@ pub fn document_result(
     let _ = env.exception_clear();
     let pending = state().pending.take();
     let matches = match &pending {
-        Some(Pending::Import { .. }) => request == IMPORT_WORLD,
+        Some(Pending::Import { .. } | Pending::Engine { .. }) => request == IMPORT_WORLD,
         Some(Pending::World { .. } | Pending::File { .. }) => request == EXPORT,
         None => false,
     };
@@ -370,6 +394,7 @@ pub fn document_result(
     };
     let (job, name) = match &pending {
         Pending::Import { .. } => (Job::ImportWorld, String::new()),
+        Pending::Engine { .. } => (Job::ImportEngine, String::new()),
         Pending::World { name, .. } => (Job::ExportWorld, name.clone()),
         Pending::File { path } => (
             Job::SaveFile,
@@ -383,7 +408,7 @@ pub fn document_result(
     state().running = Some(Running {
         job,
         name,
-        stage: if job == Job::ImportWorld {
+        stage: if matches!(job, Job::ImportWorld | Job::ImportEngine) {
             Stage::Checking
         } else {
             Stage::Writing
@@ -461,12 +486,21 @@ fn finished(job: Job, outcome: Result<String, Failure>) {
             "Could not import the world",
         ),
         Job::SaveFile => ("File saved", "Saving cancelled", "Could not save the file"),
+        Job::ImportEngine => (
+            "Engine installed",
+            "Engine import cancelled",
+            "Could not install the engine",
+        ),
     };
     match outcome {
         Ok(name) => notify(
             done,
             match job {
                 Job::ImportWorld => tf("«{}» is now in Worlds.", &[&name]),
+                Job::ImportEngine => tf(
+                    "«{}» is in Settings › Engines. Start it from there.",
+                    &[&name],
+                ),
                 _ => tf("Saved as «{}».", &[&name]),
             },
             false,
@@ -474,7 +508,7 @@ fn finished(job: Job, outcome: Result<String, Failure>) {
         ),
         Err(Failure::Cancelled) => notify(
             cancelled,
-            if job == Job::ImportWorld {
+            if matches!(job, Job::ImportWorld | Job::ImportEngine) {
                 t("Nothing was added.").into()
             } else {
                 t("The unfinished file was removed.").into()
@@ -585,6 +619,7 @@ fn run(
             let _ = fs::remove_dir_all(&work);
             result
         }
+        Pending::Engine { home } => import_engine_file(env, activity, uri, &home),
         Pending::World { dir, .. } => {
             let (mut output, name) = open_created(env, activity, uri, "world.zip")?;
             let result = export(&dir, &mut output);
@@ -607,6 +642,42 @@ fn run(
             finish_export(env, activity, uri, result, name)
         }
     }
+}
+/// Copies the chosen engine file into `files/engines` (a ZIP must be read out of
+/// order), then installs it. Returns the engine's name.
+fn import_engine_file(
+    env: &mut JNIEnv<'_>,
+    activity: &JObject<'_>,
+    uri: &str,
+    home: &Path,
+) -> Result<String, Failure> {
+    let (mut input, _) = crate::document_bridge::open(env, activity, uri, "engine.hengine")
+        .map_err(|error| unreadable(env, error))?;
+    let total = input.metadata().map(|m| m.len()).unwrap_or(0);
+    let engines = crate::engines::folder(home);
+    fs::create_dir_all(&engines)?;
+    if let Some(free) = free_space(&engines)
+        && free < total.saturating_mul(2) + MARGIN
+    {
+        return Err(Failure::NoSpace(total.saturating_mul(2) + MARGIN - free));
+    }
+    let staged = engines.join(".incoming.hengine");
+    let result = (|| -> Result<String, Failure> {
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&staged)?;
+        copy(&mut input, &mut file, Stage::Receiving, total)?;
+        file.seek(SeekFrom::Start(0))?;
+        progress(Stage::Writing, Progress::default());
+        crate::engines::install(home, file)
+            .map(|m| m.name)
+            .map_err(Failure::Other)
+    })();
+    let _ = fs::remove_file(&staged);
+    result
 }
 /// The document the picker created, opened for writing; removed again when it
 /// cannot be opened.

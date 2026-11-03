@@ -220,6 +220,50 @@ pub(crate) fn with_context<R>(
         }
     })
 }
+/// Starts the app again in a new task, for the boot library to pick up a launch
+/// request (a process holds one engine). The caller exits the process right after;
+/// Android then starts a fresh one for the new activity.
+pub fn restart_app() -> bool {
+    with_context(|env, activity| {
+        let package = env
+            .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?
+            .l()?;
+        let manager = env
+            .call_method(
+                activity,
+                "getPackageManager",
+                "()Landroid/content/pm/PackageManager;",
+                &[],
+            )?
+            .l()?;
+        let intent = env
+            .call_method(
+                &manager,
+                "getLaunchIntentForPackage",
+                "(Ljava/lang/String;)Landroid/content/Intent;",
+                &[JValue::Object(&package)],
+            )?
+            .l()?;
+        if intent.is_null() {
+            return Ok(false);
+        }
+        // FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK.
+        env.call_method(
+            &intent,
+            "addFlags",
+            "(I)Landroid/content/Intent;",
+            &[JValue::Int(0x1000_0000 | 0x0000_8000)],
+        )?;
+        env.call_method(
+            activity,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(&intent)],
+        )?;
+        Ok(true)
+    })
+    .unwrap_or(false)
+}
 pub fn clipboard_get() -> Option<String> {
     with_context(|env, activity| {
         let name = JObject::from(env.new_string("clipboard")?);

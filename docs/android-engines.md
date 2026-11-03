@@ -1,0 +1,66 @@
+# Android engines
+
+Horizon Android can start a game library built on a computer instead of the one
+inside the APK, without reinstalling the app. Such a library is an **engine**: the
+same `libhorizon_android.so` the APK carries, built from any tree, for example with
+native mods compiled in. Worlds, settings, accounts and downloaded game files stay
+shared between engines.
+
+## How it starts
+
+NativeActivity loads `libhorizon_boot.so` first (`crates/horizon-boot`,
+`android.app.lib_name` in `packaging/android/AndroidManifest.xml`). The boot library:
+
+1. takes `files/engines/launch.json` if it exists, renaming it to
+   `launch.taken.json` before anything else, so a request is used once;
+2. loads `files/engines/<id>/libhorizon_android.so` for the engine the request
+   names, and calls its `ANativeActivity_onCreate`;
+3. otherwise, or when that library cannot load, loads the APK's own
+   `libhorizon_android.so`. The reason a requested engine failed goes to
+   `files/engines/boot-error.txt`, and the launcher shows it.
+
+A process holds one engine (winit allows one event loop per process), so switching
+engines restarts the app: the launcher writes the request and restarts its activity.
+An engine that crashes leaves no request behind; the next start uses the APK's
+engine.
+
+The engine reads `launch.taken.json` at start and opens what it asks
+(`{"target": {"open": "title"}}`, `{"world": "<folder>"}` or
+`{"server": "<address>"}`).
+
+## Building and installing an engine
+
+```sh
+python3 tools/android_engine_pack.py --abi arm64-v8a --name "My build"
+```
+
+This builds the library like `tools/android_build.py --rust-only` does, strips it and
+writes `.local/android/engines/<id>-<abi>.hengine`: a ZIP of `engine.json` and
+`libhorizon_android.so`. Copy the file to the phone, then in the launcher open
+**Settings › Engines › Import**, pick the file, and press **Start** on it.
+
+`engine.json`:
+
+| Field | Meaning |
+|---|---|
+| `format` | `1`; the launcher refuses other formats |
+| `id` | The folder name on the phone: letters, digits, `-`, `_`, `.` |
+| `name` | Shown in the launcher |
+| `version`, `commit`, `dirty`, `built` | Where the build came from |
+| `abi` | `arm64-v8a`, `armeabi-v7a`, `x86_64` or `x86`; must match the device |
+| `size`, `sha256` | Of the library, checked on import |
+
+On import the launcher checks the format, id, ABI, the ELF header's machine, the
+size and the SHA-256, then installs the library read-only (Android 14 requires
+code an app loads from its own files to be read-only). An engine with the same id
+replaces the old one.
+
+## Compatibility and trust
+
+An engine runs with the app's full permissions and data, like the APK itself. Only
+install engines you built or trust. An engine built from a much older or newer tree
+may not understand the launcher's files or the installed game resources; build
+engines from the same release line as the APK.
+
+Tests: `python3 tools/test_android_engines.py` (install checks and the boot
+library's request handling, on the host).
