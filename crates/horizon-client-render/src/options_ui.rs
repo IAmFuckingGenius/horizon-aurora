@@ -2556,6 +2556,11 @@ impl OptionsUi {
                 let open =
                     |key: &str, page: Page| button(0.0, 0.0, 150.0, tr(key), Act::Push(page));
                 vec![
+                    // Horizon Boost first: speed, quality and heat in one sheet.
+                    Row::Buttons(
+                        button(0.0, 0.0, 310.0, tr("horizon.boost.open"), Act::HorizonBoost),
+                        None,
+                    ),
                     Row::Buttons(
                         open("horizon.pages.open.graphics", Page::Graphics),
                         Some(open(
@@ -2621,13 +2626,12 @@ impl OptionsUi {
                         Act::Push(Page::GraphicsAdvanced),
                     )),
                 )];
-                // Horizon Boost: speed, quality and heat in one sheet, over a world.
-                if self.in_world {
-                    rows.push(Row::Buttons(
-                        button(0.0, 0.0, 310.0, tr("horizon.boost.open"), Act::HorizonBoost),
-                        None,
-                    ));
-                }
+                // Horizon Boost: speed, quality and heat in one sheet, from the title
+                // screen too (its live readout then shows the menu's frame rate).
+                rows.push(Row::Buttons(
+                    button(0.0, 0.0, 310.0, tr("horizon.boost.open"), Act::HorizonBoost),
+                    None,
+                ));
                 rows.push(Row::Header("options.video.display.header"));
                 rows.push(Row::Big(Opt::ExclusiveMode));
                 rows.extend(pairs(&[

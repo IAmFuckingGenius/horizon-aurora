@@ -23,14 +23,16 @@ pub enum Tab {
     Animations,
     Details,
     Performance,
+    Heat,
 }
 impl Tab {
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
         Tab::Presets,
         Tab::Quality,
         Tab::Animations,
         Tab::Details,
         Tab::Performance,
+        Tab::Heat,
     ];
     fn key(self) -> &'static str {
         match self {
@@ -39,6 +41,7 @@ impl Tab {
             Tab::Animations => "animations",
             Tab::Details => "details",
             Tab::Performance => "performance",
+            Tab::Heat => "heat",
         }
     }
     fn knobs(self) -> &'static [Knob] {
@@ -72,11 +75,10 @@ impl Tab {
                 ResolutionScale,
                 ChunkUpdates,
                 Workers,
-                Thermal,
-                ThermalReadout,
                 Overlay,
                 BatteryMode,
             ],
+            Tab::Heat => &[Thermal, ThermalMinFps, ThermalResolution, ThermalReadout],
         }
     }
 }
@@ -113,6 +115,8 @@ pub enum Knob {
     ChunkUpdates,
     Workers,
     Thermal,
+    ThermalMinFps,
+    ThermalResolution,
     ThermalReadout,
     Overlay,
     BatteryMode,
@@ -185,6 +189,8 @@ impl Knob {
             ChunkUpdates => "chunk_updates",
             Workers => "workers",
             Thermal => "thermal",
+            ThermalMinFps => "thermal_min_fps",
+            ThermalResolution => "thermal_resolution",
             ThermalReadout => "thermal_readout",
             Overlay => "overlay",
             BatteryMode => "battery_mode",
@@ -197,9 +203,8 @@ impl Knob {
         match self {
             RenderDistance | EntityDistance | WeatherRadius | BiomeBlend | Mipmaps | MaxFps
             | ResolutionScale | ChunkUpdates | Workers => Control::Stepper,
-            Particles | Clouds | WeatherDensity | RainSplashes | FogStart | Overlay => {
-                Control::Cycle
-            }
+            Particles | Clouds | WeatherDensity | RainSplashes | FogStart | Overlay | Thermal
+            | ThermalMinFps => Control::Cycle,
             Weather => Control::Switch(g.weather),
             Leaves => Control::Switch(s.cutout_leaves),
             AnimateAll => Control::Switch(g.animated_textures),
@@ -214,7 +219,7 @@ impl Knob {
             Fog => Control::Switch(g.fog),
             Vignette => Control::Switch(s.vignette),
             EntityShadows => Control::Switch(s.entity_shadows),
-            Thermal => Control::Switch(b.thermal),
+            ThermalResolution => Control::Switch(b.thermal_resolution),
             ThermalReadout => Control::Switch(b.thermal_readout),
             BatteryMode => Control::Switch(g.battery),
         }
@@ -272,6 +277,8 @@ impl Knob {
                 0 => tr("value.auto", &[&g.worker_threads()]),
                 n => n.to_string(),
             },
+            Thermal => t(&format!("value.heat.{}", b.thermal.key())),
+            ThermalMinFps => tr("value.fps", &[&b.thermal_min_fps]),
             Overlay => t(match g.overlay {
                 crate::graphics::Overlay::Off => "value.off",
                 crate::graphics::Overlay::Fps => "value.overlay.fps",
@@ -292,6 +299,7 @@ impl Knob {
             FogStart => !g.fog,
             WeatherRadius | WeatherDensity | RainSplashes => !g.weather,
             ThermalReadout => g.overlay == crate::graphics::Overlay::Off,
+            ThermalMinFps | ThermalResolution => g.boost.thermal == crate::boost::Heat::Off,
             _ => false,
         }
     }
@@ -300,7 +308,14 @@ impl Knob {
         use Knob::*;
         !matches!(
             self,
-            MaxFps | Workers | Thermal | ThermalReadout | Overlay | BatteryMode
+            MaxFps
+                | Workers
+                | Thermal
+                | ThermalMinFps
+                | ThermalResolution
+                | ThermalReadout
+                | Overlay
+                | BatteryMode
         )
     }
     /// A tap on a switch or cycling control, or minus (`up` false) / plus.
@@ -357,7 +372,11 @@ impl Knob {
                     g.workers.saturating_sub(1)
                 }
             }
-            Thermal => b.thermal = !b.thermal,
+            Thermal => b.thermal = cycle(&crate::boost::Heat::ALL, b.thermal),
+            ThermalMinFps => {
+                b.thermal_min_fps = cycle(&crate::boost::THERMAL_MIN_FPS, b.thermal_min_fps)
+            }
+            ThermalResolution => b.thermal_resolution = !b.thermal_resolution,
             ThermalReadout => b.thermal_readout = !b.thermal_readout,
             Overlay => {
                 g.overlay = cycle(
@@ -1012,6 +1031,10 @@ mod tests {
             "value.clouds.fast",
             "value.overlay.fps",
             "value.overlay.graph",
+            "value.heat.off",
+            "value.heat.soft",
+            "value.heat.balanced",
+            "value.heat.strong",
         ]
         .iter()
         .map(|k| k.to_string())

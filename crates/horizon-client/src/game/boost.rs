@@ -2,7 +2,7 @@
 //! (frame cap, world resolution, chunk uploads), for the settings in
 //! `horizon_client::boost`.
 use super::Game;
-use horizon_client::boost::{Governor, Limits, Thermal};
+use horizon_client::boost::{Governor, Heat, Limits, Thermal};
 use std::time::Instant;
 
 /// The governor and where its readings come from.
@@ -20,33 +20,31 @@ impl ThermalState {
     /// The chunk sections uploaded per frame under the governor (0: unlimited), for the
     /// graphics settings `g`.
     pub fn governor_chunk_updates(&self, g: &horizon_client::graphics::Graphics) -> u32 {
-        if g.boost.thermal {
-            self.governor.limits().chunk_updates(g.chunk_updates)
-        } else {
-            g.chunk_updates
-        }
+        g.boost
+            .limits_at(self.governor.level())
+            .chunk_updates(g.chunk_updates)
     }
 }
 
 impl Game<'_> {
-    /// The governor's limits now (none while the Boost setting is off).
+    /// The governor's limits now under the player's heat settings (none while off).
     pub(super) fn thermal_limits(&self) -> Limits {
-        if self.settings.horizon.boost.thermal {
-            self.thermal.governor.limits()
-        } else {
-            Limits::NONE
-        }
+        self.settings
+            .horizon
+            .boost
+            .limits_at(self.thermal.governor.level())
     }
     /// Once a frame: a new reading when one is due, and the renderer's resolution
     /// follows the level when it changed.
     pub(super) fn tick_thermal(&mut self) {
-        if !self.settings.horizon.boost.thermal {
+        let heat = self.settings.horizon.boost.thermal;
+        if heat == Heat::Off {
             if self.thermal.governor.level() != 0 {
                 self.thermal.governor.reset();
             }
         } else if let Some(reading) = self.thermal_reading() {
             let before = self.thermal.governor.level();
-            let after = self.thermal.governor.update(reading, Instant::now());
+            let after = self.thermal.governor.update(reading, Instant::now(), heat);
             if after != before {
                 log::info!(
                     "Horizon Boost: thermal level {before} -> {after} (status {:?}, headroom {:?})",
@@ -95,7 +93,9 @@ impl Game<'_> {
         #[cfg(not(target_os = "android"))]
         let source = "unavailable";
         serde_json::json!({
-            "adaptive": self.settings.horizon.boost.thermal,
+            "adaptive": self.settings.horizon.boost.thermal != Heat::Off,
+            "mode": self.settings.horizon.boost.thermal.key(),
+            "min_fps": self.settings.horizon.boost.thermal_min_fps,
             "level": g.level(),
             "status": g.last.status,
             "headroom": g.last.headroom,
@@ -249,10 +249,10 @@ impl Game<'_> {
             frame_ms,
             gpu_ms: (gpu_ms > 0.0).then_some(gpu_ms),
             thermal: self.thermal_summary(),
-            thermal_level: if self.settings.horizon.boost.thermal {
-                self.thermal.governor.level()
-            } else {
+            thermal_level: if self.settings.horizon.boost.thermal == Heat::Off {
                 0
+            } else {
+                self.thermal.governor.level()
             },
         };
         let density = self
@@ -279,7 +279,7 @@ impl Game<'_> {
         if let Some(h) = g.last.headroom {
             line.push_str(&format!(" · {:.0}%", h * 100.0));
         }
-        if self.settings.horizon.boost.thermal && g.level() > 0 {
+        if self.settings.horizon.boost.thermal != Heat::Off && g.level() > 0 {
             let fps = self.thermal_limits().fps.unwrap_or(0);
             line.push_str(" · ");
             line.push_str(&horizon_client::lang::tr(

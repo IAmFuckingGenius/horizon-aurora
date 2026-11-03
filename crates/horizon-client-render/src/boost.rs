@@ -3,8 +3,9 @@
 //!
 //! Stored in `horizon-graphics.txt` with the rest of [`crate::graphics::Graphics`]. Every
 //! default draws what vanilla draws: rain at full density, every splash, sun, moon and
-//! stars, vanilla's fog, every texture animation. The thermal governor is on by default,
-//! and changes nothing while the system reports no thermal pressure.
+//! stars, vanilla's fog, every texture animation. The thermal governor starts in its
+//! soft mode, which acts only once Android reports severe heat; the player can turn it
+//! off, make it act sooner, and set the lowest frame cap it may impose.
 use std::time::{Duration, Instant};
 
 /// The Boost settings (`Graphics::boost`).
@@ -28,9 +29,14 @@ pub struct Boost {
     pub animate_portal: bool,
     /// Every other animated block texture (sea lanterns, prismarine, magma, kelp...).
     pub animate_other: bool,
-    /// Lower the frame cap, then the resolution and chunk uploads, while the system
-    /// reports thermal pressure ([`Governor`]); back once it has cooled down.
-    pub thermal: bool,
+    /// How readily the frame cap, then the resolution and chunk uploads, go down
+    /// while the system reports thermal pressure ([`Governor`]); back once it has
+    /// cooled down. [`Heat::Off`] never limits anything.
+    pub thermal: Heat,
+    /// The lowest frame cap the governor may impose, in frames per second.
+    pub thermal_min_fps: u32,
+    /// Whether the governor's last step may lower the resolution.
+    pub thermal_resolution: bool,
     /// Show the thermal state on the performance overlay.
     pub thermal_readout: bool,
 }
@@ -47,9 +53,39 @@ impl Default for Boost {
             animate_fire: true,
             animate_portal: true,
             animate_other: true,
-            thermal: true,
+            thermal: Heat::Soft,
+            thermal_min_fps: 30,
+            thermal_resolution: true,
             thermal_readout: true,
         }
+    }
+}
+
+/// How readily the thermal governor acts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Heat {
+    /// Never limits anything: the player's settings hold however hot it gets.
+    Off,
+    /// Only once Android reports severe heat (the system is already throttling).
+    #[default]
+    Soft,
+    /// From moderate heat and a forecast of severe heat within 10 seconds.
+    Balanced,
+    /// From light heat: the phone stays cooler, the frame rate drops sooner.
+    Strong,
+}
+impl Heat {
+    pub const ALL: [Heat; 4] = [Heat::Off, Heat::Soft, Heat::Balanced, Heat::Strong];
+    pub fn key(self) -> &'static str {
+        match self {
+            Heat::Off => "off",
+            Heat::Soft => "soft",
+            Heat::Balanced => "balanced",
+            Heat::Strong => "strong",
+        }
+    }
+    fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|h| h.key() == value)
     }
 }
 
@@ -57,6 +93,8 @@ impl Default for Boost {
 pub const DENSITIES: [u32; 3] = [100, 50, 25];
 pub const SPLASHES: [u32; 3] = [100, 50, 0];
 pub const FOG_STARTS: [u32; 5] = [0, 80, 60, 40, 20];
+/// The choices of [`Boost::thermal_min_fps`].
+pub const THERMAL_MIN_FPS: [u32; 5] = [30, 45, 60, 90, 120];
 
 fn flag(v: bool) -> &'static str {
     if v { "true" } else { "false" }
@@ -90,7 +128,17 @@ impl Boost {
             "animateFire" => self.animate_fire = flag(self.animate_fire),
             "animatePortal" => self.animate_portal = flag(self.animate_portal),
             "animateOther" => self.animate_other = flag(self.animate_other),
-            "thermalAdaptive" => self.thermal = flag(self.thermal),
+            "thermalMode" => self.thermal = Heat::parse(value).unwrap_or(self.thermal),
+            // Before the modes: off stays off, on becomes the default mode.
+            "thermalAdaptive" => {
+                if value == "false" {
+                    self.thermal = Heat::Off
+                }
+            }
+            "thermalMinFps" => {
+                self.thermal_min_fps = nearest(&THERMAL_MIN_FPS, number(self.thermal_min_fps))
+            }
+            "thermalResolution" => self.thermal_resolution = flag(self.thermal_resolution),
             "thermalReadout" => self.thermal_readout = flag(self.thermal_readout),
             _ => return false,
         }
@@ -98,7 +146,7 @@ impl Boost {
     }
     pub fn serialize(&self) -> String {
         format!(
-            "weatherDensity:{}\nrainSplashes:{}\nstars:{}\nsunMoon:{}\nfogStart:{}\nanimateWater:{}\nanimateLava:{}\nanimateFire:{}\nanimatePortal:{}\nanimateOther:{}\nthermalAdaptive:{}\nthermalReadout:{}\n",
+            "weatherDensity:{}\nrainSplashes:{}\nstars:{}\nsunMoon:{}\nfogStart:{}\nanimateWater:{}\nanimateLava:{}\nanimateFire:{}\nanimatePortal:{}\nanimateOther:{}\nthermalMode:{}\nthermalMinFps:{}\nthermalResolution:{}\nthermalReadout:{}\n",
             self.weather_density,
             self.rain_splashes,
             flag(self.stars),
@@ -109,7 +157,9 @@ impl Boost {
             flag(self.animate_fire),
             flag(self.animate_portal),
             flag(self.animate_other),
-            flag(self.thermal),
+            self.thermal.key(),
+            self.thermal_min_fps,
+            flag(self.thermal_resolution),
             flag(self.thermal_readout),
         )
     }
@@ -147,6 +197,20 @@ impl Boost {
             && self.animate_fire
             && self.animate_portal
             && self.animate_other
+    }
+    /// What the governor at `level` holds the game to under these settings: never
+    /// a frame cap under [`Self::thermal_min_fps`], no resolution cut unless allowed,
+    /// nothing at all with the governor off.
+    pub fn limits_at(&self, level: usize) -> Limits {
+        if self.thermal == Heat::Off {
+            return Limits::NONE;
+        }
+        let mut limits = LEVELS[level.min(LEVELS.len() - 1)];
+        limits.fps = limits.fps.map(|fps| fps.max(self.thermal_min_fps as i32));
+        if !self.thermal_resolution {
+            limits.scale_cut = 0;
+        }
+        limits
     }
     /// The edge fog's start for a render distance `end` (in blocks), where it ends:
     /// `None` keeps vanilla's.
@@ -247,28 +311,26 @@ pub const LEVELS: [Limits; 4] = [
     },
 ];
 
-/// The level a reading asks for, and the level it allows going back down to (lower
-/// thresholds, so a reading on a boundary doesn't make the level flap).
-fn wanted(t: Thermal) -> (usize, usize) {
-    let status = t.status.unwrap_or(0).max(0);
-    let up = |h: f32| match h {
-        h if h >= 0.95 => 3,
-        h if h >= 0.85 => 2,
-        h if h >= 0.75 => 1,
-        _ => 0,
+/// The level a reading asks for in `heat` mode, and the level it allows going back
+/// down to (lower thresholds, so a reading on a boundary doesn't make the level flap).
+fn wanted(t: Thermal, heat: Heat) -> (usize, usize) {
+    let status = t.status.unwrap_or(0).max(0) as usize;
+    // Headroom thresholds for levels 1, 2 and 3, rising and falling; status: the
+    // status that asks for the first level (each status above it, one more level).
+    let (up_at, down_at, first_status): ([f32; 3], [f32; 3], usize) = match heat {
+        Heat::Off => return (0, 0),
+        // Severe heat or a forecast of it: the system already throttles.
+        Heat::Soft => ([1.0, f32::INFINITY, f32::INFINITY], [0.92, f32::INFINITY, f32::INFINITY], 3),
+        Heat::Balanced => ([0.75, 0.85, 0.95], [0.65, 0.78, 0.88], 2),
+        Heat::Strong => ([0.65, 0.75, 0.85], [0.55, 0.68, 0.78], 1),
     };
-    let down = |h: f32| match h {
-        h if h >= 0.88 => 3,
-        h if h >= 0.78 => 2,
-        h if h >= 0.65 => 1,
-        _ => 0,
-    };
-    // Moderate asks for the first level, severe the second, critical and above the third.
-    let by_status = match status {
-        0 | 1 => 0,
-        2 => 1,
-        3 => 2,
-        _ => 3,
+    let level = |h: f32, at: [f32; 3]| at.iter().filter(|&&a| h >= a).count();
+    let up = |h: f32| level(h, up_at);
+    let down = |h: f32| level(h, down_at);
+    let by_status = if status >= first_status {
+        (status - first_status + 1).min(3)
+    } else {
+        0
     };
     let (h_up, h_down) = t
         .headroom
@@ -292,13 +354,15 @@ impl Governor {
     pub fn level(&self) -> usize {
         self.level
     }
+    /// The limits of the current level with the default settings.
     pub fn limits(&self) -> Limits {
         LEVELS[self.level]
     }
-    /// A new reading at `now`: the level rises at once, and falls a step at a time.
-    pub fn update(&mut self, reading: Thermal, now: Instant) -> usize {
+    /// A new reading at `now` in `heat` mode: the level rises at once, and falls a
+    /// step at a time.
+    pub fn update(&mut self, reading: Thermal, now: Instant, heat: Heat) -> usize {
         self.last = reading;
-        let (up, down) = wanted(reading);
+        let (up, down) = wanted(reading, heat);
         if up > self.level {
             self.level = up;
             self.cool_since = None;
@@ -367,7 +431,9 @@ mod tests {
             animate_fire: false,
             animate_portal: false,
             animate_other: false,
-            thermal: false,
+            thermal: Heat::Strong,
+            thermal_min_fps: 60,
+            thermal_resolution: false,
             thermal_readout: false,
         };
         let mut parsed = Boost::default();
@@ -445,7 +511,7 @@ mod tests {
         let mut g = Governor::default();
         let now = Instant::now();
         for (status, headroom) in [(None, None), (Some(0), Some(0.3)), (Some(1), Some(0.7))] {
-            assert_eq!(g.update(Thermal { status, headroom }, now), 0);
+            assert_eq!(g.update(Thermal { status, headroom }, now, Heat::Balanced), 0);
             assert_eq!(g.limits(), Limits::NONE);
         }
         assert_eq!(Limits::NONE.fps_cap(120), 120);
@@ -461,7 +527,7 @@ mod tests {
             status: Some(3),
             headroom: Some(0.9),
         };
-        assert_eq!(g.update(hot, t0), 2);
+        assert_eq!(g.update(hot, t0, Heat::Balanced), 2);
         assert_eq!(g.limits().fps_cap(120), 45);
         assert_eq!(g.limits().fps_cap(30), 30);
         // Critical: the resolution goes down too, never under 50%.
@@ -469,7 +535,7 @@ mod tests {
             status: Some(4),
             headroom: None,
         };
-        assert_eq!(g.update(critical, t0), 3);
+        assert_eq!(g.update(critical, t0, Heat::Balanced), 3);
         assert_eq!(g.limits().scale(100), 80);
         assert_eq!(g.limits().scale(60), 50);
         assert_eq!(g.limits().scale(50), 50);
@@ -480,29 +546,84 @@ mod tests {
             status: Some(1),
             headroom: Some(0.9),
         };
-        assert_eq!(g.update(warm, t0 + Duration::from_secs(60)), 3);
+        assert_eq!(g.update(warm, t0 + Duration::from_secs(60), Heat::Balanced), 3);
         // Cool readings step down one level per COOL period.
         let cool = Thermal {
             status: Some(0),
             headroom: Some(0.2),
         };
         let mut t = t0 + Duration::from_secs(61);
-        assert_eq!(g.update(cool, t), 3);
+        assert_eq!(g.update(cool, t, Heat::Balanced), 3);
         t += Governor::COOL;
-        assert_eq!(g.update(cool, t), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(1)), 2);
+        assert_eq!(g.update(cool, t, Heat::Balanced), 2);
+        assert_eq!(g.update(cool, t + Duration::from_secs(1), Heat::Balanced), 2);
         t += Governor::COOL;
-        assert_eq!(g.update(cool, t), 1);
+        assert_eq!(g.update(cool, t, Heat::Balanced), 1);
         t += Governor::COOL;
-        assert_eq!(g.update(cool, t), 0);
+        assert_eq!(g.update(cool, t, Heat::Balanced), 0);
         assert_eq!(g.limits(), Limits::NONE);
         // A hot reading in the middle of cooling restarts the wait.
-        assert_eq!(g.update(hot, t), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(20)), 2);
-        assert_eq!(g.update(hot, t + Duration::from_secs(25)), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(40)), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(69)), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(70)), 1);
+        assert_eq!(g.update(hot, t, Heat::Balanced), 2);
+        assert_eq!(g.update(cool, t + Duration::from_secs(20), Heat::Balanced), 2);
+        assert_eq!(g.update(hot, t + Duration::from_secs(25), Heat::Balanced), 2);
+        assert_eq!(g.update(cool, t + Duration::from_secs(40), Heat::Balanced), 2);
+        assert_eq!(g.update(cool, t + Duration::from_secs(69), Heat::Balanced), 2);
+        assert_eq!(g.update(cool, t + Duration::from_secs(70), Heat::Balanced), 1);
+    }
+
+    #[test]
+    fn the_player_chooses_how_readily_it_acts_and_how_far() {
+        let now = Instant::now();
+        let moderate = Thermal {
+            status: Some(2),
+            headroom: Some(0.9),
+        };
+        let severe = Thermal {
+            status: Some(3),
+            headroom: Some(0.9),
+        };
+        let light = Thermal {
+            status: Some(1),
+            headroom: Some(0.6),
+        };
+        let level = |heat, reading| Governor::default().update(reading, now, heat);
+        // Off never acts, however hot.
+        for reading in [moderate, severe, light] {
+            assert_eq!(level(Heat::Off, reading), 0);
+        }
+        let off = Boost {
+            thermal: Heat::Off,
+            ..Boost::default()
+        };
+        assert_eq!(off.limits_at(3), Limits::NONE);
+        // Soft waits for severe heat; Balanced acts at moderate; Strong at light.
+        assert_eq!(level(Heat::Soft, moderate), 0);
+        assert_eq!(level(Heat::Soft, severe), 1);
+        assert_eq!(level(Heat::Balanced, moderate), 2);
+        assert_eq!(level(Heat::Balanced, light), 0);
+        assert_eq!(level(Heat::Strong, light), 1);
+        // The frame cap never goes under the player's floor.
+        let floor = Boost {
+            thermal_min_fps: 60,
+            ..Boost::default()
+        };
+        assert_eq!(floor.limits_at(2).fps_cap(120), 60);
+        assert_eq!(floor.limits_at(3).fps_cap(120), 60);
+        assert_eq!(Boost::default().limits_at(3).fps_cap(120), 30);
+        // The resolution stays when the player keeps it.
+        let sharp = Boost {
+            thermal_resolution: false,
+            ..Boost::default()
+        };
+        assert_eq!(sharp.limits_at(3).scale(100), 100);
+        assert_eq!(Boost::default().limits_at(3).scale(100), 80);
+        // A file from before the modes: off stays off, on takes the default mode.
+        let mut old = Boost::default();
+        old.parse_line("thermalAdaptive", "false");
+        assert_eq!(old.thermal, Heat::Off);
+        let mut old = Boost::default();
+        old.parse_line("thermalAdaptive", "true");
+        assert_eq!(old.thermal, Heat::Soft);
     }
 
     #[test]
@@ -513,10 +634,10 @@ mod tests {
             status: None,
             headroom: Some(h),
         };
-        assert_eq!(g.update(reading(0.74), now), 0);
-        assert_eq!(g.update(reading(0.76), now), 1);
-        assert_eq!(g.update(reading(f32::NAN), now), 1);
-        assert_eq!(g.update(reading(0.96), now), 3);
+        assert_eq!(g.update(reading(0.74), now, Heat::Balanced), 0);
+        assert_eq!(g.update(reading(0.76), now, Heat::Balanced), 1);
+        assert_eq!(g.update(reading(f32::NAN), now, Heat::Balanced), 1);
+        assert_eq!(g.update(reading(0.96), now, Heat::Balanced), 3);
     }
 
     #[test]
