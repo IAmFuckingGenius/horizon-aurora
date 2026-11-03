@@ -58,6 +58,8 @@ pub(super) struct ViewState {
     pub instances_loaded: Option<Instant>,
     /// The instance sheet, while it is open.
     pub instance_edit: Option<InstanceEdit>,
+    /// The question before an engine is imported.
+    pub engine_confirm: bool,
 }
 
 /// The instance sheet: a new instance (`id` none) or one being changed.
@@ -101,6 +103,7 @@ impl Default for ViewState {
             instances: Vec::new(),
             instances_loaded: None,
             instance_edit: None,
+            engine_confirm: false,
         }
     }
 }
@@ -2861,6 +2864,34 @@ impl Launcher {
                 "monitor",
                 "Display",
                 vec![
+                    {
+                        use crate::catalog::LauncherLanguage as L;
+                        let choice = c.launcher_language;
+                        // Named in both languages, so it is found in either.
+                        Row::new(
+                            "Language · Язык",
+                            t(
+                                "The launcher's language. Automatic follows Android's. The game has its own in its Options.",
+                            ),
+                            Control::Segmented(vec![
+                                (
+                                    t("Automatic").into(),
+                                    Action::LauncherLanguage(L::Auto),
+                                    choice == L::Auto,
+                                ),
+                                (
+                                    "English".into(),
+                                    Action::LauncherLanguage(L::English),
+                                    choice == L::English,
+                                ),
+                                (
+                                    "Русский".into(),
+                                    Action::LauncherLanguage(L::Russian),
+                                    choice == L::Russian,
+                                ),
+                            ]),
+                        )
+                    },
                     Row::new(
                         t("Screen orientation"),
                         t("The launcher and the game open in this orientation."),
@@ -2977,7 +3008,7 @@ impl Launcher {
                     ),
                     Row::new(
                         t("Source code"),
-                        "github.com/Vasysik/horizon-android",
+                        "github.com/IAmFuckingGenius/horizon-aurora",
                         Control::Button(
                             Style::Ghost,
                             "external-link",
@@ -3070,6 +3101,77 @@ impl Launcher {
     }
 
     // ---- dialogs ----
+
+    /// The question before an engine is imported: it is code with all the app's rights.
+    pub(super) fn draw_engine_confirm(&mut self, k: &mut Kit) {
+        let (w, h) = (k.ui.w, k.ui.h);
+        kit::fill(k.ui, 0.0, 0.0, w, h, col::SCRIM);
+        let dw = (w - 32.0).min(460.0);
+        let title = t("Install an engine?");
+        let body = t(
+            "An engine is the game's code. It runs with all of Horizon's rights: your worlds, accounts and files. Install only an engine you built yourself or got from someone you trust.",
+        );
+        let title_lines = k.wrap_max(Face::BodyBold, 20.0, title, dw - 64.0, usize::MAX);
+        let lines = k.wrap_max(Face::BodyMedium, 14.0, body, dw - 32.0, usize::MAX);
+        let dh = 14.0
+            + title_lines.len() as f32 * 24.0
+            + 10.0
+            + lines.len() as f32 * 20.3
+            + 16.0
+            + 48.0
+            + 14.0;
+        let (x, y) = ((w - dw) / 2.0, ((h - dh) / 2.0).max(6.0));
+        k.panel([x, y, dw, dh], false);
+        kit::icon(
+            k.ui,
+            Icon::Sprite(kit::ALERT),
+            x + 16.0,
+            y + 14.0,
+            24.0,
+            col::DANGER,
+        );
+        let mut cy = y + 14.0;
+        for line in &title_lines {
+            k.text(Face::BodyBold, 20.0, 24.0, x + 48.0, cy, col::INK, line);
+            cy += 24.0;
+        }
+        cy += 10.0;
+        for line in &lines {
+            k.text(
+                Face::BodyMedium,
+                14.0,
+                20.3,
+                x + 16.0,
+                cy,
+                col::INK_SOFT,
+                line,
+            );
+            cy += 20.3;
+        }
+        let choose = t("Choose the file");
+        let choose_w = k.button_width(Style::Primary, Some(Icon::Pixel("plus")), choose);
+        let cancel_w = k.button_width(Style::Secondary, None, t("Cancel"));
+        let by = y + dh - 14.0 - 48.0;
+        k.button(
+            [x + dw - 16.0 - choose_w, by, choose_w, 48.0],
+            Style::Primary,
+            Some(Icon::Pixel("plus")),
+            choose,
+            Some(Action::ConfirmEngineImport),
+        );
+        k.button(
+            [
+                x + dw - 16.0 - choose_w - 8.0 - cancel_w,
+                by,
+                cancel_w,
+                48.0,
+            ],
+            Style::Secondary,
+            None,
+            t("Cancel"),
+            Some(Action::CancelEngineImport),
+        );
+    }
 
     /// The exit question.
     pub(super) fn draw_exit(&mut self, k: &mut Kit) {

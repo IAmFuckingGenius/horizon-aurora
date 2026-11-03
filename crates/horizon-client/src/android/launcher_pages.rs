@@ -61,8 +61,12 @@ pub(super) enum Action {
     SaveInstance,
     DeleteInstance,
     CloseInstanceEdit,
-    /// Settings › Engines.
+    /// Settings › Display: the launcher's language.
+    LauncherLanguage(crate::catalog::LauncherLanguage),
+    /// Settings › Engines: Import asks first; then the file picker.
     ImportEngine,
+    ConfirmEngineImport,
+    CancelEngineImport,
     LaunchEngine(usize),
     DeleteEngine(usize),
     BuiltInEngine,
@@ -267,6 +271,12 @@ impl Launcher {
                 self.list_view = None;
                 k.targets.clear();
                 self.draw_instance_edit(&mut k);
+            }
+            if self.view.engine_confirm {
+                self.list_targets.clear();
+                self.list_view = None;
+                k.targets.clear();
+                self.draw_engine_confirm(&mut k);
             }
             if self.login.visible {
                 self.list_targets.clear();
@@ -647,7 +657,17 @@ impl Launcher {
                 self.launch_target = LaunchTarget::Title;
                 self.play(events)?;
             }
-            Some(Action::ImportEngine) => {
+            Some(Action::LauncherLanguage(choice)) => {
+                self.catalog.config.launcher_language = choice;
+                self.catalog.config.save(&self.home)?;
+                super::text::choose(choice);
+                // Toasts and statuses already shown stay in the old language.
+                self.view.toast = None;
+            }
+            Some(Action::ImportEngine) => self.view.engine_confirm = true,
+            Some(Action::CancelEngineImport) => self.view.engine_confirm = false,
+            Some(Action::ConfirmEngineImport) => {
+                self.view.engine_confirm = false;
                 if let Err(error) = crate::transfers::import_engine(self.home.clone()) {
                     self.toast(super::text::t("Could not install the engine"), error, true);
                 }

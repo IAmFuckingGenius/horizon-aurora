@@ -229,6 +229,7 @@ impl Launcher {
         }
         crate::configure_input_mode(catalog.config.input_host);
         crate::device_runtime::configure(catalog.config.device);
+        text::choose(catalog.config.launcher_language);
         let start_request = crate::engines::take_started(&home);
         let boot_error = crate::engines::take_boot_error(&home);
         // A request whose engine failed to load is not this engine's to open: the
@@ -427,6 +428,8 @@ impl Launcher {
             crate::platform::hide();
         } else if self.view.instance_edit.take().is_some() {
             // Back closes the instance sheet.
+        } else if std::mem::take(&mut self.view.engine_confirm) {
+            // And the engine question.
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
         } else if self.catalog.editing.take().is_some() {

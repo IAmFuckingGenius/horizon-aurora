@@ -30,6 +30,15 @@ pub(crate) fn lang() -> Lang {
 pub(crate) fn set(lang: Lang) {
     LANG.store(if lang == Lang::Ru { 2 } else { 1 }, Ordering::Relaxed);
 }
+/// The player's choice in Settings: a language, or Android's again.
+pub(crate) fn choose(choice: crate::catalog::LauncherLanguage) {
+    use crate::catalog::LauncherLanguage;
+    match choice {
+        LauncherLanguage::Auto => LANG.store(0, Ordering::Relaxed),
+        LauncherLanguage::English => set(Lang::En),
+        LauncherLanguage::Russian => set(Lang::Ru),
+    }
+}
 
 /// `english` in the launcher's language.
 pub(crate) fn t(english: &'static str) -> &'static str {
@@ -1151,6 +1160,17 @@ static RU: &[(&str, &str)] = &[
         "Основной инстанс удалить нельзя.",
     ),
     ("Too many instances", "Слишком много инстансов"),
+    ("Automatic", "Авто"),
+    (
+        "The launcher's language. Automatic follows Android's. The game has its own in its Options.",
+        "Язык лаунчера. «Авто» берёт язык Android. У игры свой язык — в её настройках.",
+    ),
+    ("Install an engine?", "Установить движок?"),
+    (
+        "An engine is the game's code. It runs with all of Horizon's rights: your worlds, accounts and files. Install only an engine you built yourself or got from someone you trust.",
+        "Движок — это код игры. Он работает со всеми правами Horizon: доступ к вашим мирам, аккаунтам и файлам. Ставьте только движок, который собрали сами или получили от того, кому доверяете.",
+    ),
+    ("Choose the file", "Выбрать файл"),
 ];
 
 #[cfg(test)]

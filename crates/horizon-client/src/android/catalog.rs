@@ -78,6 +78,19 @@ pub struct Config {
     pub home_last_world: bool,
     /// Portrait Home: hide the profile picker above Play (shown by default).
     pub home_hide_profile: bool,
+    /// The launcher's language: Android's (when it is Russian), English or Russian.
+    pub launcher_language: LauncherLanguage,
+}
+
+/// The launcher's language choice.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LauncherLanguage {
+    /// Russian when Android's language is Russian, else English.
+    #[default]
+    Auto,
+    English,
+    Russian,
 }
 
 pub use horizon_client::android_gamepad::InputMode as InputHost;

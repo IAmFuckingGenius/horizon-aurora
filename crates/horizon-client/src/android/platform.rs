@@ -339,7 +339,7 @@ pub fn cache_dir() -> Option<std::path::PathBuf> {
 }
 
 pub fn open_repository() -> bool {
-    open_url("https://github.com/Vasysik/horizon-android")
+    open_url("https://github.com/IAmFuckingGenius/horizon-aurora")
 }
 /// The `content://` URI of a document of our own provider (`document_store` IDs).
 pub(crate) fn document_uri<'a>(
