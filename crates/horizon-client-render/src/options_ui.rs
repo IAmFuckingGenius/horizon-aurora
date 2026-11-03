@@ -1399,7 +1399,7 @@ fn set_filtering(s: &mut Settings, anisotropy_bit: i32, filtering: i32) {
 /// the startup one, the description, and Vulkan's warning.
 fn graphics_api_tooltip(s: &Settings) -> Text {
     if cfg!(target_os = "android") {
-        return Text::literal("Selected in Horizon Android launcher > Setup.");
+        return tr("horizon.options.graphics_api.android");
     }
     let line = |key: &str| lang::get_or(key, key);
     let mut lines = Vec::new();
@@ -1721,6 +1721,9 @@ pub struct OptionsUi {
     pub calibration_fullscreen: Option<bool>,
     /// The AI Agent page's status lines (set by the game while it shows).
     pub agent_status: Vec<String>,
+    /// The page's grey notes as the last frame wrapped them to the screen: each note and
+    /// its lines.
+    note_lines: Vec<(String, Vec<String>)>,
     /// Keyboard focus: the interactive target currently focused.
     focus: Option<FocusId>,
     /// Whether a focused slider is in value-editing mode (`AbstractSliderButton.canChangeValue`).
@@ -1774,6 +1777,7 @@ impl Default for OptionsUi {
             calibration: None,
             calibration_fullscreen: None,
             agent_status: Vec::new(),
+            note_lines: Vec::new(),
             focus: None,
             can_change_value: false,
             size: (427.0, 240.0),
@@ -2043,10 +2047,11 @@ fn tooltip_text(s: &Settings, wd: &Widget) -> Option<Text> {
         Act::Cycle(opt) if !opt.available() => Some(tr("horizon.options.unavailable")),
         Act::ToggleMod(i) => match s.mods.installed.get(*i) {
             Some(installed) => {
-                let description = installed
-                    .problem
-                    .as_deref()
-                    .unwrap_or(&installed.description);
+                let description = match installed.problem.as_deref() {
+                    Some(crate::mod_list::NOT_BUILT) => lang::get("horizon.mods.not_built.tooltip"),
+                    Some(problem) => problem.to_owned(),
+                    None => installed.description.clone(),
+                };
                 Some(Text::literal(format!("{}\n{description}", installed.title)))
             }
             None => tip,
@@ -2393,7 +2398,7 @@ impl OptionsUi {
             Page::Font => "options.font.title",
             Page::Packs => "resourcePack.title",
             Page::Mods => "horizon.pages.mods",
-            Page::NativeMod(_) => "Mod Settings",
+            Page::NativeMod(_) => "horizon.pages.mod_settings",
             Page::ShaderPacks => "horizon.pages.shader_packs",
             Page::ShaderOptions | Page::NativePackOptions(..) => "horizon.pages.shader_options",
             Page::Graphics | Page::GraphicsAdvanced | Page::GraphicsHdr | Page::HdrCalibration => {
@@ -3063,10 +3068,10 @@ impl OptionsUi {
                         cx - 150.0,
                         39.0,
                         300.0,
-                        Text::literal(if keypad {
-                            "Input profile: D-pad / keypad"
+                        tr(if keypad {
+                            "horizon.keybinds.profile.keypad"
                         } else {
-                            "Input profile: Keyboard"
+                            "horizon.keybinds.profile.keyboard"
                         }),
                         Act::KeyboardProfile,
                     ));
@@ -3075,7 +3080,7 @@ impl OptionsUi {
                     crate::keypad::ACTIONS
                         .iter()
                         .find(|a| a.0 == name)
-                        .map_or_else(|| lang::get(name), |a| a.1.to_owned())
+                        .map_or_else(|| lang::get(name), crate::keypad::caption)
                 };
                 let mut mappings: Vec<(&str, &str)> = if keypad {
                     crate::keypad::ACTIONS
@@ -3476,20 +3481,28 @@ impl OptionsUi {
                             y += padding + 18.0;
                         }
                         Row::Note(text) => {
-                            out.push(Widget {
-                                x: 0.0,
-                                y: y + 4.0,
-                                w,
-                                h: 9.0,
-                                kind: WKind::Text {
-                                    text: Text::literal(text),
-                                    color: 0xFFA0A0A0,
-                                    centered: true,
-                                },
-                                list: false,
-                                row: 0,
-                            });
-                            y += 16.0;
+                            // Wrapped as the last frame measured it: every word shows.
+                            let lines = self
+                                .note_lines
+                                .iter()
+                                .find(|(note, _)| *note == text)
+                                .map_or_else(|| vec![text.clone()], |(_, lines)| lines.clone());
+                            for (i, line) in lines.iter().enumerate() {
+                                out.push(Widget {
+                                    x: 0.0,
+                                    y: y + 4.0 + i as f32 * 10.0,
+                                    w,
+                                    h: 9.0,
+                                    kind: WKind::Text {
+                                        text: Text::literal(line),
+                                        color: 0xFFA0A0A0,
+                                        centered: true,
+                                    },
+                                    list: false,
+                                    row: 0,
+                                });
+                            }
+                            y += 16.0 + lines.len().saturating_sub(1) as f32 * 10.0;
                         }
                         Row::Big(opt) => {
                             out.push(option_widget(s, opt, cx - 155.0, y + 2.0, 310.0));
@@ -3707,6 +3720,23 @@ impl OptionsUi {
             crate::screen_draw::paint(batch, atlas, &draws);
             return;
         }
+        self.note_lines = self
+            .list_rows(s)
+            .into_iter()
+            .filter_map(|row| match row {
+                Row::Note(note) => Some(note),
+                _ => None,
+            })
+            .map(|note| {
+                let lines = atlas
+                    .font
+                    .split(&Text::literal(&note), (w - 16.0).max(1.0))
+                    .iter()
+                    .map(Text::plain)
+                    .collect();
+                (note, lines)
+            })
+            .collect();
         let (widgets, top, bottom, content) = self.layout(s, w, h);
         self.size = (w, h);
         let in_world = self.in_world;
@@ -7363,6 +7393,106 @@ mod tests {
             assert!(key.is_some(), "scheme {label:?} has no translation key");
             russian(key.unwrap());
         }
+    }
+
+    #[test]
+    fn a_note_wider_than_the_screen_wraps_and_pushes_the_rows_below() {
+        let atlas = atlas();
+        let s = Settings::default();
+        let mut ui = OptionsUi::default();
+        ui.show(Page::Agent);
+        let long = "word ".repeat(40).trim_end().to_owned();
+        ui.agent_status = vec![long.clone(), "Local only.".into()];
+        let size = (200.0, 400.0);
+        let notes = |ui: &mut OptionsUi| -> Vec<(String, f32)> {
+            let (widgets, ..) = ui.layout(&s, size.0, size.1);
+            widgets
+                .into_iter()
+                .filter_map(|w| match w.kind {
+                    WKind::Text {
+                        text,
+                        color: 0xFFA0A0A0,
+                        ..
+                    } => Some((text.plain(), w.y)),
+                    _ => None,
+                })
+                .collect()
+        };
+        // Before a frame has measured it, a note is one line.
+        assert_eq!(notes(&mut ui).len(), 2);
+        let mut batch = HudBatch::new([200, 400]);
+        ui.draw(&s, &mut batch, &atlas, (-1.0, -1.0));
+        let shown = notes(&mut ui);
+        assert!(shown.len() > 3, "{shown:?}");
+        // Every word of it, each line within the screen and 10 below the last.
+        let (lines, last) = shown.split_at(shown.len() - 1);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|l| l.0.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            long
+        );
+        for pair in lines.windows(2) {
+            assert_eq!(pair[1].1 - pair[0].1, 10.0);
+        }
+        for (line, _) in lines {
+            assert!(atlas.font.width(line) <= size.0 - 16.0, "{line:?}");
+        }
+        assert!(last[0].1 >= lines.last().unwrap().1 + 10.0);
+        assert_eq!(last[0].0, "Local only.");
+    }
+
+    #[test]
+    fn horizon_pages_have_bundled_russian() {
+        let en = lang::Language::load(&[], "en_us");
+        let ru = lang::Language::load(&[], "ru_ru");
+        let russian = |key: &str| {
+            let english = en.get(key);
+            assert!(english.is_some(), "{key:?} is not a bundled key");
+            assert_ne!(ru.get(key), english, "{key:?} has no ru_ru translation");
+        };
+        for page in [
+            Page::Horizon,
+            Page::Extras,
+            Page::Agent,
+            Page::Mods,
+            Page::NativeMod(0),
+            Page::ShaderPacks,
+            Page::ShaderOptions,
+            Page::Controller,
+            Page::PadBinds,
+        ] {
+            russian(OptionsUi::title(page));
+            if let Some(tip) = horizon_page_tooltip(page) {
+                russian(tip);
+            }
+        }
+        let mut ui = OptionsUi::default();
+        ui.push(Page::Controller);
+        for row in ui.list_rows(&Settings::default()) {
+            if let Row::Pair(a, b) = row {
+                std::iter::once(a)
+                    .chain(b)
+                    .for_each(|o| russian(o.caption()));
+            }
+        }
+        for action in [gamepad::HOTBAR_PREVIOUS, gamepad::HOTBAR_NEXT] {
+            russian(gamepad::action_caption(action));
+        }
+        for action in crate::keypad::ACTIONS {
+            let id = action.0.strip_prefix("key.keypad.").unwrap();
+            russian(&format!("horizon.keypad.{id}"));
+        }
+        russian("horizon.keybinds.profile.keypad");
+        russian("horizon.keybinds.profile.keyboard");
+        // The not-built row's tooltip is the mod list's own sentence in English.
+        assert_eq!(
+            en.get("horizon.mods.not_built.tooltip"),
+            Some(crate::mod_list::NOT_BUILT)
+        );
+        russian("horizon.mods.not_built.tooltip");
     }
 
     #[test]

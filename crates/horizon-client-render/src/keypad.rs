@@ -73,6 +73,12 @@ pub const ACTIONS: &[(&str, &str, &[&str])] = &[
         &["key.keyboard.keypad.3"],
     ),
 ];
+/// An action's name in the current language: `horizon.keypad.<action>` in Horizon's bundled
+/// strings, else its English name.
+pub fn caption(action: &(&str, &str, &[&str])) -> String {
+    let id = action.0.strip_prefix("key.keypad.").unwrap_or(action.0);
+    crate::lang::get_or(&format!("horizon.keypad.{id}"), action.1)
+}
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
