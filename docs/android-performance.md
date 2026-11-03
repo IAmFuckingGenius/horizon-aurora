@@ -218,7 +218,7 @@ at a lower resolution.
 
 ### Thermal governor
 
-Horizon Boost's **Adapt to heat** (on by default) reads `AThermal_getCurrentThermalStatus`
+Horizon Boost's **Heat limit** reads `AThermal_getCurrentThermalStatus`
 (API 30, once a second) and `AThermal_getThermalHeadroom` (API 31, every 2 s, 10 s
 forecast), resolved with `dlsym`, or `PowerManager.getCurrentThermalStatus` through
 JNI on API 29. Levels:
@@ -230,8 +230,13 @@ JNI on API 29. Levels:
 | 2 | severe, or headroom ≥ 0.85 | 45 | 4 | unchanged |
 | 3 | critical or above, or headroom ≥ 0.95 | 30 | 2 | −20 points, ≥ 50% |
 
+The table is the **Balanced** mode. **Soft** (the default) enters level 1 only at
+severe status or headroom ≥ 1.0, level 2 at critical, level 3 above it; **Strong**
+enters a level one status earlier and at headroom 0.65/0.75/0.85; **Off** never
+limits anything. **Lowest frame cap** (30, 45, 60, 90 or 120) is the floor of every
+level's cap, and **Lower resolution when very hot** can drop level 3's scale cut.
 A level rises at once and falls one step after readings have allowed it for 30 s
-(lower thresholds 0.65/0.78/0.88). A cap never raises the player's own lower cap.
+(Balanced's lower thresholds 0.65/0.78/0.88). A cap never raises the player's own lower cap.
 Status, headroom, level and caps are in `status` (`thermal`), in performance
 reports (`context.boost_thermal`) and, with the performance overlay on, as its last
 line. `thermal-test STATUS [HEADROOM]|off` injects readings: on desktop the measured
@@ -250,12 +255,14 @@ device under real memory pressure.
 
 ### Horizon Boost
 
-Horizon Boost is a settings sheet in the engine, opened with **Horizon Boost...** in
-Video Settings while in a world (or `boost open`). It is not a bundled native mod:
+Horizon Boost is a page of Horizon's Minecraft-style graphics screens, opened with
+**Horizon Boost...** from Video Settings or Horizon Settings, in a world or from the
+title screen. Each setting has a cost tag and a description, under the headers
+Quality, Animations, Details, Performance and Heat. It is not a bundled native mod:
 the bundled modules are pinned third-party sources wired to fixed hook points, whose
 settings pages are button lists, and they cannot reach the renderer's animation
 masks, weather columns, frame limiter or thermal governor without new engine APIs.
-The sheet reuses the existing settings (vanilla options and `horizon-graphics.txt`)
+The page reuses the existing settings (vanilla options and `horizon-graphics.txt`)
 and adds rain density, rain splash share, stars, sun and moon, edge-fog start and
 switches for water, lava, fire, nether portal and other block animations. Every
 default draws what vanilla draws; the Performance preset halves rain columns and
