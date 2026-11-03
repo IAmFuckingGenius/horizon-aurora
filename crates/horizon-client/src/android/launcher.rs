@@ -95,13 +95,14 @@ pub(super) enum LaunchTarget {
 }
 
 impl Launcher {
-    /// Restarts the app on engine `id` (or the built-in one) for one launch: the boot
-    /// library reads the request on the next start (`crates/horizon-boot`). The
-    /// process ends here; Android starts a new one for the restarted activity.
-    pub(super) fn start_engine(&mut self, id: Option<&str>) {
-        if let Some(id) = id
-            && let Err(error) =
-                crate::engines::request(&self.home, id, serde_json::json!({ "open": "title" }))
+    /// Restarts the app on `engine` (`None`: the APK's own) for one launch: the boot
+    /// library reads the request on the next start (`crates/horizon-boot`), and the
+    /// engine opens `target` there. Without a target the launcher just starts again on
+    /// the APK's engine. The process ends here; Android starts a new one for the
+    /// restarted activity.
+    pub(super) fn restart_on(&mut self, engine: Option<&str>, target: Option<serde_json::Value>) {
+        if let Some(target) = target
+            && let Err(error) = crate::engines::request(&self.home, engine, target)
         {
             self.toast(
                 text::t("Could not start the engine"),
@@ -122,10 +123,36 @@ impl Launcher {
             );
             return;
         }
-        log::info!("Restarting on engine {}", id.unwrap_or("built-in"));
+        log::info!("Restarting on engine {}", engine.unwrap_or("built-in"));
         crate::diagnostics::finish();
         crate::platform::finish();
         std::process::exit(0);
+    }
+    /// Plays the chosen instance (the profile in use) with `launch_target`: here when
+    /// this engine is the instance's, else after restarting on the instance's engine,
+    /// which opens the same target.
+    pub(super) fn play(&mut self, events: &ActiveEventLoop) -> Result<()> {
+        let id = self.catalog.config.profile;
+        let instance = crate::instances::get(&self.home, id);
+        if instance.engine != crate::engines::running() {
+            let mut target = match &self.launch_target {
+                LaunchTarget::Title => serde_json::json!({ "open": "title" }),
+                LaunchTarget::World(folder) => serde_json::json!({ "world": folder }),
+                LaunchTarget::Server => {
+                    serde_json::json!({ "server": self.catalog.config.server.trim() })
+                }
+            };
+            target["instance"] = id.into();
+            self.restart_on(instance.engine.as_deref(), Some(target));
+            return Ok(());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        if let Err(error) = crate::instances::played(&self.home, id, now) {
+            log::warn!("Instance {id}: {error}");
+        }
+        self.action(events)
     }
     pub(super) fn refresh_wardrobe_account(&mut self) {
         if self.catalog.page == Page::Skins {
@@ -137,7 +164,38 @@ impl Launcher {
         }
     }
 
+    /// Makes instance `id` the one in use (its folder is the game's).
+    pub(super) fn select_instance(&mut self, id: u32) -> Result<()> {
+        std::fs::create_dir_all(crate::instances::folder(&self.home, id))?;
+        self.catalog.config.profile = id;
+        self.catalog.config.save(&self.home)?;
+        self.catalog.refresh(&self.home);
+        self.refresh_worlds();
+        Ok(())
+    }
     fn edit_text(&mut self, output: horizon_client::osk::Output) {
+        if self.catalog.editing == Some("instance_name") {
+            use horizon_client::osk::Output;
+            if let Some(edit) = self.view.instance_edit.as_mut() {
+                match &output {
+                    Output::Text(text)
+                        if edit.name.chars().count() + text.chars().count()
+                            <= crate::instances::NAME_LIMIT =>
+                    {
+                        edit.name.push_str(text)
+                    }
+                    Output::Backspace => {
+                        edit.name.pop();
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(output, Output::Enter | Output::Close) {
+                self.catalog.editing = None;
+                crate::platform::hide();
+            }
+            return;
+        }
         if self.login.edit(self.catalog.editing, &output) {
             if matches!(
                 output,
@@ -364,6 +422,11 @@ impl Launcher {
             self.exit_confirmation = false;
         } else if self.login.visible {
             self.login.hide();
+        } else if self.catalog.editing == Some("instance_name") {
+            self.catalog.editing = None;
+            crate::platform::hide();
+        } else if self.view.instance_edit.take().is_some() {
+            // Back closes the instance sheet.
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
         } else if self.catalog.editing.take().is_some() {
@@ -756,6 +819,19 @@ impl ApplicationHandler for Launcher {
             && let Some(request) = self.start_request.take()
         {
             let target = &request["target"];
+            // The instance it was started for becomes the one in use.
+            if let Some(id) = target["instance"]
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                && id != self.catalog.config.profile
+            {
+                self.catalog.config.profile = id;
+                if let Err(error) = self.catalog.config.save(&self.home) {
+                    log::warn!("Instance {id}: {error}");
+                }
+                self.catalog.refresh(&self.home);
+                self.refresh_worlds();
+            }
             self.launch_target = if let Some(world) = target["world"].as_str() {
                 LaunchTarget::World(world.to_owned())
             } else if let Some(server) = target["server"].as_str() {

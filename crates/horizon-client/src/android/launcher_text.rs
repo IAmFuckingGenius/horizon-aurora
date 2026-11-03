@@ -1090,6 +1090,67 @@ static RU: &[(&str, &str)] = &[
         "This engine is not installed.",
         "Этот движок не установлен.",
     ),
+    ("Instances", "Инстансы"),
+    ("Instance", "Инстанс"),
+    ("New instance", "Новый инстанс"),
+    (
+        "Each has its own worlds, settings and add-ons, and its engine",
+        "У каждого свои миры, настройки, дополнения и движок",
+    ),
+    ("Change", "Изменить"),
+    ("built-in engine", "встроенный движок"),
+    ("engine «{}»", "движок «{}»"),
+    ("engine «{}» is not installed", "движок «{}» не установлен"),
+    ("played {}", "играли {}"),
+    ("in use", "выбран"),
+    ("Engine", "Движок"),
+    ("Instance name", "Название инстанса"),
+    ("Save", "Сохранить"),
+    ("Create", "Создать"),
+    (
+        "Tap again: its worlds go too",
+        "Ещё раз: миры тоже удалятся",
+    ),
+    (
+        "Could not save the instance",
+        "Не удалось сохранить инстанс",
+    ),
+    (
+        "Could not delete the instance",
+        "Не удалось удалить инстанс",
+    ),
+    ("Instance «{}»", "Инстанс «{}»"),
+    ("Instance {}", "Инстанс {}"),
+    (
+        "Instance «{}». Last world: «{}», {}.",
+        "Инстанс «{}». Последний мир — «{}», {}.",
+    ),
+    (
+        "Instance «{}». No worlds yet: create one from Play.",
+        "Инстанс «{}». Миров пока нет: создайте мир через «Играть».",
+    ),
+    (
+        "Minecraft {} · instance «{}»",
+        "Minecraft {} · инстанс «{}»",
+    ),
+    (
+        "Each instance keeps its own worlds, settings and add-ons, and can run on its own engine. Manage them on the Instances page.",
+        "У каждого инстанса свои миры, настройки и дополнения, и он может работать на своём движке. Управлять ими можно на странице «Инстансы».",
+    ),
+    ("Choose an instance", "Выберите инстанс"),
+    (
+        "Each instance keeps its own worlds, settings and add-ons, and can run on its own engine.",
+        "У каждого инстанса свои миры, настройки и дополнения, и он может работать на своём движке.",
+    ),
+    (
+        "Its own worlds, settings and add-ons, and an engine of its choice",
+        "Свои миры, настройки, дополнения и движок на выбор",
+    ),
+    (
+        "The main instance cannot be deleted.",
+        "Основной инстанс удалить нельзя.",
+    ),
+    ("Too many instances", "Слишком много инстансов"),
 ];
 
 #[cfg(test)]

@@ -20,10 +20,14 @@ pub const TAKEN: &str = "launch.taken.json";
 pub const ERROR: &str = "boot-error.txt";
 /// The engine library's file name, in the APK and in each engine's folder.
 pub const LIBRARY: &str = "libhorizon_android.so";
+/// The engine id of a request for the APK's own engine (to open an instance on it
+/// from an installed engine). No installed engine may take this id.
+pub const BUILT_IN: &str = "builtin";
 
 /// Takes the launch request in `files` (the app's files directory): the requested
-/// engine's id and library, when the request names a valid engine.
-pub fn take_request(files: &Path) -> Option<(String, PathBuf)> {
+/// engine's id and its library, `None` for the APK's own engine, when the request
+/// names a valid engine.
+pub fn take_request(files: &Path) -> Option<(String, Option<PathBuf>)> {
     let engines = files.join(ENGINES);
     let request = engines.join(REQUEST);
     let text = std::fs::read_to_string(&request).ok()?;
@@ -32,7 +36,7 @@ pub fn take_request(files: &Path) -> Option<(String, PathBuf)> {
         let _ = std::fs::remove_file(&request);
     }
     let id = string_field(&text, "engine").filter(|id| valid_id(id))?;
-    let library = engines.join(&id).join(LIBRARY);
+    let library = (id != BUILT_IN).then(|| engines.join(&id).join(LIBRARY));
     Some((id, library))
 }
 
@@ -135,7 +139,7 @@ mod android {
         if let Some(files) = files(activity) {
             let engines = files.join(super::ENGINES);
             let _ = std::fs::remove_file(engines.join(super::ERROR));
-            if let Some((id, library)) = super::take_request(&files) {
+            if let Some((id, Some(library))) = super::take_request(&files) {
                 match open(&library.to_string_lossy()) {
                     Ok(on_create) => {
                         log(INFO, &format!("Starting installed engine {id}"));
@@ -183,12 +187,19 @@ mod tests {
         std::fs::write(&request, r#"{ "engine" : "pvp-1.2", "instance": "a" }"#).unwrap();
         let (id, library) = take_request(&dir).unwrap();
         assert_eq!(id, "pvp-1.2");
-        assert_eq!(library, dir.join("engines/pvp-1.2/libhorizon_android.so"));
+        assert_eq!(
+            library,
+            Some(dir.join("engines/pvp-1.2/libhorizon_android.so"))
+        );
         // The engine reads what to start from the taken request; a second start
         // finds none and boots the APK's engine.
         assert!(!request.exists());
         assert!(dir.join(ENGINES).join(TAKEN).exists());
         assert_eq!(take_request(&dir), None);
+        // The APK's own engine: no library to load, and the request stays for it.
+        std::fs::write(&request, r#"{"engine": "builtin", "target": {}}"#).unwrap();
+        assert_eq!(take_request(&dir), Some(("builtin".into(), None)));
+        assert!(dir.join(ENGINES).join(TAKEN).exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -55,6 +55,21 @@ size and the SHA-256, then installs the library read-only (Android 14 requires
 code an app loads from its own files to be read-only). An engine with the same id
 replaces the old one.
 
+## Instances
+
+An instance is what the player plays: a name, an engine (the APK's own or an installed
+one) and its own game folder with worlds, settings and add-ons. Instance 0 is the main
+game folder; instance N is `profiles/profile-N` (older launcher profiles show up as
+instances). Names and engines are kept in `files/instances.json`. A new instance starts
+with the current one's settings (language, controls, video, Horizon's graphics), not its
+worlds or add-ons.
+
+Play on an instance whose engine is not the one running restarts the app on its engine
+with `{"target": {"instance": N, ...}}`; the engine makes instance N the one in use and
+opens the target. For the APK's own engine the request names the engine `builtin`,
+which no installed engine may take. Deleting an engine moves its instances back to the
+APK's engine.
+
 ## Compatibility and trust
 
 An engine runs with the app's full permissions and data, like the APK itself. Only

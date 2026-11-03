@@ -178,6 +178,8 @@ pub enum Page {
     Worlds,
     /// The account's skins and capes: the wardrobe.
     Skins,
+    /// What the player plays: name, engine and game folder each.
+    Instances,
 }
 impl Page {
     pub fn is_catalog(self) -> bool {

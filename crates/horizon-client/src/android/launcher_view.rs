@@ -53,6 +53,31 @@ pub(super) struct ViewState {
     pub engines_loaded: Option<Instant>,
     /// The engine Delete was tapped for once, and when: a second tap deletes.
     pub engine_delete: Option<(usize, Instant)>,
+    /// The Instances page: each instance and how many worlds it has.
+    pub instances: Vec<(crate::instances::Instance, usize)>,
+    pub instances_loaded: Option<Instant>,
+    /// The instance sheet, while it is open.
+    pub instance_edit: Option<InstanceEdit>,
+}
+
+/// The instance sheet: a new instance (`id` none) or one being changed.
+pub(super) struct InstanceEdit {
+    pub id: Option<u32>,
+    pub name: String,
+    pub engine: Option<String>,
+    /// When Delete was tapped once: a second tap within five seconds deletes.
+    pub delete_armed: Option<Instant>,
+}
+
+/// An instance's name as the player sees it: its own, or the default one.
+pub(super) fn instance_name(instance: &crate::instances::Instance) -> String {
+    if !instance.name.is_empty() {
+        instance.name.clone()
+    } else if instance.id == 0 {
+        t("Main").into()
+    } else {
+        tf("Instance {}", &[&instance.id.to_string()])
+    }
 }
 impl Default for ViewState {
     fn default() -> Self {
@@ -73,6 +98,9 @@ impl Default for ViewState {
             engines: Vec::new(),
             engines_loaded: None,
             engine_delete: None,
+            instances: Vec::new(),
+            instances_loaded: None,
+            instance_edit: None,
         }
     }
 }
@@ -167,8 +195,9 @@ fn short_count(n: u64) -> String {
 /// Width of the pager: two 48 dp buttons around the page label.
 const PAGER_W: f32 = 188.0;
 /// The destinations of the rail.
-const NAV: [(Page, &str, &str); 5] = [
+const NAV: [(Page, &str, &str); 6] = [
     (Page::Play, "home", "Home"),
+    (Page::Instances, "gamepad", "Instances"),
     (Page::Mods, "package", "Add-ons"),
     (Page::Worlds, "folder", "Worlds"),
     (Page::Skins, "user", "Skins"),
@@ -201,6 +230,33 @@ impl Launcher {
             self.view.free = free.map(|f| (Instant::now(), f));
         }
         self.view.free.map(|(_, f)| f)
+    }
+    pub(super) fn refresh_instances(&mut self) {
+        self.view.instances = crate::instances::list(&self.home)
+            .into_iter()
+            .map(|instance| {
+                let saves = crate::instances::folder(&self.home, instance.id).join("saves");
+                let worlds = std::fs::read_dir(saves)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().join("level.dat").is_file())
+                    .count();
+                (instance, worlds)
+            })
+            .collect();
+        self.view.instances_loaded = Some(Instant::now());
+    }
+    /// The name of an engine as the player sees it: the APK's own, an installed one's,
+    /// or that one missing.
+    fn engine_label(&self, engine: Option<&str>) -> String {
+        match engine {
+            None => t("built-in engine").into(),
+            Some(id) => match self.view.engines.iter().find(|e| e.manifest.id == id) {
+                Some(e) => tf("engine «{}»", &[&e.manifest.name]),
+                None => tf("engine «{}» is not installed", &[id]),
+            },
+        }
     }
     pub(super) fn refresh_engines(&mut self) {
         self.view.engines = crate::engines::list(&self.home);
@@ -242,7 +298,15 @@ impl Launcher {
         {
             self.refresh_worlds();
         }
-        if self.catalog.page == Page::Settings
+        if matches!(self.catalog.page, Page::Instances)
+            && self
+                .view
+                .instances_loaded
+                .is_none_or(|at| at.elapsed() > Duration::from_secs(10))
+        {
+            self.refresh_instances();
+        }
+        if matches!(self.catalog.page, Page::Settings | Page::Instances)
             && self
                 .view
                 .engines_loaded
@@ -276,6 +340,7 @@ impl Launcher {
             Page::Play => self.draw_home(k, main, portrait),
             Page::Worlds => self.draw_worlds(k, main, portrait),
             Page::Skins => self.draw_skins(k, main, portrait),
+            Page::Instances => self.draw_instances(k, main, portrait),
             Page::Settings => self.draw_settings(k, main, portrait),
             _ => self.draw_addons(k, main, portrait),
         }
@@ -489,11 +554,11 @@ impl Launcher {
         let last = self.view.worlds.first();
         let line = match last {
             Some(world) => tf(
-                "Profile «{}». Last world: «{}», {}.",
+                "Instance «{}». Last world: «{}», {}.",
                 &[&profile, &world.name, &when(world.modified)],
             ),
             None => tf(
-                "Profile «{}». No worlds yet: create one from Play.",
+                "Instance «{}». No worlds yet: create one from Play.",
                 &[&profile],
             ),
         };
@@ -531,7 +596,7 @@ impl Launcher {
                 bottom -= 66.0;
                 k.dropdown(
                     [x0, bottom, w0, 56.0],
-                    Some(t("Profile")),
+                    Some(t("Instance")),
                     &profile,
                     Action::Profile,
                 );
@@ -559,7 +624,7 @@ impl Launcher {
             } else {
                 [x0, actions_y + 66.0, left_w.min(260.0), 56.0]
             };
-            k.dropdown(profile_rect, Some(t("Profile")), &profile, Action::Profile);
+            k.dropdown(profile_rect, Some(t("Instance")), &profile, Action::Profile);
             [x0 + w0 - card_w, body, card_w, card_h]
         };
         let [cx, cy, cw, _] = card;
@@ -644,10 +709,10 @@ impl Launcher {
     }
 
     fn profile_name(&self) -> String {
-        match self.catalog.config.profile {
-            0 => t("Main").into(),
-            n => tf("Profile {}", &[&n.to_string()]),
-        }
+        instance_name(&crate::instances::get(
+            &self.home,
+            self.catalog.config.profile,
+        ))
     }
 
     /// A blinking caret after a field's text while it is being edited.
@@ -683,7 +748,7 @@ impl Launcher {
             },
         );
         let subtitle = tf(
-            "Minecraft {} · profile «{}»",
+            "Minecraft {} · instance «{}»",
             &[horizon_core::VANILLA_VERSION, &self.profile_name()],
         );
         k.text_fit(
@@ -1957,6 +2022,341 @@ impl Launcher {
         k.clip(clip, [lx, ly, lw, lh]);
     }
 
+    // ---- Instances ----
+
+    fn draw_instances(&mut self, k: &mut Kit, main: [f32; 4], portrait: bool) {
+        let [mx, my, mw, mh] = main;
+        sky::band(k.ui, [mx, my, mw, 72.0], self.sky_time());
+        let x0 = mx + 16.0;
+        let w0 = mw - 32.0;
+        let top = my + if portrait { 16.0 } else { 12.0 };
+        let heading = t("Instances");
+        k.text(Face::Pixel, 32.0, 32.0, x0, top, col::INK, heading);
+        let subtitle = t("Each has its own worlds, settings and add-ons, and its engine");
+        let new = t("New instance");
+        let new_w = k.button_width(Style::Secondary, Some(Icon::Pixel("plus")), new);
+        let heading_w =
+            k.measure(Face::Pixel, 32.0, heading)
+                .max(k.measure(Face::Mono, 12.0, subtitle));
+        let beside = !portrait && heading_w + 24.0 + new_w <= w0;
+        let button = if beside {
+            [x0 + w0 - new_w, top, new_w, 48.0]
+        } else {
+            [x0, top + 60.0, w0.min(new_w.max(240.0)), 48.0]
+        };
+        k.text_fit(
+            Face::Mono,
+            12.0,
+            16.0,
+            x0,
+            top + 32.0,
+            if beside { button[0] - 16.0 - x0 } else { w0 },
+            col::INK_SOFT,
+            subtitle,
+        );
+        k.button(
+            button,
+            Style::Secondary,
+            Some(Icon::Pixel("plus")),
+            new,
+            Some(Action::NewInstance),
+        );
+        let list_top = if beside { my + 92.0 } else { button[1] + 60.0 };
+        let panel = [x0, list_top, w0, my + mh - 16.0 - list_top];
+        k.panel(panel, false);
+        let (lx, ly, lw, lh) = (x0 + 6.0, list_top + 6.0, w0 - 12.0, panel[3] - 12.0);
+        let play_label = k.button_width(Style::Secondary, Some(Icon::Pixel("play")), t("Play"));
+        let edit_label =
+            k.button_width(Style::Secondary, Some(Icon::Pixel("sliders")), t("Change"));
+        let (play_w, edit_w) = if lw - 88.0 - play_label - edit_label - 32.0 >= 180.0 {
+            (play_label, edit_label)
+        } else {
+            (48.0, 48.0)
+        };
+        let text_w = (lw - 88.0 - play_w - edit_w - 32.0).max(40.0);
+        let rows: Vec<_> = self.view.instances.clone();
+        let rh = 76.0;
+        let scroll = self.list_scroll(ly, ly + lh, rows.len() as f32 * rh);
+        let clip = k.mark();
+        let mut ry = ly - scroll;
+        for (i, (instance, worlds)) in rows.iter().enumerate() {
+            let by = ry + (rh - 48.0) / 2.0;
+            let play_x = lx + lw - 12.0 - play_w;
+            let edit_x = play_x - 8.0 - edit_w;
+            let id = instance.id;
+            let row = [lx, ry, edit_x - 8.0 - lx, rh];
+            self.list_targets.push((row, Action::SelectInstance(id)));
+            self.list_targets
+                .push(([edit_x, by, edit_w, 48.0], Action::EditInstance(id)));
+            self.list_targets
+                .push(([play_x, by, play_w, 48.0], Action::PlayInstance(id)));
+            if ry + rh <= ly || ry >= ly + lh {
+                ry += rh;
+                continue;
+            }
+            let active = id == self.catalog.config.profile;
+            if k.pressed(row, Some(Action::SelectInstance(id))) {
+                kit::fill(k.ui, row[0], row[1], row[2], row[3], col::CONTROL_PRESSED);
+            }
+            if active {
+                kit::fill(k.ui, lx, ry + 8.0, 3.0, rh - 16.0, col::ACCENT_HI);
+            }
+            divider(k, i + 1, [lx, ry, lw]);
+            let name = instance_name(instance);
+            thumb(k, lx + 12.0, ry + (rh - 36.0) / 2.0, &name);
+            k.text_fit(
+                Face::BodySemiBold,
+                15.0,
+                18.0,
+                lx + 88.0,
+                ry + 14.0,
+                text_w,
+                if active { col::ACCENT_HI } else { col::INK },
+                &name,
+            );
+            let mut details = self.engine_label(instance.engine.as_deref());
+            details.push_str(" · ");
+            details.push_str(&match worlds {
+                1 => t("1 world").to_owned(),
+                n => tf("{} worlds", &[&n.to_string()]),
+            });
+            if let Some(at) = instance.played {
+                let time = SystemTime::UNIX_EPOCH + Duration::from_secs(at);
+                details.push_str(&format!(" · {}", tf("played {}", &[&when(time)])));
+            }
+            if active {
+                details = format!("{} · {details}", t("in use"));
+            }
+            for (j, line) in k
+                .wrap(Face::Body, 12.0, &details, text_w)
+                .into_iter()
+                .take(2)
+                .enumerate()
+            {
+                k.text(
+                    Face::Body,
+                    12.0,
+                    14.0,
+                    lx + 88.0,
+                    ry + 36.0 + j as f32 * 14.0,
+                    col::MUTED,
+                    &line,
+                );
+            }
+            k.hit(row, Action::SelectInstance(id));
+            k.button(
+                [edit_x, by, edit_w, 48.0],
+                Style::Secondary,
+                Some(Icon::Pixel("sliders")),
+                if edit_w > 48.0 { t("Change") } else { "" },
+                Some(Action::EditInstance(id)),
+            );
+            k.button(
+                [play_x, by, play_w, 48.0],
+                if active {
+                    Style::Primary
+                } else {
+                    Style::Secondary
+                },
+                Some(Icon::Pixel("play")),
+                if play_w > 48.0 { t("Play") } else { "" },
+                Some(Action::PlayInstance(id)),
+            );
+            ry += rh;
+        }
+        k.clip(clip, [lx, ly, lw, lh]);
+    }
+
+    /// The instance sheet: its name, its engine, and Delete.
+    pub(super) fn draw_instance_edit(&mut self, k: &mut Kit) {
+        let Some(edit) = &self.view.instance_edit else {
+            return;
+        };
+        let (w, h) = (k.ui.w, k.ui.h);
+        kit::fill(k.ui, 0.0, 0.0, w, h, col::SCRIM);
+        let typing = self.catalog.editing == Some("instance_name");
+        let engines: Vec<(Option<usize>, String, String)> = std::iter::once((
+            None,
+            t("Built-in engine").to_owned(),
+            format!("Horizon {}", crate::backend::VERSION),
+        ))
+        .chain(self.view.engines.iter().enumerate().map(|(i, e)| {
+            let m = &e.manifest;
+            (
+                Some(i),
+                m.name.clone(),
+                format!("{} · {}", m.version, m.commit),
+            )
+        }))
+        .collect();
+        let sw = w.min(640.0);
+        let wide = sw >= 560.0;
+        let cols = if wide { 2 } else { 1 };
+        let engine_rows = engines.len().div_ceil(cols) as f32;
+        let want = if typing {
+            200.0
+        } else {
+            80.0 + 96.0 + 28.0 + engine_rows * 56.0 + 16.0 + 64.0
+        };
+        let sh = want.min(h - 12.0);
+        let (x, y) = ((w - sw) / 2.0, h - sh);
+        k.panel([x, y, sw, sh + 8.0], false);
+        kit::fill(
+            k.ui,
+            x + (sw - 40.0) / 2.0,
+            y + 10.0,
+            40.0,
+            4.0,
+            col::CONTROL_RING,
+        );
+        let title = match edit.id {
+            None => t("New instance").to_owned(),
+            Some(_) => tf("Instance «{}»", &[&edit.name]),
+        };
+        k.text_fit(
+            Face::BodyBold,
+            20.0,
+            24.0,
+            x + 16.0,
+            y + 34.0,
+            sw - 96.0,
+            col::INK,
+            &title,
+        );
+        k.button(
+            [x + sw - 16.0 - 48.0, y + 22.0, 48.0, 48.0],
+            Style::Ghost,
+            Some(Icon::Pixel("close")),
+            "",
+            Some(Action::CloseInstanceEdit),
+        );
+        let (bx, bw) = (x + 16.0, sw - 32.0);
+        let mut cy = y + 80.0;
+        k.text(Face::Body, 12.0, 17.0, bx, cy, col::MUTED, t("Name"));
+        cy += 20.0;
+        let caret = k.field(
+            [bx, cy, bw, 48.0],
+            None,
+            &edit.name,
+            t("Instance name"),
+            Action::Field("instance_name"),
+            typing,
+        );
+        self.caret(k, typing, caret, cy);
+        cy += 56.0;
+        if typing {
+            let done_w = k.button_width(Style::Secondary, Some(Icon::Pixel("check")), t("Done"));
+            k.button(
+                [bx, cy, done_w, 48.0],
+                Style::Secondary,
+                Some(Icon::Pixel("check")),
+                t("Done"),
+                Some(Action::FinishNameEdit),
+            );
+            return;
+        }
+        cy += 20.0;
+        k.text(Face::Body, 12.0, 17.0, bx, cy, col::MUTED, t("Engine"));
+        cy += 22.0;
+        let cw = (bw - 8.0 * (cols - 1) as f32) / cols as f32;
+        let selected = |e: &Option<usize>| match e {
+            None => edit.engine.is_none(),
+            Some(i) => {
+                edit.engine.as_deref() == self.view.engines.get(*i).map(|e| e.manifest.id.as_str())
+            }
+        };
+        for (i, (index, name, detail)) in engines.iter().enumerate() {
+            let r = [
+                bx + (i % cols) as f32 * (cw + 8.0),
+                cy + (i / cols) as f32 * 56.0,
+                cw,
+                48.0,
+            ];
+            if r[1] + 48.0 > y + sh - 64.0 {
+                break;
+            }
+            let on = selected(index);
+            let action = Action::InstanceEngine(*index);
+            let pressed = k.pressed(r, Some(action));
+            kit::fill(
+                k.ui,
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                if pressed {
+                    col::CONTROL_PRESSED
+                } else {
+                    col::CONTROL
+                },
+            );
+            kit::frame(k.ui, r, if on { col::ACCENT } else { col::CONTROL_RING });
+            k.ui.icon("box", r[0] + 12.0, r[1] + 12.0, 24.0, col::INK_SOFT);
+            let tw = r[2] - 48.0 - if on { 40.0 } else { 12.0 };
+            k.text_fit(
+                Face::BodySemiBold,
+                14.0,
+                17.0,
+                r[0] + 48.0,
+                r[1] + 7.0,
+                tw,
+                col::INK,
+                name,
+            );
+            k.text_fit(
+                Face::Mono,
+                11.0,
+                14.0,
+                r[0] + 48.0,
+                r[1] + 27.0,
+                tw,
+                col::MUTED,
+                detail,
+            );
+            if on {
+                k.ui.icon("check", r[0] + r[2] - 32.0, r[1] + 12.0, 24.0, col::SUCCESS);
+            }
+            k.hit(r, action);
+        }
+        // Save, and Delete for an instance that has its own folder.
+        let by = y + sh - 60.0;
+        let save = if edit.id.is_some() {
+            t("Save")
+        } else {
+            t("Create")
+        };
+        let save_w = k
+            .button_width(Style::Primary, Some(Icon::Pixel("check")), save)
+            .max(160.0);
+        k.button(
+            [x + sw - 16.0 - save_w, by, save_w, 48.0],
+            Style::Primary,
+            Some(Icon::Pixel("check")),
+            save,
+            Some(Action::SaveInstance),
+        );
+        if let Some(id) = edit.id
+            && id != 0
+        {
+            let armed = edit
+                .delete_armed
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(5));
+            let label = if armed {
+                t("Tap again: its worlds go too")
+            } else {
+                t("Delete")
+            };
+            let del_w = k.button_width(Style::Danger, Some(Icon::Pixel("trash")), label);
+            k.button(
+                [bx, by, del_w.min(bw - save_w - 8.0), 48.0],
+                Style::Danger,
+                Some(Icon::Pixel("trash")),
+                label,
+                Some(Action::DeleteInstance),
+            );
+        }
+    }
+
     // ---- Skins ----
 
     fn draw_skins(&mut self, k: &mut Kit, main: [f32; 4], portrait: bool) {
@@ -2499,8 +2899,10 @@ impl Launcher {
                         ),
                     ),
                     Row::new(
-                        t("Profile"),
-                        t("Each profile keeps its own worlds and settings."),
+                        t("Instance"),
+                        t(
+                            "Each instance keeps its own worlds, settings and add-ons, and can run on its own engine. Manage them on the Instances page.",
+                        ),
                         Control::Dropdown(self.profile_name(), Action::Profile),
                     ),
                 ],

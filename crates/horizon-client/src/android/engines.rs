@@ -3,7 +3,7 @@
 //! (`crates/horizon-boot`) starts in place of the APK's own engine for one launch. Each
 //! lives in `files/engines/<id>/`. Starting one writes the boot library's request and
 //! restarts the app, since a process holds one engine.
-use horizon_boot::{ENGINES, ERROR, LIBRARY, REQUEST, TAKEN, valid_id};
+use horizon_boot::{BUILT_IN, ENGINES, ERROR, LIBRARY, REQUEST, TAKEN, valid_id};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -92,7 +92,7 @@ fn check(manifest: &Manifest) -> Result<(), String> {
                 .into(),
         );
     }
-    if !valid_id(&manifest.id) {
+    if !valid_id(&manifest.id) || manifest.id == BUILT_IN {
         return Err("The engine's id is not a valid folder name.".into());
     }
     if manifest.abi != abi() {
@@ -205,13 +205,17 @@ pub fn remove(home: &Path, id: &str) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
-/// Asks the boot library to start engine `id` on the next start, with `target` (what
-/// to open: the title screen, a world, a server) for the engine to read.
-pub fn request(home: &Path, id: &str, target: serde_json::Value) -> Result<(), String> {
-    if !valid_id(id) || !folder(home).join(id).join(LIBRARY).is_file() {
-        return Err("This engine is not installed.".into());
-    }
+/// Asks the boot library to start engine `id` (`None`: the APK's own) on the next
+/// start, with `target` (what to open: the title screen, a world, a server, an
+/// instance) for the engine to read.
+pub fn request(home: &Path, id: Option<&str>, target: serde_json::Value) -> Result<(), String> {
+    let id = match id {
+        None => BUILT_IN,
+        Some(id) if valid_id(id) && folder(home).join(id).join(LIBRARY).is_file() => id,
+        Some(_) => return Err("This engine is not installed.".into()),
+    };
     let engines = folder(home);
+    fs::create_dir_all(&engines).map_err(|e| e.to_string())?;
     let json = serde_json::json!({ "engine": id, "target": target });
     let partial = engines.join(".launch.partial");
     fs::write(&partial, json.to_string()).map_err(|e| e.to_string())?;
@@ -367,12 +371,19 @@ mod tests {
         install(&home, Cursor::new(pack(&m2, &newer))).unwrap();
         assert_eq!(list(&home)[0].manifest.name, "PvP 2");
         // The boot library's side of a request.
-        request(&home, "pvp-1", serde_json::json!({"world": "W"})).unwrap();
+        request(&home, Some("pvp-1"), serde_json::json!({"world": "W"})).unwrap();
         let (id, library) = horizon_boot::take_request(&home).unwrap();
-        assert_eq!((id.as_str(), library), ("pvp-1", path.clone()));
+        assert_eq!((id.as_str(), library), ("pvp-1", Some(path.clone())));
         assert_eq!(take_started(&home).unwrap()["target"]["world"], "W");
         assert_eq!(take_started(&home), None);
-        assert!(request(&home, "missing", serde_json::Value::Null).is_err());
+        assert!(request(&home, Some("missing"), serde_json::Value::Null).is_err());
+        // The APK's engine needs nothing installed.
+        request(&home, None, serde_json::json!({"instance": 2})).unwrap();
+        assert_eq!(
+            horizon_boot::take_request(&home),
+            Some((BUILT_IN.into(), None))
+        );
+        assert_eq!(take_started(&home).unwrap()["target"]["instance"], 2);
         remove(&home, "pvp-1").unwrap();
         assert!(list(&home).is_empty());
         fs::remove_dir_all(home).unwrap();

@@ -55,6 +55,8 @@ mod platform;
 mod proxy;
 #[path = "android/engines.rs"]
 mod engines;
+#[path = "android/instances.rs"]
+mod instances;
 #[path = "android/memory.rs"]
 mod memory;
 #[path = "android/search_queue.rs"]

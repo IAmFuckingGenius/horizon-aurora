@@ -202,54 +202,35 @@ impl Launcher {
             // Opened above.
             Kind::Report(_) => return,
             Kind::Profile => {
-                let mut ids = vec![0, c.profile];
-                ids.extend(
-                    std::fs::read_dir(self.home.join("profiles"))
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .filter(|e| e.path().is_dir())
-                        .filter_map(|e| {
-                            e.file_name()
-                                .to_str()?
-                                .strip_prefix("profile-")?
-                                .parse::<u32>()
-                                .ok()
-                        }),
-                );
-                ids.sort_unstable();
-                ids.dedup();
-                let next = ids.last().copied().unwrap_or(0).checked_add(1);
-                let mut choices: Vec<_> = ids
-                    .into_iter()
-                    .map(|id| {
+                let instances = crate::instances::list(&self.home);
+                let engines = crate::engines::list(&self.home);
+                let mut choices: Vec<_> = instances
+                    .iter()
+                    .map(|instance| {
+                        let engine = match &instance.engine {
+                            None => t("built-in engine").to_owned(),
+                            Some(id) => engines.iter().find(|e| &e.manifest.id == id).map_or_else(
+                                || tf("engine «{}» is not installed", &[id]),
+                                |e| tf("engine «{}»", &[&e.manifest.name]),
+                            ),
+                        };
                         (
-                            if id == 0 {
-                                "Main".into()
-                            } else {
-                                format!("Profile {id}")
-                            },
-                            if id == 0 {
-                                "Default profile".into()
-                            } else {
-                                "Separate saves, mods and packs".into()
-                            },
-                            Action::ChooseProfile(id),
-                            id == c.profile,
+                            super::view::instance_name(instance),
+                            engine,
+                            Action::ChooseProfile(instance.id),
+                            instance.id == c.profile,
                         )
                     })
                     .collect();
-                if let Some(id) = next {
-                    choices.push((
-                        "Create profile".into(),
-                        format!("Create Profile {id}"),
-                        Action::ChooseProfile(id),
-                        false,
-                    ));
-                }
+                choices.push((
+                    t("New instance").into(),
+                    t("Its own worlds, settings and add-ons, and an engine of its choice").into(),
+                    Action::NewInstance,
+                    false,
+                ));
                 (
-                    "Choose profile",
-                    "Each profile keeps its own game settings and saves.",
+                    "Choose an instance",
+                    "Each instance keeps its own worlds, settings and add-ons, and can run on its own engine.",
                     choices,
                 )
             }

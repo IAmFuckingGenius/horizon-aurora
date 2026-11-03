@@ -51,6 +51,16 @@ pub(super) enum Action {
     CancelLogin,
     ReviewApp,
     Repository,
+    /// The Instances page and its sheet.
+    NewInstance,
+    SelectInstance(u32),
+    PlayInstance(u32),
+    EditInstance(u32),
+    /// The sheet's engine: `None` the APK's own, else an index of the installed ones.
+    InstanceEngine(Option<usize>),
+    SaveInstance,
+    DeleteInstance,
+    CloseInstanceEdit,
     /// Settings › Engines.
     ImportEngine,
     LaunchEngine(usize),
@@ -252,6 +262,12 @@ impl Launcher {
                 flash,
             };
             self.draw_view(&mut k);
+            if self.view.instance_edit.is_some() {
+                self.list_targets.clear();
+                self.list_view = None;
+                k.targets.clear();
+                self.draw_instance_edit(&mut k);
+            }
             if self.login.visible {
                 self.list_targets.clear();
                 self.list_view = None;
@@ -519,6 +535,118 @@ impl Launcher {
                 self.catalog.remove_local(&self.home);
                 self.chooser = None;
             }
+            Some(Action::NewInstance) => {
+                self.chooser = None;
+                self.refresh_engines();
+                self.view.instance_edit = Some(super::view::InstanceEdit {
+                    id: None,
+                    name: String::new(),
+                    engine: None,
+                    delete_armed: None,
+                });
+            }
+            Some(Action::EditInstance(id)) => {
+                self.refresh_engines();
+                let instance = crate::instances::get(&self.home, id);
+                self.view.instance_edit = Some(super::view::InstanceEdit {
+                    id: Some(id),
+                    name: super::view::instance_name(&instance),
+                    engine: instance.engine,
+                    delete_armed: None,
+                });
+            }
+            Some(Action::InstanceEngine(index)) => {
+                let engine = index
+                    .and_then(|i| self.view.engines.get(i))
+                    .map(|e| e.manifest.id.clone());
+                if let Some(edit) = self.view.instance_edit.as_mut() {
+                    edit.engine = engine;
+                }
+            }
+            Some(Action::CloseInstanceEdit) => {
+                self.view.instance_edit = None;
+                self.catalog.editing = None;
+                crate::platform::hide();
+            }
+            Some(Action::SaveInstance) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                if let Some(edit) = self.view.instance_edit.take() {
+                    let name = crate::instances::clean_name(&edit.name);
+                    let saved = match edit.id {
+                        None => crate::instances::create(
+                            &self.home,
+                            &name,
+                            edit.engine,
+                            Some(self.catalog.config.profile),
+                        )
+                        .map(|i| i.id),
+                        Some(id) => {
+                            let mut instance = crate::instances::get(&self.home, id);
+                            // The default name stays the default (it follows the language).
+                            if name != super::view::instance_name(&instance) {
+                                instance.name = name;
+                            }
+                            instance.engine = edit.engine;
+                            crate::instances::save(&self.home, &instance).map(|()| id)
+                        }
+                    };
+                    match saved {
+                        Ok(id) => {
+                            if edit.id.is_none() {
+                                self.select_instance(id)?;
+                            }
+                            self.refresh_instances();
+                        }
+                        Err(error) => self.toast(
+                            super::text::t("Could not save the instance"),
+                            super::text::t_dyn(&error),
+                            true,
+                        ),
+                    }
+                }
+            }
+            Some(Action::DeleteInstance) => {
+                let Some(edit) = self.view.instance_edit.as_mut() else {
+                    return Ok(());
+                };
+                let armed = edit
+                    .delete_armed
+                    .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5));
+                if !armed {
+                    edit.delete_armed = Some(std::time::Instant::now());
+                    return Ok(());
+                }
+                let Some(id) = edit.id else {
+                    return Ok(());
+                };
+                let name = edit.name.clone();
+                self.view.instance_edit = None;
+                match crate::instances::delete(&self.home, id) {
+                    Ok(()) => {
+                        if self.catalog.config.profile == id {
+                            self.select_instance(0)?;
+                        }
+                        self.toast(
+                            super::text::tf("«{}» deleted", &[&name]),
+                            String::new(),
+                            false,
+                        );
+                    }
+                    Err(error) => self.toast(
+                        super::text::t("Could not delete the instance"),
+                        super::text::t_dyn(&error),
+                        true,
+                    ),
+                }
+                self.refresh_instances();
+            }
+            Some(Action::SelectInstance(id)) => self.select_instance(id)?,
+            Some(Action::PlayInstance(id)) => {
+                self.select_instance(id)?;
+                self.launch_target = LaunchTarget::Title;
+                self.play(events)?;
+            }
             Some(Action::ImportEngine) => {
                 if let Err(error) = crate::transfers::import_engine(self.home.clone()) {
                     self.toast(super::text::t("Could not install the engine"), error, true);
@@ -526,10 +654,14 @@ impl Launcher {
             }
             Some(Action::LaunchEngine(index)) => {
                 if let Some(engine) = self.view.engines.get(index).cloned() {
-                    self.start_engine(Some(&engine.manifest.id));
+                    let target = serde_json::json!({
+                        "open": "title",
+                        "instance": self.catalog.config.profile,
+                    });
+                    self.restart_on(Some(&engine.manifest.id), Some(target));
                 }
             }
-            Some(Action::BuiltInEngine) => self.start_engine(None),
+            Some(Action::BuiltInEngine) => self.restart_on(None, None),
             Some(Action::DeleteEngine(index)) => {
                 let confirmed = self.view.engine_delete.is_some_and(|(at, when)| {
                     at == index && when.elapsed() < std::time::Duration::from_secs(5)
@@ -545,7 +677,11 @@ impl Launcher {
                             true,
                         );
                     } else {
-                        match crate::engines::remove(&self.home, &engine.manifest.id) {
+                        let removed = crate::engines::remove(&self.home, &engine.manifest.id)
+                            .and_then(|()| {
+                                crate::instances::forget_engine(&self.home, &engine.manifest.id)
+                            });
+                        match removed {
                             Ok(()) => self.toast(
                                 super::text::tf("«{}» deleted", &[&engine.manifest.name]),
                                 String::new(),
@@ -721,7 +857,7 @@ impl Launcher {
             }
             Some(Action::Play) => {
                 self.launch_target = LaunchTarget::Title;
-                self.action(events)?;
+                self.play(events)?;
             }
             Some(Action::WardrobeKind(cape)) => {
                 self.wardrobe.capes = cape;
@@ -764,19 +900,19 @@ impl Launcher {
                         String::new(),
                         false,
                     );
-                    self.action(events)?;
+                    self.play(events)?;
                 }
             }
             Some(Action::ContinueWorld) => {
                 if let Some(world) = self.view.worlds.first() {
                     self.launch_target = LaunchTarget::World(world.folder.clone());
-                    self.action(events)?;
+                    self.play(events)?;
                 }
             }
             Some(Action::OpenWorld(index)) => {
                 if let Some(world) = self.view.worlds.get(index) {
                     self.launch_target = LaunchTarget::World(world.folder.clone());
-                    self.action(events)?;
+                    self.play(events)?;
                 }
             }
             Some(Action::AddonView(installed)) => {
@@ -834,6 +970,12 @@ impl Launcher {
                 self.catalog.editing = None;
                 crate::platform::hide();
                 self.catalog.config.save(&self.home)?;
+            }
+            Some(Action::Field("instance_name")) => {
+                if let Some(edit) = &self.view.instance_edit {
+                    self.catalog.editing = Some("instance_name");
+                    crate::platform::show(&edit.name);
+                }
             }
             Some(Action::Field(name)) => {
                 if let Some(value) = self.login.field(name) {
@@ -898,16 +1040,7 @@ impl Launcher {
                 self.chooser = None;
             }
             Some(Action::ChooseProfile(profile)) => {
-                std::fs::create_dir_all(if profile == 0 {
-                    self.home.clone()
-                } else {
-                    self.home
-                        .join("profiles")
-                        .join(format!("profile-{profile}"))
-                })?;
-                self.catalog.config.profile = profile;
-                self.catalog.config.save(&self.home)?;
-                self.catalog.refresh(&self.home);
+                self.select_instance(profile)?;
                 self.chooser = None;
             }
             Some(Action::Dismiss) => {
