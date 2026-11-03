@@ -18,6 +18,7 @@
 //! or Escape leaves them as they were.
 use crate::{
     hud::{HudAtlas, HudBatch, rgba},
+    lang,
     settings::Settings,
     text::Text,
     ui,
@@ -139,10 +140,15 @@ impl Calibration {
     }
     fn label(&self) -> Text {
         let v = self.values[self.step];
-        Text::literal(match self.current() {
-            Step::Black => format!("Black Level: {v:.2} nits"),
-            step => format!("{}: {v:.0} nits", step.name()),
-        })
+        let nits = match self.current() {
+            Step::Black => format!("{v:.2}"),
+            _ => format!("{v:.0}"),
+        };
+        Text::literal(format!(
+            "{}: {}",
+            lang::get(self.current().name()),
+            lang::tr("%s nits", &[&nits])
+        ))
     }
     /// The step, its nits and where the controls start (a share of the height), for
     /// HDR output's test picture.
@@ -160,23 +166,31 @@ impl Calibration {
         batch.fill(atlas, 0.0, 0.0, w, h, rgba(0, 0, 0, 255));
         batch.fill(atlas, 0.0, l.top, w, h - l.top, rgba(24, 24, 24, 255));
         let step = self.current();
-        let title = Text::literal(format!(
-            "HDR Calibration {}/{}: {}",
-            self.step + 1,
-            STEPS.len(),
-            step.name()
+        let title = Text::literal(lang::tr(
+            "HDR Calibration %s/%s: %s",
+            &[&(self.step + 1), &STEPS.len(), &lang::get(step.name())],
         ));
-        ui::centered_text(batch, atlas, &title, 0.0, l.top + 6.0, w, u32::MAX);
-        let hint = Text::literal(step.hint());
-        ui::centered_text(
-            batch,
-            atlas,
-            &hint,
-            0.0,
-            l.top + 18.0,
-            w,
-            rgba(160, 160, 160, 255),
-        );
+        // The hint over the slider: a long one takes two lines, the title moving up for it
+        // (above the band the test picture covers everything).
+        let hint = Text::literal(lang::get(step.hint()));
+        let lines = atlas.font.split(&hint, (w - 20.0).max(1.0));
+        let (title_y, hint_y) = if lines.len() > 1 {
+            (l.top + 1.0, l.top + 11.0)
+        } else {
+            (l.top + 6.0, l.top + 18.0)
+        };
+        ui::centered_text(batch, atlas, &title, 0.0, title_y, w, u32::MAX);
+        for (i, line) in lines.iter().enumerate() {
+            ui::centered_text(
+                batch,
+                atlas,
+                line,
+                0.0,
+                hint_y + i as f32 * 10.0,
+                w,
+                rgba(160, 160, 160, 255),
+            );
+        }
         let (min, max, _) = step.range();
         let (x, y, sw) = l.slider;
         ui::slider(
@@ -192,10 +206,15 @@ impl Calibration {
             self.dragging,
         );
         let last = self.step + 1 == STEPS.len();
+        let next = if last {
+            lang::get_or("selectWorld.edit.save", "Save")
+        } else {
+            lang::get("Next")
+        };
         for (rect, label, active) in [
-            (l.cancel, "Cancel", true),
-            (l.back, "Back", self.step > 0),
-            (l.next, if last { "Save" } else { "Next" }, true),
+            (l.cancel, lang::get_or("gui.cancel", "Cancel"), true),
+            (l.back, lang::get_or("gui.back", "Back"), self.step > 0),
+            (l.next, next, true),
         ] {
             let hover = over(cursor, rect) && active;
             ui::button(

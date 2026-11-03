@@ -452,6 +452,12 @@ fn description(item: Item, s: &Settings, text: &'static str) -> &'static str {
 fn on_off(on: bool) -> String {
     lang::get(if on { "On" } else { "Off" })
 }
+/// An upscaling ratio's name: its own key (`horizon.graphics.upscaling.*`), where a language
+/// needs other words than the presets' it shares the English with.
+fn upscaling_word(english: &str) -> String {
+    let id = english.to_lowercase().replace(' ', "_");
+    lang::get_or(&format!("horizon.graphics.upscaling.{id}"), english)
+}
 /// A control's caption and its value, both through the language table: Horizon's captions are
 /// English sentences, and some of the values ("Off", "12 chunks") are words too.
 fn labelled(caption: &str, value: impl std::fmt::Display) -> Text {
@@ -556,7 +562,7 @@ impl H {
                     (false, false) => "Off",
                 },
             ),
-            H::Upscaling => labelled("Upscaling", g.upscaling.label()),
+            H::Upscaling => labelled("Upscaling", upscaling_word(g.upscaling.label())),
             H::ScreenshotQuality => {
                 labelled("Screenshot Quality", format!("{}x", g.screenshot_quality))
             }
@@ -589,9 +595,8 @@ impl H {
                 ),
             ),
             H::HdrUiBrightness => labelled("UI Brightness", format!("{}%", g.hdr_ui_brightness)),
-            H::HdrKey => {
-                Text::literal("Shortcut: ").append(crate::keybinds::display_name(&g.hdr_key))
-            }
+            H::HdrKey => Text::literal(format!("{}: ", lang::get("Shortcut")))
+                .append(crate::keybinds::display_name(&g.hdr_key)),
             H::BatteryMode => labelled("Battery Mode", on_off(g.battery)),
             H::ShadowCache => labelled("Shadow Cache", on_off(g.shadow_cache)),
             H::GraphicsApi => labelled("Graphics API", g.api.label()),
@@ -907,6 +912,9 @@ pub struct GraphicsUi {
     pub can_change_value: bool,
     /// The key binding the options screen is waiting on (`Action::BindKey`).
     pub binding: Option<&'static str>,
+    /// Each setting row's height as the last frame measured it (a description wraps onto as
+    /// many lines as it needs), for the level it was measured on.
+    measured: Option<(Level, Vec<f32>)>,
 }
 
 impl GraphicsUi {
@@ -923,14 +931,41 @@ impl GraphicsUi {
     fn bounds(h: f32) -> (f32, f32) {
         (STYLE.band, h - STYLE.band)
     }
-    fn content_height(level: Level, s: &Settings) -> f32 {
-        extra_rows(level, s).iter().fold(4.0, |height, row| {
-            height
-                + match row {
-                    Row::Header(_) => STYLE.header_height,
-                    Row::Setting(_) => STYLE.row_height,
-                }
-        })
+    /// The setting rows' heights: as measured for `level` when the rows are still the ones
+    /// measured, else one control high each.
+    fn row_heights(&self, level: Level, rows: &[Row]) -> Vec<f32> {
+        let settings = rows
+            .iter()
+            .filter(|row| matches!(row, Row::Setting(_)))
+            .count();
+        match &self.measured {
+            Some((at, heights)) if *at == level && heights.len() == settings => heights.clone(),
+            _ => vec![STYLE.row_height; settings],
+        }
+    }
+    /// Measures each setting row against its description's lines, for the next layouts.
+    fn measure(&mut self, level: Level, s: &Settings, atlas: &HudAtlas, w: f32) {
+        let heights = extra_rows(level, s)
+            .iter()
+            .filter_map(|row| match row {
+                Row::Setting(st) => Some(st),
+                Row::Header(_) => None,
+            })
+            .map(|st| {
+                let text = description(st.item, s, st.text);
+                STYLE.row_height_for(STYLE.description_lines(atlas, w, st.cost, text).len())
+            })
+            .collect();
+        self.measured = Some((level, heights));
+    }
+    fn content_height(&self, level: Level, s: &Settings) -> f32 {
+        let rows = extra_rows(level, s);
+        let headers = rows
+            .iter()
+            .filter(|row| matches!(row, Row::Header(_)))
+            .count();
+        4.0 + headers as f32 * STYLE.header_height
+            + self.row_heights(level, &rows).iter().sum::<f32>()
     }
     /// Widgets and the list's content height, using a bounded offset.
     fn layout(
@@ -940,14 +975,16 @@ impl GraphicsUi {
         w: f32,
         h: f32,
     ) -> (Vec<Widget>, Vec<(f32, &'static str)>, f32) {
-        let content = Self::content_height(level, s);
+        let content = self.content_height(level, s);
         self.clamp_scroll(h, content);
         let (top, _) = Self::bounds(h);
         let x = STYLE.row_x(w);
         let mut y = top + 4.0 - self.scroll.amount;
         let mut widgets = Vec::new();
         let mut headers = Vec::new();
-        for row in extra_rows(level, s) {
+        let rows = extra_rows(level, s);
+        let mut heights = self.row_heights(level, &rows).into_iter();
+        for row in rows {
             match row {
                 Row::Header(name) => {
                     headers.push((y, name));
@@ -961,7 +998,7 @@ impl GraphicsUi {
                         target: Target::Item(s.item),
                         list: true,
                     });
-                    y += STYLE.row_height;
+                    y += heights.next().unwrap_or(STYLE.row_height);
                 }
             }
         }
@@ -1012,6 +1049,7 @@ impl GraphicsUi {
         in_world: bool,
     ) {
         let (w, h) = (batch.width, batch.height);
+        self.measure(level, s, atlas, w);
         let (widgets, headers, content) = self.layout(level, s, w, h);
         let (top, bottom) = Self::bounds(h);
         STYLE.background(batch, atlas, top, bottom, in_world);
@@ -1046,7 +1084,7 @@ impl GraphicsUi {
                     let mut label = item.label(s);
                     if item == Item::Horizon(H::HdrKey) && self.binding.is_some() {
                         // KeyBindsScreen: "> key <" while it waits.
-                        label = Text::literal("Shortcut: > ")
+                        label = Text::literal(format!("{}: > ", lang::get("Shortcut")))
                             .append(crate::keybinds::display_name(&s.horizon.hdr_key))
                             .append(" <");
                     }
@@ -1077,6 +1115,8 @@ impl GraphicsUi {
                             live,
                         ),
                     }
+                    // A long description may reach past the list's bottom: cut there.
+                    let start = batch.vertices.len();
                     STYLE.description(
                         batch,
                         atlas,
@@ -1085,6 +1125,7 @@ impl GraphicsUi {
                         cost,
                         description(item, s, text),
                     );
+                    batch.clip_since(start, 0.0, top, w, bottom);
                 }
                 Target::Button(action) => {
                     let label = match action {
@@ -1217,7 +1258,7 @@ impl GraphicsUi {
         self.dragging.take().is_some()
     }
     pub fn scroll(&mut self, level: Level, s: &Settings, h: f32, amount: f32) {
-        let content = Self::content_height(level, s);
+        let content = self.content_height(level, s);
         let (top, bottom) = Self::bounds(h);
         self.scroll.clamp(top, bottom, content);
         self.scroll.wheel(amount, 18.0, top, bottom, content);
@@ -1590,7 +1631,7 @@ mod tests {
             let mut ui = GraphicsUi::default();
             let h = 2.0 * STYLE.band + 10.0;
             let (top, bottom) = GraphicsUi::bounds(h);
-            let max = GraphicsUi::content_height(level, &s) - (bottom - top);
+            let max = ui.content_height(level, &s) - (bottom - top);
             assert!(max > 4.5);
             for _ in 0..3 {
                 ui.scroll(level, &s, h, 1000.0);
@@ -1636,7 +1677,7 @@ mod tests {
         assert!(moved < start, "dragging down scrolls the list down");
         // Past the bottom of the list: the last row.
         press(&mut ui, &mut s, bottom + 50.0, true);
-        let content = GraphicsUi::content_height(Level::Advanced, &s);
+        let content = ui.content_height(Level::Advanced, &s);
         assert_eq!(first_row(&mut ui), start - (content - (bottom - top)));
         // Above the list: the first row again.
         press(&mut ui, &mut s, top - 50.0, true);
@@ -1645,6 +1686,53 @@ mod tests {
         assert!(!ui.release());
         press(&mut ui, &mut s, bottom + 50.0, true);
         assert_eq!(first_row(&mut ui), start);
+    }
+
+    #[test]
+    fn every_description_gets_the_lines_it_needs_before_the_next_row() {
+        // The test atlas has no glyphs: every character is 6 pixels, so on a phone-sized
+        // screen some descriptions take three lines or more.
+        let atlas =
+            HudAtlas::build(std::path::Path::new("/nonexistent/horizon-test-assets")).unwrap();
+        let s = Settings::default();
+        let w = 427.0;
+        for level in [Level::Simple, Level::Advanced, Level::Hdr] {
+            let mut ui = GraphicsUi::default();
+            ui.measure(level, &s, &atlas, w);
+            let (widgets, _, content) = ui.layout(level, &s, w, 100_000.0);
+            let rows = extra_rows(level, &s);
+            let lines: Vec<usize> = rows
+                .iter()
+                .filter_map(|row| match row {
+                    Row::Setting(st) => Some(
+                        STYLE
+                            .description_lines(
+                                &atlas,
+                                w,
+                                st.cost,
+                                description(st.item, &s, st.text),
+                            )
+                            .len(),
+                    ),
+                    Row::Header(_) => None,
+                })
+                .collect();
+            let tops: Vec<f32> = widgets.iter().filter(|wd| wd.list).map(|wd| wd.y).collect();
+            assert_eq!(tops.len(), lines.len());
+            assert!(
+                lines.iter().any(|&n| n > 2),
+                "{level:?}: no long description"
+            );
+            for (i, n) in lines.iter().enumerate() {
+                // Its lines, 10 apart from one below the control's top, end before the next.
+                let end = tops[i] + 1.0 + *n as f32 * 10.0;
+                let next = tops.get(i + 1).copied().unwrap_or(STYLE.band + content);
+                assert!(
+                    end <= next,
+                    "{level:?}: row {i}'s {n} lines reach {end}, next {next}"
+                );
+            }
+        }
     }
 
     #[test]

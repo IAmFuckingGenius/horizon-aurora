@@ -175,7 +175,31 @@ impl Style {
             dragging && active,
         );
     }
-    /// The cost tag and the description beside a control, wrapped to two lines.
+    /// The lines of the description beside a control on a screen `screen_width` wide: the
+    /// first follows the cost tag, the others start under it. Every word is kept.
+    pub fn description_lines(
+        &self,
+        atlas: &HudAtlas,
+        screen_width: f32,
+        cost: Cost,
+        text: &str,
+    ) -> Vec<String> {
+        let tag = Text::literal(lang::get(cost.label()));
+        let indent = atlas.font.width_text(&tag) + 4.0;
+        wrap(
+            atlas,
+            &lang::get(text),
+            self.text_width(screen_width),
+            indent,
+        )
+    }
+    /// A setting row's height: a control's holds two lines of description, each line more
+    /// adds its own.
+    pub fn row_height_for(&self, lines: usize) -> f32 {
+        self.row_height + lines.saturating_sub(2) as f32 * DESCRIPTION_LINE
+    }
+    /// The cost tag and the description beside a control, wrapped onto as many lines as it
+    /// needs ([`Style::row_height_for`] makes room for them).
     pub fn description(
         &self,
         batch: &mut HudBatch,
@@ -188,21 +212,23 @@ impl Style {
         let tag = Text::literal(lang::get(cost.label()));
         batch.text_styled(atlas, &tag, x, y, self.cost_colors[cost as usize], true);
         let indent = atlas.font.width_text(&tag) + 4.0;
-        let text = lang::get(text);
-        let lines = wrap(atlas, &text, self.text_width(batch.width), indent);
-        for (i, line) in lines.iter().take(2).enumerate() {
+        let lines = self.description_lines(atlas, batch.width, cost, text);
+        for (i, line) in lines.iter().enumerate() {
             let lx = if i == 0 { x + indent } else { x };
             batch.text_styled(
                 atlas,
                 &Text::literal(line.clone()),
                 lx,
-                y + i as f32 * 10.0,
+                y + i as f32 * DESCRIPTION_LINE,
                 self.description_color,
                 true,
             );
         }
     }
 }
+
+/// The distance between a description's lines.
+const DESCRIPTION_LINE: f32 = 10.0;
 
 /// Greedy word wrap; the first line is `indent` narrower.
 fn wrap(atlas: &HudAtlas, text: &str, width: f32, indent: f32) -> Vec<String> {
