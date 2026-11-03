@@ -336,18 +336,25 @@ pub fn centered_text(
     if width <= w {
         batch.text_styled(atlas, &text, centered_left(x, w, width), y, color, true);
     } else {
-        // Clip by characters (vanilla scrolls; we show the part that fits).
-        let mut shown = Text::empty();
-        let mut used = 0.0;
-        for (i, (c, s)) in text.chars().enumerate() {
-            used += atlas.font.advance(c, s);
-            if used > w - 2.0 {
-                break;
-            }
-            shown.push(text.slice(i, i + 1));
-        }
-        batch.text_styled(atlas, &shown, x + 1.0, y, color, true);
+        // ActiveTextCollector.defaultScrollingHelper: the whole text slides from its start
+        // to its end and back (Util.getMillis), cut to the room it has.
+        let offset = scroll_offset(width, w, crate::hud_overlays::now_ms());
+        let start = batch.vertices.len();
+        batch.text_styled(atlas, &text, x - offset, y, color, true);
+        // The widget's box around a label drawn 6 below its top (`textTop`).
+        batch.clip_since(start, x, y - 6.0, x + w, y + 14.0);
     }
+}
+/// How far a label `width` wide, in a box `room` wide, has scrolled left at `millis`:
+/// `defaultScrollingHelper`'s eased back and forth, `max(overflow / 2, 3)` seconds a cycle.
+fn scroll_offset(width: f32, room: f32, millis: i64) -> f32 {
+    let max_position = (width - room).max(0.0).floor() as f64;
+    let time = millis as f64 / 1000.0;
+    let period = (max_position * 0.5).max(3.0);
+    let alpha = (std::f64::consts::FRAC_PI_2 * (std::f64::consts::TAU * time / period).cos()).sin()
+        / 2.0
+        + 0.5;
+    (alpha * max_position) as i32 as f32
 }
 /// Button (AbstractButton): nine-slice sprite plus the centred label.
 pub fn button(
@@ -1391,6 +1398,23 @@ impl EditBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_label_too_wide_for_its_button_scrolls_through_all_of_it() {
+        // ActiveTextCollector.defaultScrollingHelper: 100 pixels too wide, a 50 second cycle
+        // that starts at the end, eases to the start halfway and comes back.
+        assert_eq!(scroll_offset(200.0, 100.0, 0), 100.0);
+        assert_eq!(scroll_offset(200.0, 100.0, 12_500), 50.0);
+        assert_eq!(scroll_offset(200.0, 100.0, 25_000), 0.0);
+        assert_eq!(scroll_offset(200.0, 100.0, 50_000), 100.0);
+        // A short overflow still takes 3 seconds a cycle.
+        assert_eq!(scroll_offset(104.0, 100.0, 1_500), 0.0);
+        // Every shown position stays within the overflow.
+        for ms in (0..60_000).step_by(250) {
+            let at = scroll_offset(200.0, 100.0, ms);
+            assert!((0.0..=100.0).contains(&at), "{at} at {ms} ms");
+        }
+    }
 
     /// The quads' destination rectangles and their UVs.
     fn quads(batch: &HudBatch) -> Vec<([f32; 4], [f32; 4])> {
