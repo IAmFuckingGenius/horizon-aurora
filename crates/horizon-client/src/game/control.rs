@@ -16,6 +16,7 @@ const HELP: &[&str] = &[
     "weather-shader classic|lean    A/B the rain and snow fragment shader (lean is the default)",
     "thermal-test STATUS [HEADROOM]|off  feed Horizon Boost's thermal governor a reading (status 0-6)",
     "boost open|close|tab NAME      Horizon Boost's sheet (tabs: presets quality animations details performance)",
+    "app-background                 what leaving the app does on Android: pause single player and save, waiting for the disk",
     "static-cutout on|off           A/B skipping unused LOD dithering in proven unfaded cutouts",
     "settled-terrain on|off         A/B specialization for fully visible non-RGSS terrain",
     "status                         game, player, streaming and renderer state",
@@ -353,6 +354,10 @@ impl Game<'_> {
                     .ok_or("no renderer")?
                     .set_static_cutout(on)?;
                 ok()
+            }
+            "app-background" => {
+                self.left_app();
+                Ok(Some(json!({ "ok": true, "paused": self.pause })))
             }
             "boost" => {
                 match arg(1)? {

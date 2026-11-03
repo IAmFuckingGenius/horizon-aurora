@@ -60,6 +60,9 @@ struct Flags {
     entity_distance: AtomicU32,
     /// `MinecraftServer.isCurrentlySaving`: the server is autosaving.
     saving: AtomicBool,
+    /// `save_in_background` saved everything just before the pause it came with: the
+    /// pause's own save would write the same again.
+    saved_for_pause: AtomicBool,
     /// Splitscreen players joined through memory (offline uuids): let in although the world is
     /// not open to the LAN, and the game no longer pauses while they play.
     split_players: Mutex<Vec<u128>>,
@@ -194,13 +197,17 @@ impl Integrated {
     /// background without telling it, so leaving the app saves as closing the world does.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub fn save_in_background(&self) {
-        let _ = self.tasks.send(Box::new(|g| {
+        let flags = self.flags.clone();
+        let _ = self.tasks.send(Box::new(move |g| {
             let started = std::time::Instant::now();
             match g.save_game_with(true) {
-                Ok(()) => log::info!(
-                    "Horizon: saved the world for the background in {} ms",
-                    started.elapsed().as_millis()
-                ),
+                Ok(()) => {
+                    flags.saved_for_pause.store(true, Ordering::Relaxed);
+                    log::info!(
+                        "Horizon: saved the world for the background in {} ms",
+                        started.elapsed().as_millis()
+                    )
+                }
                 Err(error) => log::warn!("Horizon: background save failed: {error}"),
             }
         }));
@@ -634,12 +641,17 @@ impl Game<'_> {
                 continue;
             }
             let paused = flags.paused.load(Ordering::Relaxed);
+            // A background save (Android) that came with this pause already wrote
+            // everything and waited for the disk.
+            let saved = flags.saved_for_pause.swap(false, Ordering::Relaxed);
             if paused && !was_paused {
                 // IntegratedServer.tickServer: the tick the game pauses saves
                 // everything (saveEverything, without flushing), as an
                 // autosave does.
                 log::info!("Saving and pausing game...");
-                self.save_game_with(false)?;
+                if !saved {
+                    self.save_game_with(false)?;
+                }
             }
             was_paused = paused;
             if paused {
