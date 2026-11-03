@@ -30,6 +30,72 @@ pub fn open(
     uri: &str,
     fallback: &str,
 ) -> Result<(std::fs::File, String), Box<dyn std::error::Error + Send + Sync>> {
+    open_mode(env, activity, uri, "r", fallback)
+}
+/// Open a document the player just created (ACTION_CREATE_DOCUMENT) for writing,
+/// with the name its provider gave it.
+pub fn open_write(
+    env: &mut JNIEnv<'_>,
+    activity: &JObject<'_>,
+    uri: &str,
+    fallback: &str,
+) -> Result<(std::fs::File, String), Box<dyn std::error::Error + Send + Sync>> {
+    open_mode(env, activity, uri, "w", fallback)
+}
+/// The pending Java exception as text (`java.lang.NullPointerException: …`), cleared.
+pub fn take_exception(env: &mut JNIEnv<'_>) -> Option<String> {
+    let throwable = env.exception_occurred().ok().filter(|t| !t.is_null())?;
+    env.exception_clear().ok()?;
+    let text = env
+        .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])
+        .and_then(|v| v.l());
+    let text = match text {
+        Ok(text) if !text.is_null() => env.get_string((&text).into()).ok().map(String::from),
+        _ => None,
+    };
+    let _ = env.exception_clear();
+    text
+}
+/// Remove a created document again (a cancelled or failed export); best effort.
+pub fn delete(env: &mut JNIEnv<'_>, activity: &JObject<'_>, uri: &str) {
+    use jni::objects::JValue;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<()> {
+        let resolver = env
+            .call_method(
+                activity,
+                "getContentResolver",
+                "()Landroid/content/ContentResolver;",
+                &[],
+            )?
+            .l()?;
+        let text = JObject::from(env.new_string(uri)?);
+        let uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&text)],
+            )?
+            .l()?;
+        env.call_static_method(
+            "android/provider/DocumentsContract",
+            "deleteDocument",
+            "(Landroid/content/ContentResolver;Landroid/net/Uri;)Z",
+            &[JValue::Object(&resolver), JValue::Object(&uri)],
+        )?;
+        Ok(())
+    });
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
+}
+fn open_mode(
+    env: &mut JNIEnv<'_>,
+    activity: &JObject<'_>,
+    uri: &str,
+    mode: &str,
+    fallback: &str,
+) -> Result<(std::fs::File, String), Box<dyn std::error::Error + Send + Sync>> {
     use jni::objects::JValue;
     use std::os::fd::FromRawFd;
     env.with_local_frame(24, |env| {
@@ -50,7 +116,7 @@ pub fn open(
             env.call_method(&cursor, "close", "()V", &[])?;
             result?
         }.unwrap_or_else(|| fallback.into());
-        let mode = JObject::from(env.new_string("r")?);
+        let mode = JObject::from(env.new_string(mode)?);
         let fd = env.call_method(&resolver, "openFileDescriptor", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;", &[JValue::Object(&uri), JValue::Object(&mode)])?.l()?;
         if fd.is_null() { return Err("Document provider returned no file".into()); }
         let raw = env.call_method(&fd, "detachFd", "()I", &[])?.i()?;

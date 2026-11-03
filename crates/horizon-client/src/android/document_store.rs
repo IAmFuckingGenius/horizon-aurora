@@ -62,7 +62,10 @@ struct Document {
     reports: bool,
 }
 fn shareable_report(name: &str) -> bool {
-    (name.starts_with("horizon-diagnostics-") && name.ends_with(".zip")) || name.ends_with(".jsonl")
+    (name.starts_with("horizon-diagnostics-") && name.ends_with(".zip"))
+        || name.ends_with(".jsonl")
+        // The launcher's redacted launch log (diagnostics::launch_log).
+        || (name.starts_with("horizon-launch-log-") && name.ends_with(".txt"))
 }
 fn resolve(home: &Path, id: &str) -> io::Result<Document> {
     let mut parts = id.split('/');
@@ -404,6 +407,12 @@ mod tests {
         assert_eq!(children(&home, "reports").unwrap().len(), 1);
         assert!(open(&home, "reports/report.jsonl", "r").is_ok());
         assert!(open(&home, "reports/report.jsonl", "w").is_err());
+        // The redacted launch log is shareable; other text in Reports stays private.
+        fs::write(home.join("performance/horizon-launch-log-1.txt"), b"log").unwrap();
+        fs::write(home.join("performance/previous-error.txt"), b"raw").unwrap();
+        assert!(open(&home, "reports/horizon-launch-log-1.txt", "r").is_ok());
+        assert!(open(&home, "reports/previous-error.txt", "r").is_err());
+        assert_eq!(children(&home, "reports").unwrap().len(), 2);
         assert!(!is_child(&home, "p0/mods", "p0/packs/pack.zip"));
         assert!(is_child(&home, ROOT, "p0/mods/test.hmod"));
         assert_eq!(

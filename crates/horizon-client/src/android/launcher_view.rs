@@ -46,6 +46,8 @@ pub(super) struct ViewState {
     pub free: Option<(Instant, u64)>,
     /// The orientation the screen mode was last set for.
     pub landscape: Option<bool>,
+    /// A failed world or report transfer: its title and reason, until dismissed.
+    pub transfer_error: Option<(String, String)>,
 }
 impl Default for ViewState {
     fn default() -> Self {
@@ -62,6 +64,7 @@ impl Default for ViewState {
             install_rate: None,
             free: None,
             landscape: None,
+            transfer_error: None,
         }
     }
 }
@@ -308,9 +311,9 @@ impl Launcher {
         };
         let max = (mw - 32.0).min(520.0);
         let text_w = max - 16.0 - 24.0 - 12.0 - 16.0;
-        // Long titles wrap instead of ending in an ellipsis mid-sentence.
-        let title = k.wrap_max(Face::BodyBold, 14.0, &toast.title, text_w, 3);
-        let detail = k.wrap_max(Face::BodyMedium, 12.0, &toast.detail, text_w, 3);
+        // Titles and details wrap in full instead of ending in an ellipsis.
+        let title = k.wrap_max(Face::BodyBold, 14.0, &toast.title, text_w, usize::MAX);
+        let detail = k.wrap_max(Face::BodyMedium, 12.0, &toast.detail, text_w, usize::MAX);
         let content = title
             .iter()
             .map(|l| k.measure(Face::BodyBold, 14.0, l))
@@ -1692,15 +1695,8 @@ impl Launcher {
         let x0 = mx + 16.0;
         let w0 = mw - 32.0;
         let top = my + if portrait { 16.0 } else { 12.0 };
-        k.text(
-            Face::Pixel,
-            32.0,
-            32.0,
-            x0,
-            top,
-            col::INK,
-            t("Worlds & files"),
-        );
+        let heading = t("Worlds & files");
+        k.text(Face::Pixel, 32.0, 32.0, x0, top, col::INK, heading);
         let total: u64 = self.view.worlds.iter().map(|w| w.size).sum();
         let mut subtitle = format!(
             "{} · {}",
@@ -1713,41 +1709,79 @@ impl Launcher {
         if let Some(free) = self.free_space() {
             subtitle.push_str(&format!(" · {}", tf("{} free", &[&size(free)])));
         }
+        // Import and Open in Files: beside the title when there is room, else
+        // under it, side by side when both labels fit, one per row when not.
+        let (import, files) = (t("Import world"), t("Open in Files"));
+        let import_w = k.button_width(Style::Secondary, Some(Icon::Pixel("plus")), import);
+        let files_w = k.button_width(Style::Secondary, Some(Icon::Pixel("folder")), files);
+        let heading_w =
+            k.measure(Face::Pixel, 32.0, heading)
+                .max(k.measure(Face::Mono, 12.0, &subtitle));
+        let beside = !portrait && heading_w + 24.0 + import_w + 8.0 + files_w <= w0;
+        let half = (w0 - 8.0) / 2.0;
+        let buttons = if beside {
+            [
+                [x0 + w0 - files_w - 8.0 - import_w, top, import_w, 48.0],
+                [x0 + w0 - files_w, top, files_w, 48.0],
+            ]
+        } else if half >= import_w.max(files_w) {
+            [
+                [x0, top + 60.0, half, 48.0],
+                [x0 + half + 8.0, top + 60.0, half, 48.0],
+            ]
+        } else {
+            [[x0, top + 60.0, w0, 48.0], [x0, top + 116.0, w0, 48.0]]
+        };
         k.text_fit(
             Face::Mono,
             12.0,
             16.0,
             x0,
             top + 32.0,
-            w0,
+            if beside {
+                buttons[0][0] - 16.0 - x0
+            } else {
+                w0
+            },
             col::INK_SOFT,
             &subtitle,
         );
-        let files_w = k.button_width(
-            Style::Secondary,
-            Some(Icon::Pixel("folder")),
-            t("Open in Files"),
-        );
-        let (bx, by) = if portrait {
-            (x0, top + 60.0)
-        } else {
-            (x0 + w0 - files_w, top)
-        };
         k.button(
-            [bx, by, if portrait { w0 } else { files_w }, 48.0],
+            buttons[0],
+            Style::Secondary,
+            Some(Icon::Pixel("plus")),
+            import,
+            Some(Action::ImportWorld),
+        );
+        k.button(
+            buttons[1],
             Style::Secondary,
             Some(Icon::Pixel("folder")),
-            t("Open in Files"),
+            files,
             Some(Action::WorldFiles),
         );
-        let list_top = if portrait { top + 120.0 } else { my + 92.0 };
+        let list_top = if beside {
+            my + 92.0
+        } else {
+            buttons[1][1] + 48.0 + 12.0
+        };
         let panel = [x0, list_top, w0, my + mh - 16.0 - list_top];
         k.panel(panel, false);
         let (lx, ly, lw, lh) = (x0 + 6.0, list_top + 6.0, w0 - 12.0, panel[3] - 12.0);
         if self.view.worlds.is_empty() {
             let title = t("No worlds yet");
             let tw = k.measure(Face::BodyBold, 18.0, title);
-            let cy = ly + lh / 2.0 - 40.0;
+            let body = t(
+                "Press Play, then Singleplayer, to create one, or bring one in with Import world. Copied world folders appear here too.",
+            );
+            // The whole text, never cut: the block centres on its own height.
+            let lines: Vec<String> = k
+                .wrap(Face::BodyMedium, 14.0, body, lw.min(420.0))
+                .into_iter()
+                .filter(|l| !l.is_empty())
+                .collect();
+            let block = 56.0 + 30.0 + lines.len() as f32 * 20.3;
+            let cy = (ly + (lh - block) / 2.0).max(ly) + 56.0;
             k.ui.icon(
                 "folder",
                 lx + (lw - 48.0) / 2.0,
@@ -1764,14 +1798,7 @@ impl Launcher {
                 col::INK,
                 title,
             );
-            let body = t(
-                "Press Play, then Singleplayer, to create one. Copied world folders appear here too.",
-            );
-            for (i, line) in k
-                .wrap_max(Face::BodyMedium, 14.0, body, lw.min(420.0), 2)
-                .iter()
-                .enumerate()
-            {
+            for (i, line) in lines.iter().enumerate() {
                 let w = k.measure(Face::BodyMedium, 14.0, line);
                 k.text(
                     Face::BodyMedium,
@@ -1785,56 +1812,97 @@ impl Launcher {
             }
             return;
         }
-        let scroll = self.list_scroll(ly, ly + lh, self.view.worlds.len() as f32 * 64.0);
-        let play_w = k.button_width(Style::Secondary, Some(Icon::Pixel("play")), t("Play"));
-        let compact = lw < 420.0;
-        let play_w = if compact { 48.0 } else { play_w };
+        // The widest arrangement that still leaves a name 180 dp: labelled
+        // buttons and a size column, then Export as an icon, then Play too,
+        // then the size moves into the details.
+        let play_label = k.button_width(Style::Secondary, Some(Icon::Pixel("play")), t("Play"));
+        let export_label =
+            k.button_width(Style::Secondary, Some(Icon::Pixel("archive")), t("Export"));
+        let fits = |play: f32, export: f32, size_col: f32| {
+            lw - 88.0 - 12.0 - play - 8.0 - export - size_col - 12.0
+        };
+        let (play_w, export_w, size_w) = [
+            (play_label, export_label, 72.0),
+            (play_label, 48.0, 72.0),
+            (48.0, 48.0, 72.0),
+            (48.0, 48.0, 0.0),
+        ]
+        .into_iter()
+        .find(|&(p, e, s)| fits(p, e, s) >= 180.0)
+        .unwrap_or((48.0, 48.0, 0.0));
+        let compact = size_w == 0.0;
+        let text_w = fits(play_w, export_w, size_w).max(40.0);
+        // Names and details wrap in full; the row grows with them.
+        let layout: Vec<(Vec<String>, Vec<String>, f32)> = self
+            .view
+            .worlds
+            .iter()
+            .map(|world| {
+                let (mode, when_text) =
+                    (mode_name(world.mode, world.hardcore), when(world.modified));
+                let mut detail = if compact {
+                    format!("{mode} · {when_text} · {}", size(world.size))
+                } else {
+                    format!("{mode} · {when_text}")
+                };
+                // Two worlds may share a name (an import beside the original):
+                // their folders tell them apart.
+                if world.folder != world.name {
+                    detail = format!("{} · {detail}", world.folder);
+                }
+                let wrap = |face, size, text: &str| -> Vec<String> {
+                    k.wrap(face, size, text, text_w)
+                        .into_iter()
+                        .filter(|l| !l.is_empty())
+                        .collect()
+                };
+                let name = wrap(Face::BodySemiBold, 15.0, &world.name);
+                let lines = wrap(Face::Body, 12.0, &detail);
+                let text = name.len().max(1) as f32 * 18.0 + 2.0 + lines.len() as f32 * 14.0;
+                (name, lines, (text + 28.0).max(64.0))
+            })
+            .collect();
+        let content: f32 = layout.iter().map(|(_, _, h)| h).sum();
+        let scroll = self.list_scroll(ly, ly + lh, content);
         let clip = k.mark();
-        for i in 0..self.view.worlds.len() {
-            let ry = ly + i as f32 * 64.0 - scroll;
-            self.list_targets.push((
-                [lx + lw - 12.0 - play_w, ry + 8.0, play_w, 48.0],
-                Action::OpenWorld(i),
-            ));
-            if ry + 64.0 <= ly || ry >= ly + lh {
+        let mut ry = ly - scroll;
+        for (i, (name_lines, lines, rh)) in layout.into_iter().enumerate() {
+            let by = ry + (rh - 48.0) / 2.0;
+            let play_x = lx + lw - 12.0 - play_w;
+            let export_x = play_x - 8.0 - export_w;
+            self.list_targets
+                .push(([export_x, by, export_w, 48.0], Action::ExportWorld(i)));
+            self.list_targets
+                .push(([play_x, by, play_w, 48.0], Action::OpenWorld(i)));
+            if ry + rh <= ly || ry >= ly + lh {
+                ry += rh;
                 continue;
             }
             divider(k, i + 1, [lx, ry, lw]);
             let world = &self.view.worlds[i];
-            let (name, mode, when_text, bytes) = (
-                world.name.clone(),
-                mode_name(world.mode, world.hardcore),
-                when(world.modified),
-                world.size,
-            );
-            thumb(k, lx + 12.0, ry + 14.0, &name);
-            let size_w = if compact { 0.0 } else { 72.0 };
-            let text_w = lw - 88.0 - 12.0 - play_w - size_w - 12.0;
-            k.text_fit(
-                Face::BodySemiBold,
-                15.0,
-                18.0,
-                lx + 88.0,
-                ry + 14.0,
-                text_w,
-                col::INK,
-                &name,
-            );
-            let detail = if compact {
-                format!("{mode} · {when_text} · {}", size(bytes))
-            } else {
-                format!("{mode} · {when_text}")
-            };
-            k.text_fit(
-                Face::Body,
-                12.0,
-                14.0,
-                lx + 88.0,
-                ry + 34.0,
-                text_w,
-                col::MUTED,
-                &detail,
-            );
+            let (name, bytes) = (world.name.clone(), world.size);
+            thumb(k, lx + 12.0, ry + (rh - 36.0) / 2.0, &name);
+            let text_h = name_lines.len().max(1) as f32 * 18.0 + 2.0 + lines.len() as f32 * 14.0;
+            let mut ty = ry + (rh - text_h) / 2.0;
+            for line in &name_lines {
+                // Only a single word wider than the column is cut.
+                k.text_fit(
+                    Face::BodySemiBold,
+                    15.0,
+                    18.0,
+                    lx + 88.0,
+                    ty,
+                    text_w,
+                    col::INK,
+                    line,
+                );
+                ty += 18.0;
+            }
+            ty += 2.0;
+            for line in &lines {
+                k.text(Face::Body, 12.0, 14.0, lx + 88.0, ty, col::MUTED, line);
+                ty += 14.0;
+            }
             if !compact {
                 let s = size(bytes);
                 let sw = k.measure(Face::Mono, 12.0, &s);
@@ -1842,19 +1910,27 @@ impl Launcher {
                     Face::Mono,
                     12.0,
                     16.0,
-                    lx + lw - 12.0 - play_w - 12.0 - sw,
-                    ry + 24.0,
+                    export_x - 12.0 - sw,
+                    ry + (rh - 16.0) / 2.0,
                     col::INK_SOFT,
                     &s,
                 );
             }
             k.button(
-                [lx + lw - 12.0 - play_w, ry + 8.0, play_w, 48.0],
+                [export_x, by, export_w, 48.0],
+                Style::Secondary,
+                Some(Icon::Pixel("archive")),
+                if export_w > 48.0 { t("Export") } else { "" },
+                Some(Action::ExportWorld(i)),
+            );
+            k.button(
+                [play_x, by, play_w, 48.0],
                 Style::Secondary,
                 Some(Icon::Pixel("play")),
-                if compact { "" } else { t("Play") },
+                if play_w > 48.0 { t("Play") } else { "" },
                 Some(Action::OpenWorld(i)),
             );
+            ry += rh;
         }
         k.clip(clip, [lx, ly, lw, lh]);
     }
@@ -2331,8 +2407,15 @@ impl Launcher {
                 vec![
                     Row::new(
                         t("Launch log"),
-                        t("Shows the errors from the last game launches."),
-                        Control::Button(Style::Secondary, "terminal", t("Open"), Action::Logs),
+                        t(
+                            "The errors and logs of the last game launches. Read the summary, save it as a text file or share it.",
+                        ),
+                        Control::Button(
+                            Style::Secondary,
+                            "terminal",
+                            t("Open"),
+                            Action::ReportMenu(crate::transfers::Report::LaunchLog),
+                        ),
                     ),
                     Row::new(
                         t("Report for developers"),
@@ -2341,7 +2424,7 @@ impl Launcher {
                             Style::Secondary,
                             "archive",
                             t("Export"),
-                            Action::ExportDiagnostics,
+                            Action::ReportMenu(crate::transfers::Report::Diagnostics),
                         ),
                     ),
                     Row::new(
@@ -2367,7 +2450,7 @@ impl Launcher {
                             Style::Secondary,
                             "download",
                             t("Export"),
-                            Action::ExportPerformance,
+                            Action::ReportMenu(crate::transfers::Report::Performance),
                         ),
                     ),
                     Row::new(
@@ -2449,6 +2532,197 @@ impl Launcher {
             t("Stay"),
             Some(Action::Dismiss),
         );
+    }
+}
+
+impl Launcher {
+    /// A world or report transfer over everything: its progress and Cancel, or
+    /// why it failed and OK. Every text wraps in full; the dialog grows.
+    pub(super) fn draw_transfer(&mut self, k: &mut Kit) {
+        use crate::transfers::{Job, Stage};
+        let running = crate::transfers::running();
+        let (title, body, error) = match (&running, &self.view.transfer_error) {
+            (Some(r), _) => (
+                match r.job {
+                    Job::ExportWorld => t("Exporting the world"),
+                    Job::ImportWorld => t("Importing a world"),
+                    Job::SaveFile => t("Saving the file"),
+                }
+                .to_owned(),
+                r.name.clone(),
+                false,
+            ),
+            (None, Some((title, detail))) => (title.clone(), detail.clone(), true),
+            (None, None) => return,
+        };
+        let (w, h) = (k.ui.w, k.ui.h);
+        kit::fill(k.ui, 0.0, 0.0, w, h, col::SCRIM);
+        let dw = (w - 32.0).min(440.0);
+        let inner = dw - 32.0;
+        let title_x = if error { 16.0 + 32.0 } else { 16.0 };
+        let title_lines = k.wrap_max(
+            Face::BodyBold,
+            20.0,
+            &title,
+            dw - title_x - 16.0,
+            usize::MAX,
+        );
+        let (body_face, body_size, body_line) = if error {
+            (Face::BodyMedium, 14.0, 20.3)
+        } else {
+            (Face::BodySemiBold, 15.0, 18.0)
+        };
+        let body_lines = k.wrap_max(body_face, body_size, &body, inner, usize::MAX);
+        // The progress block: stage and percent, the bar, sizes and files.
+        let mut fraction = 0.0;
+        let mut pct = String::new();
+        let mut stage_lines = Vec::new();
+        let mut number_lines = Vec::new();
+        if let Some(r) = &running {
+            let stage = match (r.cancelling, r.stage, r.job) {
+                (true, ..) => t("Stopping and cleaning up"),
+                (_, Stage::Receiving, _) => t("Copying the ZIP into Horizon"),
+                (_, Stage::Checking, _) => t("Checking the ZIP"),
+                (_, Stage::Writing, Job::ExportWorld) => t("Packing the world into a ZIP"),
+                (_, Stage::Writing, Job::ImportWorld) => t("Unpacking the world"),
+                (_, Stage::Writing, Job::SaveFile) => t("Writing the file"),
+            };
+            let p = r.progress;
+            if p.total_bytes > 0 {
+                fraction = (p.bytes as f32 / p.total_bytes as f32).clamp(0.0, 1.0);
+                pct = format!("{}%", (fraction * 100.0).floor() as u32);
+            }
+            let pw = k.measure(Face::Mono, 13.0, &pct);
+            stage_lines = k.wrap_max(Face::BodyMedium, 13.0, stage, inner - pw - 8.0, usize::MAX);
+            let mut numbers = if p.total_bytes > 0 {
+                format!("{} / {}", size(p.bytes), size(p.total_bytes))
+            } else if p.bytes > 0 {
+                size(p.bytes)
+            } else {
+                String::new()
+            };
+            if p.total_files > 0 {
+                numbers.push_str(&format!(
+                    " · {}",
+                    tf(
+                        "{} of {} files",
+                        &[&p.files.to_string(), &p.total_files.to_string()]
+                    )
+                ));
+            }
+            number_lines = k.wrap_max(Face::Mono, 12.0, &numbers, inner, usize::MAX);
+        }
+        let progress_h = if running.is_some() {
+            8.0 + stage_lines.len().max(1) as f32 * 18.0
+                + 8.0
+                + 12.0
+                + 8.0
+                + number_lines.len() as f32 * 16.0
+        } else {
+            0.0
+        };
+        let dh = (14.0
+            + title_lines.len() as f32 * 24.0
+            + 8.0
+            + body_lines.len() as f32 * body_line
+            + progress_h
+            + 16.0
+            + 48.0
+            + 14.0)
+            .min(h - 24.0);
+        let (x, y) = ((w - dw) / 2.0, ((h - dh) / 2.0).max(12.0));
+        k.panel([x, y, dw, dh], false);
+        let mut cy = y + 14.0;
+        if error {
+            kit::icon(
+                k.ui,
+                Icon::Sprite(kit::ALERT),
+                x + 16.0,
+                cy,
+                24.0,
+                col::DANGER,
+            );
+        }
+        for line in &title_lines {
+            k.text(Face::BodyBold, 20.0, 24.0, x + title_x, cy, col::INK, line);
+            cy += 24.0;
+        }
+        cy += 8.0;
+        for line in &body_lines {
+            k.text(
+                body_face,
+                body_size,
+                body_line,
+                x + 16.0,
+                cy,
+                if error { col::INK_SOFT } else { col::INK },
+                line,
+            );
+            cy += body_line;
+        }
+        let by = y + dh - 14.0 - 48.0;
+        let Some(r) = running else {
+            let ok_w = k.button_width(Style::Secondary, None, t("OK"));
+            k.button(
+                [x + dw - 16.0 - ok_w, by, ok_w, 48.0],
+                Style::Secondary,
+                None,
+                t("OK"),
+                Some(Action::DismissTransfer),
+            );
+            return;
+        };
+        cy += 8.0;
+        let pw = k.measure(Face::Mono, 13.0, &pct);
+        k.text(
+            Face::Mono,
+            13.0,
+            18.0,
+            x + dw - 16.0 - pw,
+            cy,
+            col::ACCENT_HI,
+            &pct,
+        );
+        for line in &stage_lines {
+            k.text(Face::BodyMedium, 13.0, 18.0, x + 16.0, cy, col::MUTED, line);
+            cy += 18.0;
+        }
+        cy += 8.0;
+        // The install page's segmented bar.
+        kit::fill(k.ui, x + 16.0, cy, inner, 12.0, col::RULE);
+        let fw = inner * fraction;
+        kit::fill(k.ui, x + 16.0, cy, fw, 2.0, col::ACCENT_HI);
+        kit::fill(k.ui, x + 16.0, cy + 2.0, fw, 10.0, col::ACCENT);
+        let mut gap = 10.0;
+        while gap < inner {
+            kit::fill(k.ui, x + 16.0 + gap, cy, 2.0, 12.0, col::PLATE);
+            gap += 12.0;
+        }
+        cy += 12.0 + 8.0;
+        for line in &number_lines {
+            k.text(Face::Mono, 12.0, 16.0, x + 16.0, cy, col::INK_SOFT, line);
+            cy += 16.0;
+        }
+        let label = t("Cancel");
+        let cancel_w = k.button_width(Style::Secondary, Some(Icon::Pixel("close")), label);
+        let rect = [x + dw - 16.0 - cancel_w, by, cancel_w, 48.0];
+        if r.cancelling {
+            k.button(
+                rect,
+                Style::Disabled,
+                Some(Icon::Pixel("close")),
+                label,
+                None,
+            );
+        } else {
+            k.button(
+                rect,
+                Style::Secondary,
+                Some(Icon::Pixel("close")),
+                label,
+                Some(Action::CancelTransfer),
+            );
+        }
     }
 }
 

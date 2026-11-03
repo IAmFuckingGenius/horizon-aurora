@@ -297,23 +297,30 @@ pub fn cache_dir() -> Option<std::path::PathBuf> {
 pub fn open_repository() -> bool {
     open_url("https://github.com/Vasysik/horizon-android")
 }
+/// The `content://` URI of a document of our own provider (`document_store` IDs).
+pub(crate) fn document_uri<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'_>,
+    id: &str,
+) -> jni::errors::Result<JObject<'a>> {
+    let package = env
+        .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?
+        .l()?;
+    let package: String = env.get_string((&package).into())?.into();
+    let authority = JObject::from(env.new_string(format!("{package}.documents"))?);
+    let document = JObject::from(env.new_string(id)?);
+    env.call_static_method(
+        "android/provider/DocumentsContract",
+        "buildDocumentUri",
+        "(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;",
+        &[JValue::Object(&authority), JValue::Object(&document)],
+    )?
+    .l()
+}
 /// Browse our SAF directory through the system file manager, never a private path.
 pub fn open_documents(id: &str) -> bool {
     with_context(|env, activity| {
-        let package = env
-            .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?
-            .l()?;
-        let package: String = env.get_string((&package).into())?.into();
-        let authority = JObject::from(env.new_string(format!("{package}.documents"))?);
-        let document = JObject::from(env.new_string(id)?);
-        let uri = env
-            .call_static_method(
-                "android/provider/DocumentsContract",
-                "buildDocumentUri",
-                "(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;",
-                &[JValue::Object(&authority), JValue::Object(&document)],
-            )?
-            .l()?;
+        let uri = document_uri(env, activity, id)?;
         let action = JObject::from(env.new_string("android.intent.action.VIEW")?);
         let intent = env.new_object(
             "android/content/Intent",

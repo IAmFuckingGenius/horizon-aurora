@@ -6,9 +6,10 @@ On an APK containing the 0.7.6 diagnostic changes:
 
 1. Reproduce the problem. If Android closes the app, open Horizon again and wait
    a few seconds so its background system-exit collector can finish.
-2. Open launcher Settings > **Diagnostic report** > **Export ZIP**.
-3. The system Files app opens **Horizon Android / Reports**. Copy/share the newest
-   `horizon-diagnostics-*.zip`. Review it before attaching it to an issue.
+2. Open launcher Settings > Diagnostics & about > **Report for developers** >
+   **Export**, then choose **Save to a folder** (the system file picker),
+   **Share** (Android's share sheet) or **Open in Files** (**Horizon Android /
+   Reports**, as before). Review the ZIP before attaching it to an issue.
 4. Include the exact APK version/source commit, device, renderer, resolution,
    and what you did immediately before the failure. State whether you returned
    to the Horizon launcher or the Android home screen.
@@ -16,8 +17,10 @@ On an APK containing the 0.7.6 diagnostic changes:
 Performance recording is not required. If it was enabled, its retained report
 can also contribute a bounded tail to the ZIP. Nothing is uploaded automatically.
 
-The **Diagnostics** button shows the last handled error and whether the previous
-process lacked a clean finish marker. A process killed by Android or force-stopped
+**Launch log > Open** shows the last handled error and whether the previous
+process lacked a clean finish marker, and saves or shares the same redacted logs
+as one `horizon-launch-log-*.txt` (the newest three are kept in Reports).
+**Raw performance data > Export** saves or shares the newest JSONL recording. A process killed by Android or force-stopped
 by the user also lacks that marker; it is not automatically labelled a crash.
 
 ## Contents and limits
@@ -41,8 +44,8 @@ by the user also lacks that marker; it is not automatically labelled a crash.
   and Build IDs. Unknown/malformed/truncated traces may have no usable frames.
 
 Raw system traces remain in private app storage, bounded to 1 MiB each / eight files.
-The Files provider exposes exported diagnostic ZIPs and standalone performance
-JSONL files only; session snapshots, raw logs and OS traces cannot be opened through it.
+The Files provider exposes exported diagnostic ZIPs, standalone performance
+JSONL files and launch-log text files only; session snapshots, raw logs and OS traces cannot be opened through it.
 They may contain private memory/path information. The ZIP excludes their raw
 memory/register dumps and instead includes a readable crashed-thread summary
 when decoding succeeds. ANR/plain-text traces get best-effort text redaction.
