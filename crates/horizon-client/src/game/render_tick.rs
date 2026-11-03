@@ -139,6 +139,13 @@ impl Game<'_> {
         let mut fog = horizon_client::fog::setup_fog(tables, &self.fog, &input);
         if !self.settings.horizon.fog {
             horizon_client::fog::clear_distance_fog(&mut fog, &input);
+        } else if let Some(start) = self
+            .settings
+            .horizon
+            .boost
+            .fog_start_at(fog.render_distance_end)
+        {
+            horizon_client::fog::move_distance_fog_start(&mut fog, &input, start);
         }
         fog
     }
@@ -438,6 +445,8 @@ impl Game<'_> {
                 let count = (0.225 * (diameter * diameter) as f32 * rain * rain) as i32
                     / if self.settings.particles == 1 { 2 } else { 1 };
                 let mut rain_position = None;
+                let splashes = self.settings.horizon.boost.rain_splashes;
+                let mut spawned_tries = 0u32;
                 for _ in 0..count {
                     let x = block[0] + random.next_int_bound(diameter).unwrap_or(0) - radius;
                     let z = block[2] + random.next_int_bound(diameter).unwrap_or(0) - radius;
@@ -455,6 +464,13 @@ impl Game<'_> {
                         break;
                     }
                     let (bx, bz) = (random.next_double(), random.next_double());
+                    // Horizon Boost's splash share: every one by default; with fewer, the
+                    // rain still finds its spots (and its sound) as before.
+                    if splashes < 100 && (splashes == 0 || spawned_tries % 2 == 1) {
+                        spawned_tries += 1;
+                        continue;
+                    }
+                    spawned_tries += 1;
                     let state = world.block(x, below, z);
                     let f = facts.get(state);
                     let block_top = match self.collision.cached_shapes().cached_shape(state) {

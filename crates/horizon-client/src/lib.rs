@@ -21,6 +21,8 @@ pub use horizon_client_render::{
     sprites, streaming, structure_block, tab_list, telemetry, test_block, test_instance_block,
     testgen, title_edition, trims, ui, vault, weather, widgets, world, worldborder, zip,
 };
+// Horizon Boost's settings and thermal governor, and its screen.
+pub use horizon_client_render::boost;
 pub mod attack_strength;
 pub mod attribute_updates;
 pub mod auto_jump;
@@ -30,6 +32,7 @@ pub mod benchmark;
 pub mod block_entity_item;
 pub mod block_pattern;
 pub mod block_transform;
+pub mod boost_ui;
 pub mod boss_overlay;
 pub mod cauldron;
 pub mod chunk_io;

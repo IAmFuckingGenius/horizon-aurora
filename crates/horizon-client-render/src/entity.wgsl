@@ -500,6 +500,47 @@ struct WeatherTime { values: vec4<f32> }
 @fragment fn fs_weather(in: Out) -> @location(0) vec4<f32> {
     return weather_color(in);
 }
+// The classic pass's weather with only the inputs its fragments read. About 97% of
+// rain.png's texels are transparent, so nearly every covered pixel only finds its
+// texel and discards: the sprite's texel rectangle is rounded once per vertex (as
+// weather_texel rounds it), not once per pixel. The same pixels as fs_weather.
+struct WeatherOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) light_color: vec4<f32>,
+    // The spherical and cylindrical fog distances entity_vertex computes.
+    @location(3) fog: vec2<f32>,
+    // The sprite's texel origin (xy) and extent (zw) in the atlas.
+    @location(4) @interpolate(flat) texels: vec4<i32>,
+}
+@vertex fn vs_weather_lean(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>,
+    @location(2) rect: vec4<f32>, @location(3) animation: vec4<f32>,
+    @location(4) bases: vec4<u32>, @location(5) color: vec4<f32>,
+    @location(6) light: vec4<u32>, @location(7) snow: u32) -> WeatherOut {
+    let phase = weather_phase(animation, bases, snow, weather_time.values);
+    let v = entity_vertex(position, uv + phase, 0u, color, light, vec4(0.0));
+    var out: WeatherOut;
+    out.clip = v.clip;
+    out.uv = v.uv;
+    out.color = v.color;
+    out.light_color = v.light_color;
+    out.fog = vec2(v.spherical, v.cylindrical);
+    let size = vec2<f32>(textureDimensions(atlas));
+    out.texels = vec4(vec2<i32>(round(rect.xy * size)),
+        max(vec2<i32>(round(rect.zw * size)), vec2(1)));
+    return out;
+}
+@fragment fn fs_weather_lean(in: WeatherOut) -> @location(0) vec4<f32> {
+    let extent = in.texels.zw;
+    let local = min(vec2<i32>(floor(fract(in.uv) * vec2<f32>(extent))), extent - vec2(1));
+    var color = textureLoad(atlas, in.texels.xy + local, 0) * in.color;
+    if color.a < 0.1 { discard; }
+    color *= in.light_color;
+    let f = max(linear_fog(in.fog.x, globals.fog.x, globals.fog.y),
+                linear_fog(in.fog.y, globals.fog.z, globals.fog.w));
+    return vec4(mix(color.rgb, globals.fog_color.rgb, f * globals.fog_color.a), color.a);
+}
 fn weather_color(in: Out) -> vec4<f32> {
     // Repeat within this sprite, never across the atlas. The atlas uses nearest
     // filtering and no mipmaps, so fractional UVs have no seam derivatives.

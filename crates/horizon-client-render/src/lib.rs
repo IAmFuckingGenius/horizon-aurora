@@ -13,6 +13,7 @@ pub mod biome;
 pub mod block_entities;
 pub mod block_entity_anim;
 pub mod block_entity_render;
+pub mod boost;
 pub mod border_render;
 pub mod breaking;
 pub mod brewing;

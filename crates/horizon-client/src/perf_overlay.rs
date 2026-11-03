@@ -13,6 +13,8 @@ const HISTORY: usize = 160;
 pub struct FrameGraph {
     /// Frame, CPU and GPU milliseconds of recent frames, oldest first.
     frames: VecDeque<(f32, f32, f32)>,
+    /// A last line under the times (Horizon Boost's thermal state), when there is one.
+    pub note: Option<String>,
 }
 impl FrameGraph {
     pub fn record(&mut self, frame_ms: f32, cpu_ms: f32, gpu_ms: Option<f32>) {
@@ -22,6 +24,14 @@ impl FrameGraph {
         }
         self.frames.push_back((frame_ms, cpu_ms, gpu));
     }
+    /// The average frame and GPU milliseconds of recent frames.
+    pub fn averages(&self) -> Option<(f32, f32)> {
+        let n = self.frames.len() as f32;
+        (n > 0.0).then(|| {
+            let sum = |f: fn(&(f32, f32, f32)) -> f32| self.frames.iter().map(f).sum::<f32>();
+            (sum(|f| f.0) / n, sum(|f| f.2) / n)
+        })
+    }
     pub fn draw(&self, mode: Overlay, batch: &mut HudBatch, atlas: &HudAtlas) {
         if mode == Overlay::Off || self.frames.is_empty() {
             return;
@@ -30,11 +40,12 @@ impl FrameGraph {
         let avg = |f: fn(&(f32, f32, f32)) -> f32| self.frames.iter().map(f).sum::<f32>() / n;
         let (frame, cpu, gpu) = (avg(|f| f.0), avg(|f| f.1), avg(|f| f.2));
         let worst = self.frames.iter().map(|f| f.0).fold(0.0f32, f32::max);
-        let lines = [
+        let mut lines = vec![
             format!("{:.0} fps", 1000.0 / frame.max(0.001)),
             format!("frame {frame:.1} ms  max {worst:.1}"),
             format!("cpu {cpu:.1}  gpu {gpu:.1} ms"),
         ];
+        lines.extend(self.note.clone());
         let width = 120.0f32.max(
             lines
                 .iter()

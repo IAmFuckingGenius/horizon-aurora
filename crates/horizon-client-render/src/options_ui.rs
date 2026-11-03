@@ -1510,6 +1510,8 @@ enum Act {
     CopyAgentDetails,
     #[cfg(target_os = "android")]
     TouchControls,
+    /// Video Settings' Horizon Boost button (in a world).
+    HorizonBoost,
 }
 enum WKind {
     Button {
@@ -1642,6 +1644,8 @@ pub enum Event {
     CopyAgentDetails,
     #[cfg(target_os = "android")]
     TouchControls,
+    /// Open Horizon Boost's sheet over the options.
+    HorizonBoost,
     /// The narrator option changed (after its `Changed`): the option's
     /// `onValueUpdate`, `GameNarrator.updateNarratorStatus`.
     Narrator,
@@ -2617,6 +2621,13 @@ impl OptionsUi {
                         Act::Push(Page::GraphicsAdvanced),
                     )),
                 )];
+                // Horizon Boost: speed, quality and heat in one sheet, over a world.
+                if self.in_world {
+                    rows.push(Row::Buttons(
+                        button(0.0, 0.0, 310.0, tr("horizon.boost.open"), Act::HorizonBoost),
+                        None,
+                    ));
+                }
                 rows.push(Row::Header("options.video.display.header"));
                 rows.push(Row::Big(Opt::ExclusiveMode));
                 rows.extend(pairs(&[
@@ -4388,6 +4399,7 @@ impl OptionsUi {
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         #[cfg(target_os = "android")]
                         Act::TouchControls => events.push(Event::TouchControls),
+                        Act::HorizonBoost => events.push(Event::HorizonBoost),
                         Act::None => {}
                     }
                 }
@@ -5338,6 +5350,7 @@ impl OptionsUi {
                         }
                         #[cfg(target_os = "android")]
                         Act::TouchControls => events.push(Event::TouchControls),
+                        Act::HorizonBoost => events.push(Event::HorizonBoost),
                         Act::Credits => events.push(Event::Credits),
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         Act::None => {}

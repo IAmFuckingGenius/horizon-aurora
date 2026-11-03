@@ -399,6 +399,18 @@ pub fn clear_distance_fog(fog: &mut FogData, input: &FogInputs) {
         (fog.environmental_start, fog.environmental_end) = (1e9, 2e9);
     }
 }
+/// Horizon Boost's fog start: the fog at the edge of the render distance begins at
+/// `start` blocks instead of vanilla's last tenth, where only that fog applies (as
+/// [`clear_distance_fog`]); fluid, darkness and boss fog keep their own.
+pub fn move_distance_fog_start(fog: &mut FogData, input: &FogInputs, start: f32) {
+    if input.fog_type == FogType::Atmospheric
+        && input.darkness.is_none()
+        && !input.boss_world_fog
+        && input.blindness.is_none()
+    {
+        fog.render_distance_start = start.min(fog.render_distance_end - 1.0).max(0.0);
+    }
+}
 /// `AtmosphericFogEnvironment.updateRainFogState`.
 pub fn update_rain_fog(
     state: &mut FogState,

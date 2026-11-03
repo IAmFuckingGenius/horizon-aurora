@@ -1253,6 +1253,15 @@ impl Streaming {
     pub fn pending(&self) -> usize {
         self.shared.queue.lock().unwrap().len()
     }
+    /// Memory pressure: drop the cleared mesh buffers kept for reuse and give the
+    /// allocator's free pages back. Returns the pooled bytes released.
+    pub fn trim_memory(&self) -> usize {
+        let pool = std::mem::take(&mut *self.shared.meshes.lock().unwrap());
+        let bytes = pool.bytes;
+        drop(pool);
+        horizon_threads::release_free_memory();
+        bytes
+    }
     /// Whether any chunk is queued or on its way from generation to a mesh.
     pub fn busy(&self) -> bool {
         !(self.generating.is_empty()

@@ -53,12 +53,16 @@ mod platform;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/proxy.rs"]
 mod proxy;
+#[path = "android/memory.rs"]
+mod memory;
 #[path = "android/search_queue.rs"]
 mod search_queue;
 #[path = "android/secure_store.rs"]
 mod secure_store;
 #[path = "android/shader_catalog.rs"]
 mod shader_catalog;
+#[path = "android/thermal.rs"]
+mod thermal;
 #[path = "android/transfers.rs"]
 mod transfers;
 #[path = "android/world_archive.rs"]

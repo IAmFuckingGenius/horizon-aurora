@@ -684,6 +684,12 @@ pub struct Renderer {
     lightmap_sampler: wgpu::Sampler,
     animations: animate::SpriteAnimator,
     active_animated_layers: Vec<u64>,
+    /// Animated sprite layers Horizon Boost holds still (bits as in
+    /// `active_animated_layers`): they keep the frame they show.
+    still_animated_layers: Vec<u64>,
+    /// Which Boost animation switches `still_animated_layers` was made for (`None`
+    /// until the game sets it for this renderer's sprites).
+    pub still_animations_for: Option<[bool; 5]>,
     uploads: upload::Uploads,
     /// Section meshes are staged through their own belt into
     /// `section_copies`, which the next frame records its commands after:
@@ -3649,6 +3655,8 @@ impl Renderer {
             lightmap_sampler,
             animations,
             active_animated_layers: vec![0; active_layer_words],
+            still_animated_layers: vec![0; active_layer_words],
+            still_animations_for: None,
             uploads,
             section_uploads,
             section_copies: None,
@@ -4033,6 +4041,37 @@ impl Renderer {
         }
         self.late_sky_on = on;
         Ok(())
+    }
+    /// Memory pressure: start the staging belts over, so the larger staging buffers
+    /// they kept for reuse go (once the GPU is done with them). Between frames only; the
+    /// section belt waits while its copies are staged.
+    pub fn trim_memory(&mut self) {
+        self.uploads = upload::Uploads::new(&self.device);
+        if self.section_copies.is_none() {
+            self.section_uploads = upload::Uploads::with_chunk(&self.device, SECTION_UPLOAD_CHUNK);
+        }
+    }
+    /// The block sprite layers whose animations stop (Horizon Boost's animation
+    /// switches); every other animated layer keeps moving.
+    pub fn set_still_animations(&mut self, layers: impl IntoIterator<Item = u32>) {
+        self.still_animated_layers.fill(0);
+        for layer in layers {
+            let layer = layer as usize;
+            if let Some(word) = self
+                .still_animated_layers
+                .get_mut(layer / u64::BITS as usize)
+            {
+                *word |= 1_u64 << (layer % u64::BITS as usize);
+            }
+        }
+    }
+    /// Developer A/B of the classic pass's weather shader: `true` draws it through the
+    /// original entity fragment, `false` (the default) through the lean one.
+    pub fn set_weather_classic(&mut self, on: bool) {
+        self.weather.classic = on;
+    }
+    pub fn weather_classic(&self) -> bool {
+        self.weather.classic
     }
     /// Whether one of Horizon's own packs reads the water mirror, which needs the frame's
     /// `water_plane`.
@@ -5703,6 +5742,13 @@ impl Renderer {
                     self.active_animated_layers[layer / u64::BITS as usize] |=
                         1_u64 << (layer % u64::BITS as usize);
                 }
+            }
+            for (active, still) in self
+                .active_animated_layers
+                .iter_mut()
+                .zip(&self.still_animated_layers)
+            {
+                *active &= !still;
             }
             // Visibility is collected before terrain draw commands are recorded,
             // so upload the current mask here and keep animation updates ahead
