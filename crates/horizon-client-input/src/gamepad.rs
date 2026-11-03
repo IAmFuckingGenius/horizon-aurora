@@ -249,11 +249,11 @@ pub const ACTIONS: &[(&str, Option<Button>)] = &[
 ];
 
 /// An action's name in the binds list: vanilla's translation key, or
-/// Horizon's own English for the pad-only actions.
+/// Horizon's own (its bundled `assets/horizon/lang`) for the pad-only actions.
 pub fn action_caption(action: &str) -> &str {
     match action {
-        HOTBAR_PREVIOUS => "Hotbar: Previous Slot",
-        HOTBAR_NEXT => "Hotbar: Next Slot",
+        HOTBAR_PREVIOUS => "horizon.controller.hotbar_previous",
+        HOTBAR_NEXT => "horizon.controller.hotbar_next",
         other => other,
     }
 }
@@ -1476,7 +1476,10 @@ mod tests {
         s.bind("key.drop", Some(Button::South));
         assert!(s.conflicts("key.jump") && s.conflicts("key.drop"));
         assert!(!s.is_default("key.drop") && s.is_default("key.jump"));
-        assert_eq!(action_caption(HOTBAR_NEXT), "Hotbar: Next Slot");
+        assert_eq!(
+            action_caption(HOTBAR_NEXT),
+            "horizon.controller.hotbar_next"
+        );
         assert_eq!(action_caption("key.jump"), "key.jump");
     }
 

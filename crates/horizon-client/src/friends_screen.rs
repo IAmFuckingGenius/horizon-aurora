@@ -5,11 +5,14 @@
 //! vanilla's buttons and Done in the footer.
 use crate::{
     hud::{HudAtlas, HudBatch, rgba},
+    lang,
     multiplayer::wrap,
-    text::Text,
+    text::{self, Text},
     ui,
 };
 
+/// The screen's name for the control socket and the widget tree (its title is
+/// `horizon.friends.title` in the game's language).
 pub const TITLE: &str = "Play with Friends";
 /// What the screen shows (game/friends.rs fills it).
 #[derive(Clone, Debug, Default)]
@@ -47,12 +50,12 @@ fn grey() -> u32 {
     rgba(160, 160, 160, 255)
 }
 const WHITE: u32 = u32::MAX;
-const HINT: &str = "Friends paste the code after the title screen's Friends button, in Direct Connection, or on the launcher's Play page.";
 
 struct Button {
     x: f32,
     y: f32,
     w: f32,
+    /// Its label's translation key.
     label: &'static str,
     action: Action,
     active: bool,
@@ -75,8 +78,9 @@ fn layout(
         }
     };
     let mut buttons = Vec::new();
+    let hint = lang::get("horizon.friends.hint");
     if view.sharing {
-        lines.push(("Invite Code".to_owned(), grey(), y));
+        lines.push((lang::get("horizon.multiplayer.invite_code"), grey(), y));
         y += 12.0;
         match &view.code {
             Some(code) => {
@@ -92,7 +96,11 @@ fn layout(
             x: cx - 154.0,
             y,
             w: 150.0,
-            label: if view.copied { "Copied" } else { "Copy Code" },
+            label: if view.copied {
+                "horizon.friends.copied"
+            } else {
+                "horizon.friends.copy"
+            },
             action: Action::Copy,
             active: view.code.is_some(),
         });
@@ -100,7 +108,7 @@ fn layout(
             x: cx + 4.0,
             y,
             w: 150.0,
-            label: "Stop Sharing",
+            label: "horizon.friends.stop",
             action: Action::Stop,
             active: true,
         });
@@ -113,32 +121,32 @@ fn layout(
             y += 4.0;
         }
         let here = if view.guests.is_empty() {
-            "No friends here yet.".to_owned()
+            lang::get("horizon.friends.nobody")
         } else {
-            format!("Here now: {}", view.guests.join(", "))
+            lang::tr("horizon.friends.here", &[&view.guests.join(", ")])
         };
         add(&mut lines, &here, grey(), &mut y);
         if let Some(notice) = &view.notice {
             add(&mut lines, notice, WHITE, &mut y);
         }
         // Where friends paste the code, while it fits above the footer.
-        if y + 10.0 * wrap(HINT, width, atlas).len() as f32 <= h - 33.0 {
-            add(&mut lines, HINT, grey(), &mut y);
+        if y + 10.0 * wrap(&hint, width, atlas).len() as f32 <= h - 33.0 {
+            add(&mut lines, &hint, grey(), &mut y);
         }
     } else {
         add(
             &mut lines,
-            "Share this world behind an invite code: it opens to LAN, and friends on the internet join with the code. No server of ours is involved.",
+            &lang::get("horizon.friends.intro"),
             WHITE,
             &mut y,
         );
         y += 4.0;
-        add(&mut lines, HINT, grey(), &mut y);
+        add(&mut lines, &hint, grey(), &mut y);
         buttons.push(Button {
             x: cx - 100.0,
             y: y + 8.0,
             w: 200.0,
-            label: "Start Sharing",
+            label: "horizon.friends.start",
             action: Action::Share,
             active: view.shown,
         });
@@ -150,7 +158,7 @@ fn layout(
             x: cx - 154.0,
             y: h - 27.0,
             w: 150.0,
-            label: "Troubleshooting...",
+            label: "horizon.friends.help",
             action: Action::Help,
             active: true,
         });
@@ -189,11 +197,7 @@ fn code_lines(atlas: &HudAtlas, code: &str, width: f32) -> Vec<String> {
     lines
 }
 fn label(key: &str) -> Text {
-    if key.starts_with("gui.") {
-        Text::translate(key, &[])
-    } else {
-        Text::literal(key)
-    }
+    Text::translate(key, &[])
 }
 pub fn draw(
     batch: &mut HudBatch,
@@ -204,7 +208,7 @@ pub fn draw(
 ) {
     let (w, h) = (batch.width, batch.height);
     ui::menu_background(batch, atlas, 0.0, 0.0, w, h, in_world);
-    let title = Text::literal(TITLE);
+    let title = Text::translate("horizon.friends.title", &[]);
     let tw = atlas.font.width_text(&title);
     batch.text_styled(atlas, &title, ((w - tw) / 2.0).floor(), 15.0, WHITE, true);
     let (lines, buttons) = layout(atlas, (w, h), view);
@@ -227,6 +231,56 @@ pub fn draw(
         );
     }
 }
+/// What horizon-friends says of who can join (`Reach::summary`) or of the relay, in the game's
+/// language: each sentence it makes is read back and said again through `horizon.friends.*`.
+/// One these patterns don't know stays as it is.
+pub fn say(english: &str) -> String {
+    say_in(
+        &|key| lang::current().and_then(|l| l.get(key).map(str::to_owned)),
+        english,
+    )
+}
+fn say_in(words: &dyn Fn(&str) -> Option<String>, english: &str) -> String {
+    let t = |key: &str, args: &[&str]| -> Option<String> {
+        let args: Vec<Text> = args.iter().map(|a| Text::literal(*a)).collect();
+        Some(text::format_translation(&words(key)?, &args).plain())
+    };
+    let said = || -> Option<String> {
+        const MAPPED: &str = "Friends anywhere can join: your router opened the port with ";
+        const PUBLIC: &str =
+            "Friends anywhere can join: this computer has a public address (TCP port ";
+        const CGNAT: &str = "Friends on your network or VPN can join. From the internet they can't";
+        const LOCAL: &str = "Friends on your network or VPN can join. For friends on the internet: \
+             turn on UPnP on your router, or forward TCP port ";
+        if english == "Friends join through the relay only." {
+            return t("horizon.friends.reach.relay_only", &[]);
+        }
+        if let Some(rest) = english.strip_prefix(MAPPED) {
+            return t("horizon.friends.reach.mapped", &[rest.strip_suffix('.')?]);
+        }
+        if let Some(rest) = english.strip_prefix(PUBLIC) {
+            let port = rest.strip_suffix(" must not be blocked by a firewall).")?;
+            return t("horizon.friends.reach.public", &[port]);
+        }
+        if english.starts_with(CGNAT) {
+            return t("horizon.friends.reach.cgnat", &[]);
+        }
+        if let Some(rest) = english.strip_prefix(LOCAL) {
+            let (forward, _) = rest.split_once(", or use a relay")?;
+            let forward = match forward.split_once(" to ") {
+                Some((port, ip)) => t("horizon.friends.reach.forward_to", &[port, ip])?,
+                None => t("horizon.friends.reach.forward", &[forward])?,
+            };
+            return t("horizon.friends.reach.local", &[&forward]);
+        }
+        let (relay, error) = english
+            .strip_prefix("Couldn't reach the relay ")?
+            .split_once(": ")?;
+        t("horizon.friends.relay_problem", &[relay, error])
+    };
+    said().unwrap_or_else(|| english.to_owned())
+}
+
 /// The button under a click, if it is active.
 pub fn click(
     atlas: &HudAtlas,
@@ -290,6 +344,38 @@ mod tests {
                 Some(action)
             );
         }
+    }
+
+    #[test]
+    fn who_can_join_reads_in_the_games_language() {
+        // What horizon-friends says (`Reach::summary` and the relay), as it makes it.
+        let said = [
+            "Friends anywhere can join: your router opened the port with UPnP (203.0.113.5:40123).",
+            "Friends on your network or VPN can join. For friends on the internet: turn on UPnP on your router, or forward TCP port 25580 to 10.0.0.2, or use a relay, or a VPN such as Tailscale or ZeroTier (the code already holds your VPN address).",
+            "Couldn't reach the relay relay.example:25581: connection refused",
+        ];
+        let en = lang::Language::load(&[], "en_us");
+        for english in said {
+            assert_eq!(say_in(&|k| en.get(k).map(str::to_owned), english), english);
+        }
+        let ru = lang::Language::load(&[], "ru_ru");
+        let russian: Vec<String> = said
+            .iter()
+            .map(|english| say_in(&|k| ru.get(k).map(str::to_owned), english))
+            .collect();
+        assert_eq!(
+            russian,
+            [
+                "Друзья откуда угодно могут подключиться: роутер открыл порт через UPnP (203.0.113.5:40123).",
+                "Друзья из вашей сети или VPN могут подключиться. Для друзей из интернета: включите UPnP на роутере, или пробросьте TCP-порт 25580 на 10.0.0.2, или используйте ретранслятор либо VPN вроде Tailscale или ZeroTier (код уже содержит ваш VPN-адрес).",
+                "Не удалось связаться с ретранслятором relay.example:25581: connection refused",
+            ]
+        );
+        // A sentence it doesn't know stays as it is.
+        assert_eq!(
+            say_in(&|k| ru.get(k).map(str::to_owned), "Hello."),
+            "Hello."
+        );
     }
 
     #[test]

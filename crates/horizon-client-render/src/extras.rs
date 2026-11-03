@@ -395,39 +395,44 @@ pub enum Item {
     /// On the Horizon Settings page.
     DiscordPresence,
 }
-/// The Extras page: headers and items.
+/// The Extras page: headers (their translation keys) and items.
 pub fn rows() -> Vec<Result<Item, &'static str>> {
     use Item::*;
     vec![
-        Err("Lighting"),
+        Err("horizon.extras.header.lighting"),
         Ok(Fullbright),
         Ok(DynamicLights),
-        Err("Third person"),
+        Err("horizon.extras.header.third_person"),
         Ok(OwnNameTag),
-        Err("Inventory"),
+        Err("horizon.extras.header.inventory"),
         Ok(MouseTweaks),
         Ok(MouseTweaksWheel),
         Ok(Sort),
         Ok(SortKey),
-        Err("Multiplayer"),
+        Err("horizon.extras.header.multiplayer"),
         Ok(AutoReconnect),
     ]
 }
 impl Item {
-    pub fn caption(self) -> &'static str {
+    /// The caption's translation key (Horizon's bundled `assets/horizon/lang`).
+    pub fn caption_key(self) -> &'static str {
         match self {
-            Item::Fullbright => "Fullbright",
-            Item::DynamicLights => "Dynamic lights",
-            Item::OwnNameTag => "Own name tag",
-            Item::AutoReconnect => "Auto-reconnect",
-            Item::MouseTweaks => "Mouse Tweaks controls",
-            Item::MouseTweaksWheel => "Scroll wheel moves items",
-            Item::Sort => "Sort buttons",
-            Item::SortKey => "Sort key",
-            Item::NoAi => "No AI",
-            Item::AgentControl => "Agent Control",
-            Item::DiscordPresence => "Discord Rich Presence",
+            Item::Fullbright => "horizon.extras.fullbright",
+            Item::DynamicLights => "horizon.extras.dynamic_lights",
+            Item::OwnNameTag => "horizon.extras.own_name_tag",
+            Item::AutoReconnect => "horizon.extras.auto_reconnect",
+            Item::MouseTweaks => "horizon.extras.mouse_tweaks",
+            Item::MouseTweaksWheel => "horizon.extras.mouse_tweaks_wheel",
+            Item::Sort => "horizon.extras.sort",
+            Item::SortKey => "horizon.extras.sort_key",
+            Item::NoAi => "horizon.extras.no_ai",
+            Item::AgentControl => "horizon.extras.agent_control",
+            Item::DiscordPresence => "horizon.extras.discord_presence",
         }
+    }
+    /// The caption in the current language.
+    pub fn caption(self) -> String {
+        crate::lang::get(self.caption_key())
     }
     /// The switch this setting belongs to: it does nothing while that is off.
     pub fn parent(self) -> Option<Item> {
@@ -441,41 +446,9 @@ impl Item {
             }
         })
     }
-    /// What the row says under its caption.
-    pub fn description(self) -> &'static str {
-        match self {
-            Item::Fullbright => "Show blocks and entities at full light, even in dark areas.",
-            Item::DynamicLights => {
-                "Torches and other light sources held, dropped or on fire light the blocks around them."
-            }
-            Item::OwnNameTag => {
-                "Shows your name above your head in third person, as other players see it. Hidden when the server hides your team's names or you're invisible."
-            }
-            Item::AutoReconnect => {
-                "Rejoins a server after a lost connection or a restart, never after a kick or ban."
-            }
-            Item::MouseTweaks => {
-                "Right-drag places one per slot, left-drag gathers the held item, Shift + left-drag moves every slot."
-            }
-            Item::MouseTweaksWheel => {
-                "Down sends one item of the slot to the other side, up brings one back."
-            }
-            Item::Sort => {
-                "Sorts the inventory, chests, barrels, ender chests and shulker boxes in creative tab order, merging stacks."
-            }
-            Item::SortKey => {
-                "Sorts the part under the cursor. Click, then press a key; Escape unbinds it."
-            }
-            Item::NoAi => {
-                "Hides and turns off every AI feature: agent control, horizon-ctl and the MCP servers. The launcher's switch too."
-            }
-            Item::DiscordPresence => {
-                "Shows Playing Horizon on your Discord profile while Discord runs: menus, single player or multiplayer, the dimension and the time played. Never a world's name or a server's address."
-            }
-            Item::AgentControl => {
-                "Your own AI agent can play this game through horizon-ctl or an MCP client, on this computer only."
-            }
-        }
+    /// What the row says on hover, in the current language (`<caption key>.tooltip`).
+    pub fn description(self) -> String {
+        crate::lang::get(&format!("{}.tooltip", self.caption_key()))
     }
     /// The frame-time cost the main switch of an extra shows.
     pub fn cost(self) -> Option<crate::graphics_style::Cost> {
@@ -505,14 +478,14 @@ impl Item {
             _ => return None,
         })
     }
-    /// The value of the other items, as their button shows it.
+    /// The value of the other items, as their button shows it (in the current language).
     pub fn value(self, e: &Extras) -> String {
         match self {
             Item::SortKey => crate::keybinds::display_name(&e.sort_key).plain(),
-            other => match other.switch(e) {
-                Some(true) => "On".into(),
-                _ => "Off".into(),
-            },
+            other => crate::lang::get(match other.switch(e) {
+                Some(true) => "On",
+                _ => "Off",
+            }),
         }
     }
     /// A click (`_back` for the right button: every item left is a switch,
@@ -678,8 +651,42 @@ mod tests {
             Extras::parse("minimapSize:7\nminimapZoom:3").minimap_zoom,
             1.0
         );
+    }
+
+    #[test]
+    fn every_extra_reads_in_english_and_russian() {
+        // A key missing from Horizon's bundled strings shows as its name; one
+        // missing from ru_ru reads in English on a Russian game.
+        let en = crate::lang::Language::load(&[], "en_us");
+        let ru = crate::lang::Language::load(&[], "ru_ru");
+        let both = |key: &str| {
+            let english = en.get(key);
+            assert!(english.is_some(), "{key:?} is not a bundled key");
+            assert_ne!(ru.get(key), english, "{key:?} has no ru_ru translation");
+        };
+        use Item::*;
+        let items = [
+            Fullbright,
+            DynamicLights,
+            OwnNameTag,
+            AutoReconnect,
+            MouseTweaks,
+            MouseTweaksWheel,
+            Sort,
+            SortKey,
+            NoAi,
+            AgentControl,
+            DiscordPresence,
+        ];
         for item in rows().into_iter().flatten() {
-            assert!(!item.caption().is_empty() && !item.description().is_empty());
+            assert!(items.contains(&item));
+        }
+        for item in items {
+            both(item.caption_key());
+            both(&format!("{}.tooltip", item.caption_key()));
+        }
+        for header in rows().into_iter().filter_map(Result::err) {
+            both(header);
         }
     }
 }

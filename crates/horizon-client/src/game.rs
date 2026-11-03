@@ -216,6 +216,7 @@ mod native_panel_recipes;
 mod native_recipes;
 mod native_server;
 mod native_shaders;
+mod native_text;
 mod native_visuals;
 mod native_world_read;
 mod natural_spawning;

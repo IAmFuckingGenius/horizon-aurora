@@ -4276,14 +4276,24 @@ impl Game<'_> {
         for m in mods {
             let mut buttons = Vec::new();
             self.native_settings(&m.id, &mut buttons);
-            let page = NativePage {
-                keys: m.keys,
-                buttons,
-            };
+            // The official mods' words follow the game's language (`native_text`).
+            let buttons = buttons
+                .iter()
+                .map(|b| super::native_text::settings_label(&m.id, b))
+                .collect();
+            let keys = m
+                .keys
+                .into_iter()
+                .map(|[name, label, key]| {
+                    let label = super::native_text::key_label(&m.id, &name, &label);
+                    [name, label, key]
+                })
+                .collect();
+            let page = NativePage { keys, buttons };
             self.settings.mods.installed.push(Installed {
                 id: m.id,
                 title: m.title,
-                description: m.description,
+                description: super::native_text::description(&m.description),
                 problem: None,
                 dev: false,
                 has_settings: false,
@@ -4308,6 +4318,10 @@ impl Game<'_> {
         };
         let mut buttons = Vec::new();
         self.native_settings(&id, &mut buttons);
+        let buttons = buttons
+            .iter()
+            .map(|b| super::native_text::settings_label(&id, b))
+            .collect();
         let row = self.settings.mods.installed.get_mut(i);
         if let Some(page) = row.and_then(|m| m.native.as_mut()) {
             page.buttons = buttons;
