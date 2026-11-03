@@ -176,11 +176,15 @@ fn reports(home: &Path) -> Vec<PathBuf> {
     files.sort();
     files
 }
-pub fn export(home: &Path) -> std::result::Result<(), String> {
+/// The newest recording, once the recorder has stopped and written it.
+pub fn latest(home: &Path) -> std::result::Result<PathBuf, String> {
     stop();
-    reports(home)
-        .pop()
-        .ok_or("No performance report. Enable recording, then launch and play first.")?;
+    reports(home).pop().ok_or_else(|| {
+        "No performance report. Enable recording, then launch and play first.".into()
+    })
+}
+pub fn export(home: &Path) -> std::result::Result<(), String> {
+    latest(home)?;
     if crate::platform::open_documents("reports") {
         Ok(())
     } else {

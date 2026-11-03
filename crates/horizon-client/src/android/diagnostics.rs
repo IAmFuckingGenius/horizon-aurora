@@ -238,13 +238,113 @@ pub fn flush() {
     let _ = rx.recv_timeout(Duration::from_millis(500));
 }
 pub fn summary(home: &Path) -> String {
+    match unclean_phase(home) {
+        Some(phase) => format!("Previous session ended without a clean exit; last phase: {phase}. This may be a crash or an Android process kill. Export diagnostics before reporting."),
+        None => "Export one diagnostic ZIP to send with your report. It includes local logs, Android exit history and retained performance recordings. Review before sharing.".into(),
+    }
+}
+/// The last phase of the previous session when it did not exit cleanly.
+pub fn unclean_phase(home: &Path) -> Option<String> {
     let previous = fs::read(home.join("performance/previous-session.json"))
         .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-    match previous {
-        Some(v) if v["clean_exit"] != true => format!("Previous session ended without a clean exit; last phase: {}. This may be a crash or an Android process kill. Export diagnostics before reporting.", v["phase"].as_str().unwrap_or("unknown")),
-        _ => "Export one diagnostic ZIP to send with your report. It includes local logs, Android exit history and retained performance recordings. Review before sharing.".into(),
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())?;
+    (previous["clean_exit"] != true)
+        .then(|| previous["phase"].as_str().unwrap_or("unknown").to_owned())
+}
+/// Launch-log text files in Reports start with this; the newest three are kept.
+pub const LAUNCH_LOG_PREFIX: &str = "horizon-launch-log-";
+const LAUNCH_LOG_SECTION: u64 = 128 * 1024;
+/// "2026-11-03 12:24:05" for Unix milliseconds, in UTC.
+fn utc(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
+        rest / 3600,
+        rest / 60 % 60,
+        rest % 60
+    )
+}
+/// The launch log as one plain text: the summary, the last error and panic, and
+/// the bounded tails of this and the previous session's logs, each redacted like
+/// the diagnostic ZIP. No accounts, worlds or configuration.
+pub fn launch_log_text(home: &Path) -> String {
+    let dir = home.join("performance");
+    let mut out = format!(
+        "Horizon Android launch log\nHorizon {} · {} · {}\nWritten {} UTC\nLogs are bounded tails with best-effort redaction. Review before sharing.\n\n== Summary ==\n{}\n",
+        crate::backend::VERSION,
+        option_env!("HORIZON_ANDROID_BUILD_COMMIT").unwrap_or("unknown commit"),
+        std::env::consts::ARCH,
+        utc(timestamp()),
+        summary(home)
+    );
+    for (title, path) in [
+        ("Last handled error", home.join("android-error.txt")),
+        ("Last Rust panic", dir.join("last-rust-panic.txt")),
+        (
+            "Launcher and game log, this session",
+            dir.join("diagnostic.log"),
+        ),
+        (
+            "Launcher and game log, earlier in this session",
+            dir.join("diagnostic-rotated.log"),
+        ),
+        ("Game log, last launch", home.join("logs/latest.log")),
+        (
+            "Launcher and game log, previous session",
+            dir.join("previous-diagnostic.log"),
+        ),
+        ("Game log, previous run", dir.join("previous-run.log")),
+    ] {
+        if let Ok(data) = tail(&path, LAUNCH_LOG_SECTION)
+            && !data.iter().all(u8::is_ascii_whitespace)
+        {
+            let text = redact(&String::from_utf8_lossy(&data));
+            out.push_str(&format!("\n== {title} ==\n{}\n", text.trim_end()));
+        }
     }
+    out
+}
+/// Explicit user action only: writes [`launch_log_text`] into Reports and keeps
+/// the newest three such files.
+pub fn launch_log(home: &Path) -> Result<PathBuf, String> {
+    flush();
+    let dir = home.join("performance");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{LAUNCH_LOG_PREFIX}{}.txt", timestamp()));
+    let stage = path.with_extension("partial");
+    if let Err(error) =
+        fs::write(&stage, launch_log_text(home)).and_then(|()| fs::rename(&stage, &path))
+    {
+        let _ = fs::remove_file(&stage);
+        return Err(error.to_string());
+    }
+    let mut old: Vec<_> = fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(LAUNCH_LOG_PREFIX))
+                && p.extension().is_some_and(|s| s == "txt")
+        })
+        .collect();
+    old.sort();
+    let excess = old.len().saturating_sub(3);
+    for file in old.into_iter().take(excess) {
+        let _ = fs::remove_file(file);
+    }
+    Ok(path)
 }
 /// Best-effort redaction, not a promise that arbitrary third-party text is public.
 pub fn redact(text: &str) -> String {
@@ -512,6 +612,54 @@ mod tests {
         assert!(text.contains("VK_ERROR_DEVICE_LOST"));
         assert!(summary(&home).contains("prior_world"));
         STATE.lock().unwrap().take();
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn launch_log_is_redacted_text_with_the_newest_three_kept() {
+        let home = home();
+        let dir = home.join("performance");
+        fs::write(home.join("android-error.txt"), "Vulkan device lost").unwrap();
+        fs::write(
+            dir.join("diagnostic.log"),
+            "Renderer ready\nrefresh_token=sealed-token\njoined 192.0.2.7:25565\n",
+        )
+        .unwrap();
+        fs::write(dir.join("previous-diagnostic.log"), "  \n").unwrap();
+        fs::write(
+            dir.join("previous-session.json"),
+            r#"{"phase":"in_world","clean_exit":false}"#,
+        )
+        .unwrap();
+        assert_eq!(unclean_phase(&home).as_deref(), Some("in_world"));
+        let text = launch_log_text(&home);
+        assert!(text.contains("last phase: in_world"), "{text}");
+        assert!(text.contains("== Last handled error ==\nVulkan device lost"));
+        assert!(text.contains("Renderer ready"));
+        assert!(!text.contains("sealed-token"));
+        assert!(!text.contains("192.0.2.7"));
+        // An empty log gets no section.
+        assert!(!text.contains("previous session =="));
+        assert!(utc(1_762_172_645_000) == "2025-11-03 12:24:05");
+        let mut written = Vec::new();
+        for _ in 0..5 {
+            written.push(launch_log(&home).unwrap());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            fs::read_to_string(&written[4]).unwrap().lines().next(),
+            Some("Horizon Android launch log")
+        );
+        let kept: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(LAUNCH_LOG_PREFIX)
+            })
+            .collect();
+        assert_eq!(kept.len(), 3);
+        assert!(written[4].exists() && !written[0].exists());
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
