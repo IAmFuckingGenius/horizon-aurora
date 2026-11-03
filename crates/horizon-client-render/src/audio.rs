@@ -863,6 +863,18 @@ impl Audio {
     pub fn silent(root: &Path) -> Self {
         Self::with_output(root, false, "")
     }
+    /// Memory pressure: forget every decoded static sound that no channel plays (a
+    /// playing channel keeps its own samples). The next play decodes its file again.
+    /// Returns the bytes released.
+    pub fn trim_cache(&self) -> usize {
+        let Ok(mut cache) = self.backend.cache.lock() else {
+            return 0;
+        };
+        let bytes = cache.bytes;
+        cache.entries.clear();
+        cache.bytes = 0;
+        bytes
+    }
     /// The output device asked for (`soundDevice`), empty for the system's default; the
     /// default plays when that one can't be opened, as in vanilla.
     pub fn device(&self) -> &str {

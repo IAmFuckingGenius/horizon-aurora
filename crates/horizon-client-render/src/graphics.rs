@@ -419,6 +419,8 @@ pub struct Graphics {
     /// not `shaderPack`, which versions before the clean-room rewrite saved and which stays
     /// ignored.
     pub shader_pack: String,
+    /// Horizon Boost's settings (`boost.rs`), in the same file.
+    pub boost: crate::boost::Boost,
 }
 impl Default for Graphics {
     fn default() -> Self {
@@ -455,6 +457,7 @@ impl Default for Graphics {
             shadow_cache: false,
             api: GraphicsApi::Auto,
             shader_pack: String::new(),
+            boost: crate::boost::Boost::default(),
         }
     }
 }
@@ -553,7 +556,9 @@ impl Graphics {
                         _ => Overlay::Off,
                     }
                 }
-                _ => {}
+                key => {
+                    g.boost.parse_line(key, value);
+                }
             }
         }
         g
@@ -600,7 +605,7 @@ impl Graphics {
             bool_text(self.shadow_cache),
             self.api.name(),
             self.shader_pack,
-        )
+        ) + &self.boost.serialize()
     }
     /// Binds Horizon's graphics key `name` (`HDR_KEY`); false for another name.
     pub fn set_key(&mut self, name: &str, value: String) -> bool {
@@ -700,6 +705,7 @@ pub fn apply_preset(preset: Preset, s: &mut crate::settings::Settings) {
     g.sky = true;
     g.fog = true;
     g.weather = true;
+    crate::boost::apply_preset(preset, &mut g.boost);
 }
 
 #[cfg(test)]
@@ -756,6 +762,11 @@ mod tests {
             shadow_cache: true,
             api: GraphicsApi::Dx12,
             shader_pack: "Golden Hour".into(),
+            boost: crate::boost::Boost {
+                weather_density: 50,
+                stars: false,
+                ..Default::default()
+            },
         };
         assert_eq!(Graphics::parse(&g.serialize()), g);
         assert_eq!(Graphics::parse(""), Graphics::default());
