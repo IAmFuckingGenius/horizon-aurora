@@ -442,7 +442,10 @@ impl Game<'_> {
             .map(|e| {
                 let file = e.path.file_name().unwrap_or_default().to_string_lossy();
                 let problem = match &e.status {
-                    Status::Failed(reason) => Some(format!("Stopped: {reason}")),
+                    Status::Failed(reason) => Some(horizon_client::lang::tr(
+                        "horizon.mods.stopped_reason",
+                        &[reason],
+                    )),
                     _ => None,
                 };
                 let Some(m) = &e.manifest else {
@@ -457,11 +460,18 @@ impl Game<'_> {
                     };
                 };
                 // What it may do first: the row cuts long descriptions.
-                let may: Vec<&str> = m.capabilities.iter().map(|c| c.describe()).collect();
+                let may: Vec<String> = m
+                    .capabilities
+                    .iter()
+                    .map(|c| {
+                        let key = format!("horizon.mods.capability.{}", c.interface());
+                        horizon_client::lang::get_or(&key, c.describe())
+                    })
+                    .collect();
                 let may = if may.is_empty() {
-                    "Asks for nothing.".to_owned()
+                    horizon_client::lang::get("horizon.mods.asks_nothing")
                 } else {
-                    format!("May {}.", may.join(", "))
+                    horizon_client::lang::tr("horizon.mods.may", &[&may.join(", ")])
                 };
                 Installed {
                     id: m.id.clone(),
@@ -1208,7 +1218,7 @@ impl Game<'_> {
             batch.height - 27.0,
             200.0,
             20.0,
-            &Text::literal("Done"),
+            &Text::translate("gui.done", &[]),
             true,
             hover,
         );
@@ -1490,6 +1500,19 @@ mod tests {
             .unwrap();
         zip.write_all(mixin.as_bytes()).unwrap();
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn what_a_mod_may_do_reads_in_the_games_language() {
+        // The Mods page reads each capability's sentence from the bundled strings: in English
+        // it is the mods crate's own (`Capability::describe`), and Russian has its own.
+        let en = horizon_client::lang::Language::load(&[], "en_us");
+        let ru = horizon_client::lang::Language::load(&[], "ru_ru");
+        for c in horizon_mods::manifest::Capability::ALL {
+            let key = format!("horizon.mods.capability.{}", c.interface());
+            assert_eq!(en.get(&key), Some(c.describe()), "{key}");
+            assert!(ru.get(&key).is_some_and(|r| r != c.describe()), "{key}");
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! when the player turned Agent Control on, and never under No AI (`horizon_core::no_ai`).
 //! Turning either switch in the game opens or closes it at once.
 use super::Game;
-use horizon_client::{Result, control};
+use horizon_client::{Result, control, lang};
 use std::path::PathBuf;
 
 impl Game<'_> {
@@ -81,7 +81,7 @@ impl Game<'_> {
         self.agent_last = Some(std::time::Instant::now());
     }
 
-    /// The AI Agent page's lines: the state, then where agents connect.
+    /// The AI Agent page's lines, in the game's language: the state, then where agents connect.
     pub(super) fn agent_status_lines(&self) -> Vec<String> {
         let server = self
             .control
@@ -89,30 +89,32 @@ impl Game<'_> {
             .filter(|c| !c.path().as_os_str().is_empty());
         let mut lines = vec![match server {
             Some(s) if s.clients() > 0 => {
-                let ago = self
-                    .agent_last
-                    .map(|t| format!(", last command {} s ago", t.elapsed().as_secs()))
-                    .unwrap_or_default();
-                format!(
-                    "Connected: {} agent connection{}{ago}",
-                    s.clients(),
-                    if s.clients() == 1 { "" } else { "s" }
-                )
+                let key = if s.clients() == 1 {
+                    "horizon.agent.status.connected_one"
+                } else {
+                    "horizon.agent.status.connected"
+                };
+                let mut line = lang::tr(key, &[&s.clients()]);
+                if let Some(t) = self.agent_last {
+                    line.push_str(&lang::tr(
+                        "horizon.agent.status.last_command",
+                        &[&t.elapsed().as_secs()],
+                    ));
+                }
+                line
             }
-            Some(_) => "Waiting for an agent.".into(),
-            None => "Off: agents can't reach this game.".into(),
+            Some(_) => lang::get("horizon.agent.status.waiting"),
+            None => lang::get("horizon.agent.status.off"),
         }];
         if let Some(s) = server {
             if self.options.control.is_some() && !self.agent_control_on {
-                lines.push("Opened for this session by the program that started the game.".into());
+                lines.push(lang::get("horizon.agent.status.session"));
             }
             // The full path is too wide for the page: Copy Connection Details has it.
             let name = s.path().file_name().unwrap_or_default().to_string_lossy();
-            lines.push(format!(
-                "Socket: {name} (copy the details for its full path)"
-            ));
+            lines.push(lang::tr("horizon.agent.status.socket", &[&name]));
         }
-        lines.push("Local only: agents on this computer, never the network.".into());
+        lines.push(lang::get("horizon.agent.status.local"));
         lines
     }
 
