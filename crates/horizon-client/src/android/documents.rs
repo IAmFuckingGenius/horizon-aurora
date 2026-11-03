@@ -141,6 +141,8 @@ pub extern "system" fn document_result(
     uri: JString<'_>,
 ) {
     if request != 4101 {
+        // World import and file exports (transfers.rs).
+        crate::transfers::document_result(env, activity, request, result, uri);
         return;
     }
     let pending = STATE

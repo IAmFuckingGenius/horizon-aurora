@@ -621,6 +621,226 @@ static RU: &[(&str, &str)] = &[
     ),
     ("Create profile", "Создать профиль"),
     ("Create Profile {}", "Создать профиль {}"),
+    // World and report transfers (transfers.rs, world_archive.rs).
+    ("Import world", "Импорт мира"),
+    (
+        "Press Play, then Singleplayer, to create one, or bring one in with Import world. Copied world folders appear here too.",
+        "Нажмите «Играть», затем «Одиночная игра», чтобы создать мир, или добавьте готовый через «Импорт мира». Скопированные папки миров тоже появятся здесь.",
+    ),
+    ("Exporting the world", "Экспорт мира"),
+    ("Importing a world", "Импорт мира"),
+    ("Saving the file", "Сохранение файла"),
+    ("Stopping and cleaning up", "Остановка и очистка"),
+    ("Copying the ZIP into Horizon", "Копирование ZIP в Horizon"),
+    ("Checking the ZIP", "Проверка ZIP"),
+    ("Packing the world into a ZIP", "Упаковка мира в ZIP"),
+    ("Unpacking the world", "Распаковка мира"),
+    ("Writing the file", "Запись файла"),
+    ("{} of {} files", "{} из {} файлов"),
+    ("World exported", "Мир экспортирован"),
+    ("Export cancelled", "Экспорт отменён"),
+    (
+        "Could not export the world",
+        "Не удалось экспортировать мир",
+    ),
+    ("World imported", "Мир импортирован"),
+    ("Import cancelled", "Импорт отменён"),
+    ("Could not import the world", "Не удалось импортировать мир"),
+    ("File saved", "Файл сохранён"),
+    ("Saving cancelled", "Сохранение отменено"),
+    ("Could not save the file", "Не удалось сохранить файл"),
+    ("Could not share the file", "Не удалось поделиться файлом"),
+    ("«{}» is now in Worlds.", "«{}» теперь в разделе «Миры»."),
+    ("Saved as «{}».", "Сохранено как «{}»."),
+    ("Nothing was added.", "Ничего не добавлено."),
+    (
+        "The unfinished file was removed.",
+        "Недописанный файл удалён.",
+    ),
+    (
+        "Not enough free space on the device.",
+        "На устройстве недостаточно свободного места.",
+    ),
+    (
+        "Not enough free space: free up {} MiB more and try again.",
+        "Недостаточно места: освободите ещё {} МиБ и попробуйте снова.",
+    ),
+    (
+        "The file is not a ZIP archive, or it is damaged.",
+        "Это не ZIP-архив, или он повреждён.",
+    ),
+    (
+        "No world in this ZIP: level.dat must be at its root or in one folder inside it.",
+        "В этом ZIP нет мира: level.dat должен лежать в корне архива или в одной папке внутри него.",
+    ),
+    (
+        "The ZIP holds more than one world. Put each world in its own ZIP.",
+        "В ZIP больше одного мира. Упакуйте каждый мир в отдельный ZIP.",
+    ),
+    (
+        "The ZIP has a file path that leads outside the world folder, so nothing was unpacked.",
+        "В ZIP есть путь, который ведёт за пределы папки мира, поэтому ничего не распаковано.",
+    ),
+    (
+        "The ZIP has a symbolic link. Worlds never contain them, so nothing was unpacked.",
+        "В ZIP есть символическая ссылка. В мирах их не бывает, поэтому ничего не распаковано.",
+    ),
+    (
+        "The ZIP lists the same file twice, so nothing was unpacked.",
+        "В ZIP один и тот же файл указан дважды, поэтому ничего не распаковано.",
+    ),
+    (
+        "The ZIP is password-protected. Pack the world without a password.",
+        "ZIP защищён паролем. Упакуйте мир без пароля.",
+    ),
+    (
+        "The ZIP uses a compression method Horizon cannot read. Pack it as a regular ZIP.",
+        "ZIP сжат способом, который Horizon не читает. Упакуйте его как обычный ZIP.",
+    ),
+    (
+        "The ZIP has too many files to be one world.",
+        "В ZIP слишком много файлов для одного мира.",
+    ),
+    (
+        "The ZIP is damaged: a file is not the size it claims.",
+        "ZIP повреждён: размер файла не совпадает с указанным.",
+    ),
+    (
+        "The world has too many files for one ZIP",
+        "В мире слишком много файлов для одного ZIP",
+    ),
+    ("The world folder is missing", "Папка мира не найдена"),
+    (
+        "Too many worlds with this name",
+        "Слишком много миров с таким именем",
+    ),
+    (
+        "Finish the add-on import first",
+        "Сначала дождитесь импорта дополнения",
+    ),
+    (
+        "Wait for the current transfer to finish",
+        "Дождитесь окончания текущей передачи",
+    ),
+    (
+        "The system file picker is not available",
+        "Системный выбор файлов недоступен",
+    ),
+    (
+        "Could not open the file picker",
+        "Не удалось открыть выбор файлов",
+    ),
+    (
+        "Android has no app to choose files with. Use Open in Files instead.",
+        "В Android нет приложения для выбора файлов. Воспользуйтесь «Открыть в Файлах».",
+    ),
+    ("Transfer interrupted", "Передача прервана"),
+    (
+        "Android closed Horizon while the file picker was open. Try again.",
+        "Android закрыл Horizon, пока был открыт выбор файлов. Попробуйте ещё раз.",
+    ),
+    ("Could not open the file", "Не удалось открыть файл"),
+    (
+        "Android returned an unsupported location.",
+        "Android вернул неподдерживаемое расположение.",
+    ),
+    (
+        "Android did not give access to the chosen file.",
+        "Android не дал доступа к выбранному файлу.",
+    ),
+    (
+        "Horizon Android report for developers",
+        "Отчёт Horizon Android для разработчиков",
+    ),
+    (
+        "Horizon Android performance data",
+        "Данные производительности Horizon Android",
+    ),
+    (
+        "Horizon Android launch log",
+        "Журнал запуска Horizon Android",
+    ),
+    (
+        "No app can receive this file",
+        "Нет приложения, которое может принять этот файл",
+    ),
+    ("Share", "Поделиться"),
+    ("Share as text", "Поделиться текстом"),
+    ("Save to a folder", "Сохранить в папку"),
+    ("Save as a text file", "Сохранить как текстовый файл"),
+    (
+        "Pick a folder or drive with the system file picker.",
+        "Выберите папку или диск в системном окне выбора файлов.",
+    ),
+    (
+        "Send it to another app: mail, a messenger or cloud storage.",
+        "Отправьте в другое приложение: почту, мессенджер или облако.",
+    ),
+    (
+        "Shows Horizon Android › Reports in the Files app.",
+        "Открывает Horizon Android › Отчёты в приложении «Файлы».",
+    ),
+    (
+        "Logs and device details in one ZIP. Nothing is uploaded by itself: review the ZIP before you send it.",
+        "Журналы и сведения об устройстве в одном ZIP. Сам он никуда не отправляется: просмотрите ZIP перед отправкой.",
+    ),
+    (
+        "The latest recording as a JSONL file, for your own analysis or for developers.",
+        "Последняя запись в файле JSONL — для собственного анализа или для разработчиков.",
+    ),
+    (
+        "The errors and logs of the last launches as one text file. Passwords, tokens and addresses are removed; review it before you send it.",
+        "Ошибки и журналы последних запусков одним текстовым файлом. Пароли, токены и адреса удалены; просмотрите файл перед отправкой.",
+    ),
+    (
+        "The errors and logs of the last game launches. Read the summary, save it as a text file or share it.",
+        "Ошибки и журналы последних запусков игры. Прочитайте сводку, сохраните её текстовым файлом или поделитесь ею.",
+    ),
+    (
+        "The previous session ended without a clean exit (last phase: {}). The game may have crashed, or Android closed it.",
+        "Прошлый сеанс завершился некорректно (последняя фаза: {}). Возможно, игра вылетела или её закрыл Android.",
+    ),
+    (
+        "The previous session ended normally.",
+        "Прошлый сеанс завершился нормально.",
+    ),
+    ("Last error: {}", "Последняя ошибка: {}"),
+    ("Preparing the report", "Подготовка отчёта"),
+    (
+        "Nothing is uploaded. Review the ZIP before you send it.",
+        "Ничего не отправляется. Просмотрите ZIP перед отправкой.",
+    ),
+    (
+        "Could not prepare the report",
+        "Не удалось подготовить отчёт",
+    ),
+    ("No recording yet", "Записи пока нет"),
+    (
+        "No performance report. Enable recording, then launch and play first.",
+        "Отчёта о производительности нет. Включите запись, затем запустите игру и поиграйте.",
+    ),
+    (
+        "Could not write the launch log",
+        "Не удалось записать журнал запуска",
+    ),
+    ("Opened in Files", "Открыто в «Файлах»"),
+    ("Open the Files app", "Откройте приложение «Файлы»"),
+    (
+        "«{}» is in Horizon Android › Reports.",
+        "«{}» лежит в Horizon Android › Отчёты.",
+    ),
+    (
+        "Reports opened in Files. Copy or share a report from there.",
+        "Отчёты открыты в «Файлах». Скопируйте отчёт или поделитесь им оттуда.",
+    ),
+    (
+        "Open the system Files app, then Horizon Android / Reports.",
+        "Откройте системное приложение «Файлы», затем Horizon Android / Отчёты.",
+    ),
+    (
+        "Android could not open the chosen file ({}). Try it from another place, such as Downloads.",
+        "Android не смог открыть выбранный файл ({}). Попробуйте выбрать его из другого места, например из «Скачанных».",
+    ),
 ];
 
 #[cfg(test)]

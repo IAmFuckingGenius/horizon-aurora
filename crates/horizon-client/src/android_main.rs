@@ -59,6 +59,10 @@ mod search_queue;
 mod secure_store;
 #[path = "android/shader_catalog.rs"]
 mod shader_catalog;
+#[path = "android/transfers.rs"]
+mod transfers;
+#[path = "android/world_archive.rs"]
+mod world_archive;
 #[rustfmt::skip]
 #[allow(dead_code)]
 #[path = "../../../launcher/src/skins.rs"]

@@ -63,7 +63,11 @@ pub(super) struct Launcher {
     session_ready: bool,
     prepared_session: Option<PathBuf>,
     focus: Option<usize>,
-    diagnostic_export: Option<mpsc::Receiver<std::result::Result<String, String>>>,
+    /// The diagnostic ZIP being written, and where it goes when it is ready.
+    diagnostic_export: Option<(
+        mpsc::Receiver<std::result::Result<PathBuf, String>>,
+        crate::transfers::Delivery,
+    )>,
     /// Where Play goes once the session is ready: the title screen, the quick-join
     /// server or straight into a world.
     launch_target: LaunchTarget,
@@ -263,6 +267,14 @@ impl Launcher {
 
     fn request_back(&mut self) {
         crate::platform::hide();
+        if crate::transfers::running().is_some() {
+            // Back stops a transfer; its dialog stays until the worker has cleaned up.
+            crate::transfers::cancel();
+            return;
+        }
+        if self.view.transfer_error.take().is_some() {
+            return;
+        }
         if self.exit_confirmation {
             self.exit_confirmation = false;
         } else if self.login.visible {
@@ -625,21 +637,27 @@ impl ApplicationHandler for Launcher {
             return;
         }
         crate::diagnostics::heartbeat("launcher", || serde_json::json!({}));
-        if let Some(result) = self
+        if let Some((result, delivery)) = self
             .diagnostic_export
             .as_ref()
-            .and_then(|r| r.try_recv().ok())
+            .and_then(|(r, delivery)| Some((r.try_recv().ok()?, *delivery)))
         {
             self.diagnostic_export = None;
-            self.catalog.status = match result {
-                Ok(name) => {
-                    let _ = crate::platform::open_documents("reports");
-                    format!(
-                        "Saved {name} in Reports. Review the ZIP before sharing; nothing was uploaded."
-                    )
-                }
-                Err(error) => format!("Diagnostic export failed: {error}"),
-            };
+            match result {
+                Ok(path) => self.send_report(path, crate::transfers::Report::Diagnostics, delivery),
+                Err(error) => self.toast(text::t("Could not prepare the report"), error, true),
+            }
+        }
+        while let Some(notice) = crate::transfers::poll() {
+            if notice.worlds {
+                self.refresh_worlds();
+            }
+            if notice.error {
+                self.view.toast = None;
+                self.view.transfer_error = Some((notice.title, notice.detail));
+            } else {
+                self.toast(notice.title, notice.detail, false);
+            }
         }
         crate::platform::poll_gamepad_connections();
         if let Err(error) = self.controller_frame(events) {

@@ -33,8 +33,20 @@ enum Command {
     Capture(bool),
     Bounds,
     ImportDocument,
+    /// The system file picker for a world import or a file export.
+    Document(Picker),
     /// Immersive, avoid the cutout, show the status bar.
     Screen(bool, bool, bool),
+}
+/// One Storage Access Framework request: ACTION_CREATE_DOCUMENT with a suggested
+/// `title`, or ACTION_OPEN_DOCUMENT for any of `mimes`. Its result comes back
+/// through `HorizonActivity.onActivityResult` with `request`.
+pub struct Picker {
+    pub request: i32,
+    pub create: bool,
+    /// The created document's type, or the types an open accepts.
+    pub mimes: Vec<&'static str>,
+    pub title: String,
 }
 struct Ui {
     vm: JavaVM,
@@ -396,6 +408,14 @@ impl Ui {
                     crate::documents::picker_failed("No Android document picker is available");
                 }
             }
+            Command::Document(picker) => {
+                let request = picker.request;
+                if let Err(error) = Self::start_picker(env, &self.activity, picker) {
+                    let _ = env.exception_clear();
+                    log::warn!("Document picker: {error}");
+                    crate::transfers::picker_failed(request);
+                }
+            }
             Command::Show(text) => {
                 let s = JObject::from(env.new_string(&text)?);
                 env.call_method(
@@ -624,6 +644,85 @@ impl Ui {
         Ok(())
     }
 }
+impl Ui {
+    fn start_picker(
+        env: &mut JNIEnv<'_>,
+        activity: &GlobalRef,
+        picker: Picker,
+    ) -> jni::errors::Result<()> {
+        let action = JObject::from(env.new_string(if picker.create {
+            "android.intent.action.CREATE_DOCUMENT"
+        } else {
+            "android.intent.action.OPEN_DOCUMENT"
+        })?);
+        let intent = env.new_object(
+            "android/content/Intent",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&action)],
+        )?;
+        let category = JObject::from(env.new_string("android.intent.category.OPENABLE")?);
+        env.call_method(
+            &intent,
+            "addCategory",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&category)],
+        )?;
+        let single = picker.create || picker.mimes.len() == 1;
+        let mime = JObject::from(env.new_string(if single {
+            picker.mimes.first().copied().unwrap_or("*/*")
+        } else {
+            "*/*"
+        })?);
+        env.call_method(
+            &intent,
+            "setType",
+            "(Ljava/lang/String;)Landroid/content/Intent;",
+            &[JValue::Object(&mime)],
+        )?;
+        if !single {
+            let mimes = env.new_object_array(
+                picker.mimes.len() as i32,
+                "java/lang/String",
+                JObject::null(),
+            )?;
+            for (i, m) in picker.mimes.iter().enumerate() {
+                let m = env.new_string(m)?;
+                env.set_object_array_element(&mimes, i as i32, m)?;
+            }
+            let key = JObject::from(env.new_string("android.intent.extra.MIME_TYPES")?);
+            env.call_method(
+                &intent,
+                "putExtra",
+                "(Ljava/lang/String;[Ljava/lang/String;)Landroid/content/Intent;",
+                &[JValue::Object(&key), JValue::Object(mimes.as_ref())],
+            )?;
+        }
+        if picker.create {
+            let key = JObject::from(env.new_string("android.intent.extra.TITLE")?);
+            let title = JObject::from(env.new_string(&picker.title)?);
+            env.call_method(
+                &intent,
+                "putExtra",
+                "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;",
+                &[JValue::Object(&key), JValue::Object(&title)],
+            )?;
+        }
+        // FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION.
+        env.call_method(
+            &intent,
+            "addFlags",
+            "(I)Landroid/content/Intent;",
+            &[JValue::Int(if picker.create { 3 } else { 1 })],
+        )?;
+        env.call_method(
+            activity,
+            "startActivityForResult",
+            "(Landroid/content/Intent;I)V",
+            &[JValue::Object(&intent), JValue::Int(picker.request)],
+        )?;
+        Ok(())
+    }
+}
 unsafe extern "C" fn callback(_: i32, _: i32, data: *mut std::ffi::c_void) -> i32 {
     let ui = unsafe { &*data.cast::<Ui>() };
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback_inner(ui))).unwrap_or_else(
@@ -737,6 +836,14 @@ pub fn pick_document() -> bool {
         return false;
     };
     ui.enqueue(Command::ImportDocument);
+    true
+}
+/// Opens the system file picker on Android's UI thread; false when it cannot.
+pub fn pick(picker: Picker) -> bool {
+    let Some(ui) = UI.get().filter(|ui| !ui.failed.load(Ordering::Acquire)) else {
+        return false;
+    };
+    ui.enqueue(Command::Document(picker));
     true
 }
 

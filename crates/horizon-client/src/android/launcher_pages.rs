@@ -24,10 +24,7 @@ pub(super) enum Action {
     Next,
     Previous,
     Profile,
-    Logs,
     RecordPerformance,
-    ExportPerformance,
-    ExportDiagnostics,
     Account,
     SignIn,
     DeviceSignIn,
@@ -79,6 +76,16 @@ pub(super) enum Action {
     HomeLastWorld,
     /// Portrait Home: the profile picker on or off.
     HomeProfile,
+    /// Worlds: save this world as a ZIP where the player picks.
+    ExportWorld(usize),
+    /// Worlds: unpack a world ZIP the player picks.
+    ImportWorld,
+    CancelTransfer,
+    /// Close the dialog of a failed transfer.
+    DismissTransfer,
+    /// Settings › Diagnostics: the ways to take a report out.
+    ReportMenu(crate::transfers::Report),
+    SendReport(crate::transfers::Report, crate::transfers::Delivery),
 }
 
 impl Launcher {
@@ -243,6 +250,12 @@ impl Launcher {
                 self.list_view = None;
                 self.draw_exit(&mut k);
             }
+            if crate::transfers::running().is_some() || self.view.transfer_error.is_some() {
+                k.targets.clear();
+                self.list_targets.clear();
+                self.list_view = None;
+                self.draw_transfer(&mut k);
+            }
         }
         self.targets = targets;
         if let Some(action) = self.pending_focus.take() {
@@ -305,6 +318,21 @@ impl Launcher {
         // The import overlay takes its own input.
         if crate::documents::busy() {
             return Ok(());
+        }
+        // A transfer's dialog is modal and stays usable during a download.
+        match action {
+            Some(Action::CancelTransfer) => {
+                crate::transfers::cancel();
+                return Ok(());
+            }
+            Some(Action::DismissTransfer) => {
+                self.view.transfer_error = None;
+                return Ok(());
+            }
+            _ if crate::transfers::running().is_some() || self.view.transfer_error.is_some() => {
+                return Ok(());
+            }
+            _ => {}
         }
         const WAIT: &str = "Please wait: the current download is still running";
         if self.catalog.busy() {
@@ -692,33 +720,33 @@ impl Launcher {
                     self.prepared_session = None;
                 }
             }
-            Some(Action::Logs) => {
-                self.catalog.status = crate::diagnostics::summary(&self.home);
-                if let Ok(error) = std::fs::read_to_string(self.home.join("android-error.txt")) {
-                    self.catalog.status = format!(
-                        "Last handled error: {}. {}",
-                        crate::diagnostics::redact(&error),
-                        self.catalog.status
-                    );
+            Some(Action::ExportWorld(index)) => {
+                if let Some(world) = self.view.worlds.get(index) {
+                    let dir = self
+                        .catalog
+                        .config
+                        .game_home(&self.home)
+                        .join("saves")
+                        .join(&world.folder);
+                    if let Err(error) = crate::transfers::export_world(dir, &world.name) {
+                        self.toast(super::text::t("Could not export the world"), error, true);
+                    }
                 }
             }
-            Some(Action::ExportDiagnostics) if self.diagnostic_export.is_none() => {
-                let home = self.home.clone();
-                let (sender, receiver) = mpsc::channel();
-                self.diagnostic_export = Some(receiver);
-                self.catalog.status =
-                    "Preparing local diagnostic ZIP. No upload; review before sharing.".into();
-                std::thread::spawn(move || {
-                    let result = crate::diagnostics::export(&home).map(|p| {
-                        p.file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned()
-                    });
-                    let _ = sender.send(result);
-                });
+            Some(Action::ImportWorld) => {
+                let saves = self.catalog.config.game_home(&self.home).join("saves");
+                if let Err(error) = crate::transfers::import_world(saves) {
+                    self.toast(super::text::t("Could not import the world"), error, true);
+                }
             }
-            Some(Action::ExportDiagnostics) => {}
+            Some(Action::CancelTransfer | Action::DismissTransfer) => {}
+            Some(Action::ReportMenu(report)) => {
+                self.open_chooser(chooser::Kind::Report(report));
+            }
+            Some(Action::SendReport(report, delivery)) => {
+                self.chooser = None;
+                self.prepare_report(report, delivery);
+            }
             Some(Action::RecordPerformance) => {
                 self.catalog.config.record_performance = !self.catalog.config.record_performance;
                 if !self.catalog.config.record_performance {
@@ -729,15 +757,90 @@ impl Launcher {
                     "Recording starts on Play. Detailed timings add overhead. Return here to save the report."
                 } else { "Performance recording off." }.into();
             }
-            Some(Action::ExportPerformance) => {
+            None => {}
+        }
+        Ok(())
+    }
+    /// Writes the report's file, then saves, shares or shows it.
+    fn prepare_report(
+        &mut self,
+        report: crate::transfers::Report,
+        delivery: crate::transfers::Delivery,
+    ) {
+        use super::text::{t, t_dyn};
+        use crate::transfers::{Delivery, Report};
+        match report {
+            Report::Diagnostics if self.diagnostic_export.is_some() => {}
+            Report::Diagnostics => {
+                let home = self.home.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.diagnostic_export = Some((receiver, delivery));
+                self.toast(
+                    t("Preparing the report"),
+                    t("Nothing is uploaded. Review the ZIP before you send it."),
+                    false,
+                );
+                std::thread::spawn(move || {
+                    let _ = sender.send(crate::diagnostics::export(&home));
+                });
+            }
+            Report::Performance if delivery == Delivery::Files => {
                 self.catalog.status = match crate::performance::export(&self.home) {
                     Ok(()) => "Reports opened in Files. Copy or share a report from there.".into(),
                     Err(e) => e,
                 };
             }
-            None => {}
+            Report::Performance => match crate::performance::latest(&self.home) {
+                Ok(path) => self.send_report(path, report, delivery),
+                Err(error) => self.toast(t("No recording yet"), t_dyn(&error), true),
+            },
+            Report::LaunchLog => match crate::diagnostics::launch_log(&self.home) {
+                Ok(path) => self.send_report(path, report, delivery),
+                Err(error) => self.toast(t("Could not write the launch log"), error, true),
+            },
         }
-        Ok(())
+    }
+    /// Hands a written report file to the picker, the share sheet or Files.
+    pub(super) fn send_report(
+        &mut self,
+        path: std::path::PathBuf,
+        report: crate::transfers::Report,
+        delivery: crate::transfers::Delivery,
+    ) {
+        use super::text::{t, tf};
+        use crate::transfers::Delivery;
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        match delivery {
+            Delivery::Save => {
+                if let Err(error) = crate::transfers::save_report(path, report) {
+                    self.toast(t("Could not save the file"), error, true);
+                }
+            }
+            Delivery::Share => {
+                if let Err(error) = crate::transfers::share_report(&path, report) {
+                    self.toast(t("Could not share the file"), error, true);
+                }
+            }
+            Delivery::Files => {
+                if crate::platform::open_documents("reports") {
+                    self.toast(
+                        t("Opened in Files"),
+                        tf("«{}» is in Horizon Android › Reports.", &[&name]),
+                        false,
+                    );
+                } else {
+                    self.toast(
+                        t("Open the Files app"),
+                        tf("«{}» is in Horizon Android › Reports.", &[&name]),
+                        false,
+                    );
+                }
+            }
+        }
     }
     pub(super) fn ui_density(&self) -> f32 {
         let (Some(r), Some(gui)) = (&self.renderer, &self.gui) else {

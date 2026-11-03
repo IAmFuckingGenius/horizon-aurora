@@ -3,7 +3,7 @@ use super::{
     Launcher,
     kit::{self, Kit, Style, col},
     pages::Action,
-    text::t,
+    text::{t, tf},
 };
 use crate::catalog::RendererMode;
 use horizon_client::ui_theme::Face;
@@ -17,12 +17,18 @@ pub(super) enum Kind {
     RenderScale,
     Profile,
     Orientation,
+    /// The ways to take a report out of Horizon.
+    Report(crate::transfers::Report),
 }
 pub(super) struct Chooser {
     title: &'static str,
     help: &'static str,
     device: Option<String>,
     choices: Vec<(String, String, Action, bool)>,
+    /// An icon per choice for a list of actions; radio squares when empty.
+    icons: Vec<&'static str>,
+    /// Text after the help, already in the launcher's language, wrapped in full.
+    note: Option<String>,
     pub scroll: f32,
     /// The option rows as last drawn, for D-pad navigation.
     rows: Vec<([f32; 4], Action)>,
@@ -33,6 +39,10 @@ impl Launcher {
     pub(super) fn open_chooser(&mut self, kind: Kind) {
         crate::platform::hide();
         self.catalog.editing = None;
+        if let Kind::Report(report) = kind {
+            self.chooser = Some(self.report_chooser(report));
+            return;
+        }
         let device = if matches!(kind, Kind::Renderer) {
             self.renderer.as_ref().map(|r| {
                 format!(
@@ -189,6 +199,8 @@ impl Launcher {
                     ),
                 ],
             ),
+            // Opened above.
+            Kind::Report(_) => return,
             Kind::Profile => {
                 let mut ids = vec![0, c.profile];
                 ids.extend(
@@ -246,11 +258,86 @@ impl Launcher {
             title,
             help,
             choices,
+            icons: Vec::new(),
+            note: None,
             device,
             scroll: 0.0,
             rows: Vec::new(),
             view: [0.0; 3],
         });
+    }
+    /// Save, share or show a report; the launch log also reads its summary here.
+    fn report_chooser(&self, report: crate::transfers::Report) -> Chooser {
+        use crate::transfers::{Delivery, Report};
+        let (title, help, save, share) = match report {
+            Report::Diagnostics => (
+                "Report for developers",
+                "Logs and device details in one ZIP. Nothing is uploaded by itself: review the ZIP before you send it.",
+                "Save to a folder",
+                "Share",
+            ),
+            Report::Performance => (
+                "Raw performance data",
+                "The latest recording as a JSONL file, for your own analysis or for developers.",
+                "Save to a folder",
+                "Share",
+            ),
+            Report::LaunchLog => (
+                "Launch log",
+                "The errors and logs of the last launches as one text file. Passwords, tokens and addresses are removed; review it before you send it.",
+                "Save as a text file",
+                "Share as text",
+            ),
+        };
+        let note = (report == Report::LaunchLog).then(|| {
+            let mut note = match crate::diagnostics::unclean_phase(&self.home) {
+                Some(phase) => tf(
+                    "The previous session ended without a clean exit (last phase: {}). The game may have crashed, or Android closed it.",
+                    &[&phase],
+                ),
+                None => t("The previous session ended normally.").into(),
+            };
+            if let Ok(error) = std::fs::read_to_string(self.home.join("android-error.txt"))
+                && !error.trim().is_empty()
+            {
+                note.push('\n');
+                note.push_str(&tf(
+                    "Last error: {}",
+                    &[&crate::diagnostics::redact(error.trim())],
+                ));
+            }
+            note
+        });
+        Chooser {
+            title,
+            help,
+            device: None,
+            choices: vec![
+                (
+                    save.into(),
+                    "Pick a folder or drive with the system file picker.".into(),
+                    Action::SendReport(report, Delivery::Save),
+                    false,
+                ),
+                (
+                    share.into(),
+                    "Send it to another app: mail, a messenger or cloud storage.".into(),
+                    Action::SendReport(report, Delivery::Share),
+                    false,
+                ),
+                (
+                    "Open in Files".into(),
+                    "Shows Horizon Android › Reports in the Files app.".into(),
+                    Action::SendReport(report, Delivery::Files),
+                    false,
+                ),
+            ],
+            icons: vec!["download", "external-link", "folder"],
+            note,
+            scroll: 0.0,
+            rows: Vec::new(),
+            view: [0.0; 3],
+        }
     }
 }
 impl Chooser {
@@ -268,6 +355,8 @@ impl Chooser {
                 ),
                 ("Cancel".into(), String::new(), Action::Dismiss, true),
             ],
+            icons: Vec::new(),
+            note: None,
             scroll: 0.0,
             rows: Vec::new(),
             view: [0.0; 3],
@@ -293,8 +382,19 @@ impl Chooser {
             .into_iter()
             .filter(|l| !l.is_empty())
             .collect();
-        let help_h =
-            help.len() as f32 * 18.85 + if self.device.is_some() { 20.0 } else { 0.0 } + 10.0;
+        let note: Vec<String> = self
+            .note
+            .as_deref()
+            .map(|n| k.wrap(Face::BodyMedium, 13.0, n, inner))
+            .unwrap_or_default();
+        let help_h = help.len() as f32 * 18.85
+            + if note.is_empty() {
+                0.0
+            } else {
+                8.0 + note.len() as f32 * 18.85
+            }
+            + if self.device.is_some() { 20.0 } else { 0.0 }
+            + 10.0;
         let head = 14.0 + 24.0 + 6.0 + help_h;
         // Each option's name and description, wrapped in full; its row grows.
         let tw = inner - 44.0 - 12.0;
@@ -373,6 +473,13 @@ impl Chooser {
             );
             cy += 18.85;
         }
+        if !note.is_empty() {
+            cy += 8.0;
+            for line in &note {
+                k.text(Face::BodyMedium, 13.0, 18.85, x + 16.0, cy, col::INK, line);
+                cy += 18.85;
+            }
+        }
         if let Some(device) = &self.device {
             k.text_fit(
                 Face::Mono,
@@ -419,7 +526,9 @@ impl Chooser {
         self.view = [top, bottom, maximum];
         self.rows.clear();
         let mut oy = cy;
-        for ((_, _, action, selected), (label, detail, rh)) in self.choices.iter().zip(&layout) {
+        for (i, ((_, _, action, selected), (label, detail, rh))) in
+            self.choices.iter().zip(&layout).enumerate()
+        {
             let rh = *rh;
             let r = [x + 16.0, oy, inner, rh];
             self.rows.push((r, *action));
@@ -440,16 +549,27 @@ impl Chooser {
                         col::CONTROL_RING
                     },
                 );
-                // A square radio: a 2 dp frame, and a dot when chosen.
-                let (rx, ry) = (r[0] + 12.0, oy + (rh - 20.0) / 2.0);
-                let ring = if *selected {
-                    col::ACCENT_HI
+                if let Some(icon) = self.icons.get(i) {
+                    // An action: its icon where a choice has its radio.
+                    k.ui.icon(
+                        icon,
+                        r[0] + 10.0,
+                        oy + (rh - 24.0) / 2.0,
+                        24.0,
+                        col::ACCENT_HI,
+                    );
                 } else {
-                    col::MUTED
-                };
-                kit::frame(k.ui, [rx, ry, 20.0, 20.0], ring);
-                if *selected {
-                    kit::fill(k.ui, rx + 6.0, ry + 6.0, 8.0, 8.0, col::ACCENT_HI);
+                    // A square radio: a 2 dp frame, and a dot when chosen.
+                    let (rx, ry) = (r[0] + 12.0, oy + (rh - 20.0) / 2.0);
+                    let ring = if *selected {
+                        col::ACCENT_HI
+                    } else {
+                        col::MUTED
+                    };
+                    kit::frame(k.ui, [rx, ry, 20.0, 20.0], ring);
+                    if *selected {
+                        kit::fill(k.ui, rx + 6.0, ry + 6.0, 8.0, 8.0, col::ACCENT_HI);
+                    }
                 }
                 let text = label.len().max(1) as f32 * 18.0
                     + if detail.is_empty() {
