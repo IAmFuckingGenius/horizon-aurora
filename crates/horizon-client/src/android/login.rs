@@ -524,10 +524,16 @@ impl Login {
             );
         } else {
             let label = t("Sign in to Ely.by");
-            let bw = k.button_width(Style::Primary, None, label).max(w.min(280.0));
+            let bw = k
+                .button_width(Style::Primary, None, label)
+                .max(w.min(280.0));
             k.button(
                 [x, cy, bw, 48.0],
-                Style::Primary,
+                if ready {
+                    Style::Primary
+                } else {
+                    Style::Disabled
+                },
                 None,
                 label,
                 ready.then_some(Action::SubmitEly),
@@ -566,15 +572,7 @@ impl Login {
                 t("Singleplayer worlds and servers without licence checks. The name is up to 16 letters, digits or _."),
             ) + 10.0;
         }
-        k.text(
-            Face::Body,
-            12.0,
-            17.0,
-            x,
-            cy,
-            col::MUTED,
-            t("In-game name"),
-        );
+        k.text(Face::Body, 12.0, 17.0, x, cy, col::MUTED, t("In-game name"));
         cy += 20.0;
         let caret = k.field(
             [x, cy, w, 48.0],
@@ -599,12 +597,17 @@ impl Login {
         }
         let label = t("Play offline");
         let bw = k.button_width(Style::Primary, Some(Icon::Pixel("check")), label);
+        let ready = !name.trim().is_empty();
         k.button(
             [x, cy, bw.max(w.min(280.0)), 48.0],
-            Style::Primary,
+            if ready {
+                Style::Primary
+            } else {
+                Style::Disabled
+            },
             Some(Icon::Pixel("check")),
             label,
-            (!name.trim().is_empty()).then_some(Action::SelectOffline),
+            ready.then_some(Action::SelectOffline),
         );
     }
 
@@ -617,10 +620,9 @@ impl Login {
             _ => None,
         };
         let microsoft_signed_in = self.signed_in
-            && self
-                .saved_accounts
-                .iter()
-                .any(|a| Some(&a.name) == self.profile.as_ref() && a.provider == Provider::Microsoft);
+            && self.saved_accounts.iter().any(|a| {
+                Some(&a.name) == self.profile.as_ref() && a.provider == Provider::Microsoft
+            });
         if microsoft_signed_in && code.is_none() && !self.pending() {
             let name = self.profile.clone().unwrap_or_default();
             cy += k.paragraph(
@@ -819,7 +821,14 @@ fn caret_blink(k: &mut Kit, editing: bool, caret: f32, field_y: f32) {
     }
 }
 /// A tappable card: icon, title and a line or two of what it is.
-fn option_card(k: &mut Kit, r: [f32; 4], icon: &'static str, title: &str, detail: &str, action: Action) {
+fn option_card(
+    k: &mut Kit,
+    r: [f32; 4],
+    icon: &'static str,
+    title: &str,
+    detail: &str,
+    action: Action,
+) {
     let [x, y, w, h] = r;
     let pressed = k.pressed(r, Some(action));
     kit::fill(
@@ -828,7 +837,11 @@ fn option_card(k: &mut Kit, r: [f32; 4], icon: &'static str, title: &str, detail
         y,
         w,
         h,
-        if pressed { col::CONTROL_PRESSED } else { col::CONTROL },
+        if pressed {
+            col::CONTROL_PRESSED
+        } else {
+            col::CONTROL
+        },
     );
     kit::frame(k.ui, r, col::CONTROL_RING);
     k.ui.icon(icon, x + 12.0, y + 14.0, 24.0, col::ACCENT_HI);
@@ -865,7 +878,11 @@ fn account_row(k: &mut Kit, r: [f32; 4], name: &str, provider: &str, on: bool, a
         y,
         w,
         h,
-        if pressed { col::CONTROL_PRESSED } else { col::CONTROL },
+        if pressed {
+            col::CONTROL_PRESSED
+        } else {
+            col::CONTROL
+        },
     );
     kit::frame(k.ui, r, if on { col::ACCENT } else { col::CONTROL_RING });
     k.ui.icon("user", x + 12.0, y + 12.0, 24.0, col::INK_SOFT);

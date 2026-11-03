@@ -435,14 +435,21 @@ impl Wardrobe {
         }
         rows
     }
-    /// Who the appearance belongs to, for the page's subtitle.
-    pub fn owner(&self) -> String {
-        let account = self.key.split_once(':').map_or("", |(_, name)| name);
-        match self.provider {
-            Some(Provider::Microsoft) => format!("{} · Microsoft", Accounts::load().selected().map_or(account.to_owned(), |a| a.name.clone())),
-            Some(Provider::Ely) => format!("{} · Ely.by", Accounts::load().selected().map_or(account.to_owned(), |a| a.name.clone())),
-            None => tf("{} · offline", &[account]),
+    /// Who the appearance belongs to, for the page's subtitle: the account, or
+    /// `offline` (the offline name as the player typed it).
+    pub fn owner(&self, offline: &str) -> String {
+        let account = Accounts::load().selected().map(|a| a.name.clone());
+        match (self.provider, account) {
+            (Some(Provider::Microsoft), Some(name)) => format!("{name} · Microsoft"),
+            (Some(Provider::Ely), Some(name)) => format!("{name} · Ely.by"),
+            _ => tf("{} · offline", &[offline.trim()]),
         }
+    }
+    /// Whether the gallery shows nothing of the current kind.
+    pub fn empty(&self) -> bool {
+        let local = self.library.entries.iter().any(|e| e.kind == self.kind());
+        let cloud = self.capes && self.provider.is_some() && !self.cache.snapshot.capes.is_empty();
+        !local && !cloud
     }
     /// The 3D preview in `r` with its turn, zoom and model buttons under it.
     pub fn draw_preview(&mut self, k: &mut Kit, r: [f32; 4]) {
@@ -466,8 +473,16 @@ impl Wardrobe {
         let cy = py + ph + 8.0;
         let bw = (pw - 24.0) / 4.0;
         for (i, (icon, label, action)) in [
-            (Some(Icon::Sprite(kit::CHEVRON_LEFT)), "", Action::WardrobeRotate(-1)),
-            (Some(Icon::Pixel("chevron-right")), "", Action::WardrobeRotate(1)),
+            (
+                Some(Icon::Sprite(kit::CHEVRON_LEFT)),
+                "",
+                Action::WardrobeRotate(-1),
+            ),
+            (
+                Some(Icon::Pixel("chevron-right")),
+                "",
+                Action::WardrobeRotate(1),
+            ),
             (None, "−", Action::WardrobeZoom(false)),
             (None, "+", Action::WardrobeZoom(true)),
         ]
@@ -516,8 +531,18 @@ impl Wardrobe {
         k.segmented(
             [x, y, seg_w, 48.0],
             &[
-                (Some("user"), t("Skins"), Action::WardrobeKind(false), !self.capes),
-                (Some("image"), t("Capes"), Action::WardrobeKind(true), self.capes),
+                (
+                    Some("user"),
+                    t("Skins"),
+                    Action::WardrobeKind(false),
+                    !self.capes,
+                ),
+                (
+                    Some("image"),
+                    t("Capes"),
+                    Action::WardrobeKind(true),
+                    self.capes,
+                ),
             ],
             true,
         );
@@ -605,7 +630,13 @@ impl Wardrobe {
                 Row::Button(label, icon, action) => {
                     list_targets.push((r, action));
                     if r[1] + 48.0 > ly && r[1] < ly + lh {
-                        k.button(r, Style::Ghost, Some(Icon::Pixel(icon)), t(label), Some(action));
+                        k.button(
+                            r,
+                            Style::Ghost,
+                            Some(Icon::Pixel(icon)),
+                            t(label),
+                            Some(action),
+                        );
                     }
                     continue;
                 }
@@ -621,17 +652,61 @@ impl Wardrobe {
                 r[1],
                 r[2],
                 r[3],
-                if pressed { col::CONTROL_PRESSED } else { col::CONTROL },
+                if pressed {
+                    col::CONTROL_PRESSED
+                } else {
+                    col::CONTROL
+                },
             );
             kit::frame(k.ui, r, if on { col::ACCENT } else { col::CONTROL_RING });
             k.ui.icon(icon, r[0] + 12.0, r[1] + 12.0, 24.0, col::INK_SOFT);
             let tw = r[2] - 48.0 - if on { 40.0 } else { 12.0 };
-            k.text_fit(Face::BodySemiBold, 15.0, 18.0, r[0] + 48.0, r[1] + 6.0, tw, col::INK, &title);
-            k.text_fit(Face::Mono, 11.0, 14.0, r[0] + 48.0, r[1] + 27.0, tw, col::MUTED, &detail);
+            k.text_fit(
+                Face::BodySemiBold,
+                15.0,
+                18.0,
+                r[0] + 48.0,
+                r[1] + 6.0,
+                tw,
+                col::INK,
+                &title,
+            );
+            k.text_fit(
+                Face::Mono,
+                11.0,
+                14.0,
+                r[0] + 48.0,
+                r[1] + 27.0,
+                tw,
+                col::MUTED,
+                &detail,
+            );
             if on {
                 k.ui.icon("check", r[0] + r[2] - 32.0, r[1] + 12.0, 24.0, col::SUCCESS);
             }
             k.hit(r, action);
+        }
+        if self.empty() && ry + 8.0 < ly + lh {
+            let hint = if self.capes {
+                t(
+                    "No capes on this phone yet. Add a cape PNG (64×32) with the button above; it shows only for you.",
+                )
+            } else {
+                t(
+                    "No skins on this phone yet. Add a skin PNG (64×64) with the button above, then tap it to wear it.",
+                )
+            };
+            k.paragraph(
+                Face::BodyMedium,
+                13.0,
+                18.0,
+                lx + 8.0,
+                ry + 8.0,
+                lw - 16.0,
+                6,
+                col::MUTED,
+                hint,
+            );
         }
         k.clip(clip, [lx, ly, lw, lh]);
         ([lx, ly, lw, lh], content + 12.0)

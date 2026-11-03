@@ -320,7 +320,11 @@ fn wanted(t: Thermal, heat: Heat) -> (usize, usize) {
     let (up_at, down_at, first_status): ([f32; 3], [f32; 3], usize) = match heat {
         Heat::Off => return (0, 0),
         // Severe heat or a forecast of it: the system already throttles.
-        Heat::Soft => ([1.0, f32::INFINITY, f32::INFINITY], [0.92, f32::INFINITY, f32::INFINITY], 3),
+        Heat::Soft => (
+            [1.0, f32::INFINITY, f32::INFINITY],
+            [0.92, f32::INFINITY, f32::INFINITY],
+            3,
+        ),
         Heat::Balanced => ([0.75, 0.85, 0.95], [0.65, 0.78, 0.88], 2),
         Heat::Strong => ([0.65, 0.75, 0.85], [0.55, 0.68, 0.78], 1),
     };
@@ -511,7 +515,10 @@ mod tests {
         let mut g = Governor::default();
         let now = Instant::now();
         for (status, headroom) in [(None, None), (Some(0), Some(0.3)), (Some(1), Some(0.7))] {
-            assert_eq!(g.update(Thermal { status, headroom }, now, Heat::Balanced), 0);
+            assert_eq!(
+                g.update(Thermal { status, headroom }, now, Heat::Balanced),
+                0
+            );
             assert_eq!(g.limits(), Limits::NONE);
         }
         assert_eq!(Limits::NONE.fps_cap(120), 120);
@@ -546,7 +553,10 @@ mod tests {
             status: Some(1),
             headroom: Some(0.9),
         };
-        assert_eq!(g.update(warm, t0 + Duration::from_secs(60), Heat::Balanced), 3);
+        assert_eq!(
+            g.update(warm, t0 + Duration::from_secs(60), Heat::Balanced),
+            3
+        );
         // Cool readings step down one level per COOL period.
         let cool = Thermal {
             status: Some(0),
@@ -556,7 +566,10 @@ mod tests {
         assert_eq!(g.update(cool, t, Heat::Balanced), 3);
         t += Governor::COOL;
         assert_eq!(g.update(cool, t, Heat::Balanced), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(1), Heat::Balanced), 2);
+        assert_eq!(
+            g.update(cool, t + Duration::from_secs(1), Heat::Balanced),
+            2
+        );
         t += Governor::COOL;
         assert_eq!(g.update(cool, t, Heat::Balanced), 1);
         t += Governor::COOL;
@@ -564,11 +577,26 @@ mod tests {
         assert_eq!(g.limits(), Limits::NONE);
         // A hot reading in the middle of cooling restarts the wait.
         assert_eq!(g.update(hot, t, Heat::Balanced), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(20), Heat::Balanced), 2);
-        assert_eq!(g.update(hot, t + Duration::from_secs(25), Heat::Balanced), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(40), Heat::Balanced), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(69), Heat::Balanced), 2);
-        assert_eq!(g.update(cool, t + Duration::from_secs(70), Heat::Balanced), 1);
+        assert_eq!(
+            g.update(cool, t + Duration::from_secs(20), Heat::Balanced),
+            2
+        );
+        assert_eq!(
+            g.update(hot, t + Duration::from_secs(25), Heat::Balanced),
+            2
+        );
+        assert_eq!(
+            g.update(cool, t + Duration::from_secs(40), Heat::Balanced),
+            2
+        );
+        assert_eq!(
+            g.update(cool, t + Duration::from_secs(69), Heat::Balanced),
+            2
+        );
+        assert_eq!(
+            g.update(cool, t + Duration::from_secs(70), Heat::Balanced),
+            1
+        );
     }
 
     #[test]

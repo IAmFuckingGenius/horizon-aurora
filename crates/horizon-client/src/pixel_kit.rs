@@ -590,11 +590,16 @@ impl<A: Copy + PartialEq> Kit<'_, '_, A> {
             24.0,
             if selected { col::ACCENT_HI } else { col::MUTED },
         );
-        let label = self.ui.fit_text(Face::BodySemiBold, 11.0, label, w - 4.0);
-        let lw = self.ui.measure(Face::BodySemiBold, 11.0, &label);
+        // A long label («Дополнения») takes a smaller size before it is cut.
+        let size = [11.0, 10.0, 9.0]
+            .into_iter()
+            .find(|&s| self.ui.measure(Face::BodySemiBold, s, label) <= w - 2.0)
+            .unwrap_or(9.0);
+        let label = self.ui.fit_text(Face::BodySemiBold, size, label, w - 2.0);
+        let lw = self.ui.measure(Face::BodySemiBold, size, &label);
         self.ui.text_line(
             Face::BodySemiBold,
-            11.0,
+            size,
             12.1,
             x + (w - lw) / 2.0,
             top + 27.0,
