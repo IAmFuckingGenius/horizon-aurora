@@ -158,11 +158,12 @@ fn short_count(n: u64) -> String {
 
 /// Width of the pager: two 48 dp buttons around the page label.
 const PAGER_W: f32 = 188.0;
-/// The four destinations of the rail.
-const NAV: [(Page, &str, &str); 4] = [
+/// The destinations of the rail.
+const NAV: [(Page, &str, &str); 5] = [
     (Page::Play, "home", "Home"),
     (Page::Mods, "package", "Add-ons"),
     (Page::Worlds, "folder", "Worlds"),
+    (Page::Skins, "user", "Skins"),
     (Page::Settings, "sliders", "Settings"),
 ];
 fn nav_selected(page: Page, target: Page) -> bool {
@@ -254,6 +255,7 @@ impl Launcher {
         match self.catalog.page {
             Page::Play => self.draw_home(k, main, portrait),
             Page::Worlds => self.draw_worlds(k, main, portrait),
+            Page::Skins => self.draw_skins(k, main, portrait),
             Page::Settings => self.draw_settings(k, main, portrait),
             _ => self.draw_addons(k, main, portrait),
         }
@@ -267,7 +269,7 @@ impl Launcher {
         if portrait {
             kit::fill(k.ui, 0.0, h - 64.0, w, 64.0, col::SIDE);
             kit::fill(k.ui, 0.0, h - 64.0, w, 2.0, col::RAIL_EDGE);
-            let item = (w - 16.0 - 12.0) / 4.0;
+            let item = (w - 16.0 - 4.0 * (NAV.len() - 1) as f32) / NAV.len() as f32;
             for (i, (target, icon, label)) in NAV.into_iter().enumerate() {
                 k.nav(
                     [8.0 + i as f32 * (item + 4.0), h - 60.0, item, 56.0],
@@ -281,7 +283,7 @@ impl Launcher {
             kit::fill(k.ui, 0.0, 0.0, 96.0, h, col::SIDE);
             kit::fill(k.ui, 94.0, 0.0, 2.0, h, col::RAIL_EDGE);
             kit::brand(k.ui, 43.0, 12.0);
-            let step = ((h - 56.0 - 8.0) / 4.0).clamp(48.0, 66.0);
+            let step = ((h - 56.0 - 8.0) / NAV.len() as f32).clamp(48.0, 66.0);
             for (i, (target, icon, label)) in NAV.into_iter().enumerate() {
                 k.nav(
                     [23.0, 56.0 + i as f32 * step, 72.0, step - 4.0],
@@ -1933,6 +1935,59 @@ impl Launcher {
             ry += rh;
         }
         k.clip(clip, [lx, ly, lw, lh]);
+    }
+
+    // ---- Skins ----
+
+    fn draw_skins(&mut self, k: &mut Kit, main: [f32; 4], portrait: bool) {
+        let [mx, my, mw, mh] = main;
+        sky::band(k.ui, [mx, my, mw, 72.0], self.sky_time());
+        let x0 = mx + 16.0;
+        let w0 = mw - 32.0;
+        let top = my + if portrait { 16.0 } else { 12.0 };
+        k.text(
+            Face::Pixel,
+            32.0,
+            32.0,
+            x0,
+            top,
+            col::INK,
+            t("Skins & capes"),
+        );
+        let owner = self.wardrobe.owner();
+        k.text_fit(
+            Face::Mono,
+            12.0,
+            16.0,
+            x0,
+            top + 32.0,
+            w0,
+            col::INK_SOFT,
+            &owner,
+        );
+        let body_top = top + 60.0;
+        let bottom = my + mh - 16.0;
+        // Landscape: the preview on the left, the list beside it. Portrait: the
+        // preview above, as tall as the screen allows.
+        let (preview, list) = if !portrait && w0 >= 520.0 {
+            let pw = (w0 * 0.38).clamp(220.0, 320.0);
+            (
+                [x0, body_top, pw, bottom - body_top],
+                [x0 + pw + 16.0, body_top, w0 - pw - 16.0, bottom - body_top],
+            )
+        } else {
+            let ph = ((bottom - body_top) * 0.45).clamp(220.0, 360.0);
+            (
+                [x0, body_top, w0, ph],
+                [x0, body_top + ph + 8.0, w0, bottom - body_top - ph - 8.0],
+            )
+        };
+        self.wardrobe.draw_preview(k, preview);
+        let scroll = self.catalog.scroll;
+        let ([_, ly, _, lh], content) =
+            self.wardrobe
+                .draw_list(k, list, scroll, &mut self.list_targets);
+        self.list_scroll(ly, ly + lh, content);
     }
 
     // ---- Settings ----

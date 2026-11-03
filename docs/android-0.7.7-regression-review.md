@@ -163,6 +163,53 @@ measurement then reached 118.57 FPS with 5.501 ms average GPU time and 22 drawn
 sections. The setting was restored after testing. This is a display-policy
 observation on this tablet, not a promise that every firmware honors requests.
 
+### Poco verification and worker/cache isolation
+
+On the owner's connected Adreno 810 phone, the combined static-cutout and
+settled-terrain paths were toggled A/B/A/B within one optimized-fast process,
+at 16 chunks and 100% 2772×1280. The same 8,266 sections were resident throughout:
+28.48/31.69/28.54/31.90 FPS and 34.104/30.517/34.028/30.348 ms average GPU time.
+This reproduces a roughly 12% FPS gain from the new paths on that phone, but
+does not establish parity with 0.7.4. Looking down reduced GPU time to 6.952 ms;
+the short sample averaged 69.68 FPS with intermittent longer CPU/frame intervals,
+so GPU relief alone did not produce a sustained 120 FPS result there.
+
+The optional worker/cache controls postdate 0.7.5; their zero settings preserve
+the engine defaults. The worker-selection formula is the same in 0.7.4 and
+0.7.5, and the GPU arena file is identical between those releases. Their upload
+code changed, but the old matching scene's GPU stage samples show preparation
+at approximately 0.081/0.069 ms and world rendering at 17.962/19.763 ms for
+0.7.4/0.7.5 respectively. This points to world rendering in that scene rather
+than proving all buffer policies harmless in every workload.
+
+Within the current tablet test, the settled stationary scene measured default
+44.14 FPS / 19.597 ms GPU, one chunk worker 44.13 / 19.534, a 32 MiB reusable
+cache budget 44.07 / 19.615, and defaults again 43.84 / 19.729. Streaming queues
+were empty. These changes did not recover the stationary GPU loss; they may
+still affect generation, memory pressure and longer movement tests. Test-only
+configuration was restored afterwards.
+
+### Exact 0.7.4 library on Poco
+
+The owner's phone subsequently ran the exact 0.7.4 public native library in the
+isolated wrapper on a copy of the test profile. At the matching position and
+zero yaw/pitch, 16 chunks, 2772×1280, no packs and 8,266 resident sections,
+eight pre-AFK-cap one-second samples averaged 32.98 FPS and 30.194 ms GPU time.
+The current optimized-fast build with recording/profiling also enabled measured
+31.73/31.72 FPS and 30.334/30.333 ms GPU time in two ten-second runs. This scene
+therefore does not reproduce a historical 60-versus-30 FPS loss, and its GPU
+times are now close. These are not matched production-profile CPU comparisons:
+0.7.4 used the public release library, whereas the current test used fast.
+Other scenes and longer phone sessions remain unverified.
+
+An intermediate current-build downward test hit the game's own AFK limit of
+30 FPS after a minute without physical input. Control commands do not reset
+that timer. It must not be cited as proof of a recording-induced 30 FPS cap.
+Repeating with the test-only inactivity setting set to `minimized` reached
+59.69 FPS / 7.889 ms GPU time looking down. Ordinary Android touch events do
+reset the idle timer in the game event handler. Existing records still show
+higher CPU timings with detailed recording, but require separate isolation.
+
 - Matched production-profile GPU/CPU comparisons and causal isolation of the slowdown.
 - ARMv7 device recheck after the ARM64 GLES fix; other drivers and x86 ABIs.
 - Mixed physical/touch toggle inputs, suspend/resume and resource reloads.

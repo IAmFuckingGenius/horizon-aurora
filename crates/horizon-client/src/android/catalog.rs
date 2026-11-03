@@ -14,6 +14,24 @@ pub fn source_only_mod(project: &Project) -> bool {
 /// Account tokens and client secrets are never bundled.
 pub const MICROSOFT_CLIENT_ID: &str = "00000000441cc96b";
 
+/// Minecraft player names are at most 16 UTF-16 units; a longer name fails
+/// the integrated-server handshake with only a generic disconnect. Truncate
+/// to that limit, counting UTF-16 units so characters outside the BMP count
+/// twice, as the protocol does.
+pub fn truncate_player_name(name: &str) -> String {
+    let mut units = 0;
+    let mut out = String::new();
+    for c in name.chars() {
+        let w = c.len_utf16();
+        if units + w > 16 {
+            break;
+        }
+        units += w;
+        out.push(c);
+    }
+    out
+}
+
 /// Real Vulkan rendering paths; these do not select a different driver or API.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -123,6 +141,7 @@ impl Config {
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .unwrap_or_default();
         config.device.migrate_missing(&value, &legacy);
+        config.name = truncate_player_name(&config.name);
         config
     }
     pub fn save(&self, home: &Path) -> Result<(), String> {
@@ -157,6 +176,8 @@ pub enum Page {
     Settings,
     /// The profile's worlds: list, open in Files.
     Worlds,
+    /// The account's skins and capes: the wardrobe.
+    Skins,
 }
 impl Page {
     pub fn is_catalog(self) -> bool {
@@ -660,6 +681,7 @@ impl Catalog {
     }
     pub fn edit(&mut self, out: horizon_client::osk::Output, home: &Path) {
         use horizon_client::osk::Output;
+        let is_name = self.editing == Some("name");
         let field = match self.editing {
             Some("name") => &mut self.config.name,
             Some("server") => &mut self.config.server,
@@ -668,7 +690,14 @@ impl Catalog {
             _ => &mut self.query,
         };
         match out {
-            Output::Text(s) => field.push_str(&s),
+            Output::Text(s) => {
+                if is_name {
+                    let combined = format!("{}{}", field, s);
+                    *field = truncate_player_name(&combined);
+                } else {
+                    field.push_str(&s);
+                }
+            }
             Output::Backspace => {
                 field.pop();
             }

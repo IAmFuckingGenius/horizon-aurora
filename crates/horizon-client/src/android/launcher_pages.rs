@@ -27,6 +27,25 @@ pub(super) enum Action {
     RecordPerformance,
     Account,
     SignIn,
+    ElySignIn,
+    MicrosoftAccount,
+    OfflineAccount,
+    SubmitEly,
+    SavedAccounts,
+    SavedPage(bool),
+    SelectAccount(usize),
+    SelectOffline,
+    WardrobeKind(bool),
+    WardrobeSelect(usize),
+    WardrobeImport,
+    WardrobeCloud,
+    WardrobeUpload,
+    WardrobeActivateCape(usize),
+    WardrobeUseCloud,
+    WardrobeModel,
+    WardrobeRotate(i8),
+    WardrobeZoom(bool),
+    WardrobeHideCape,
     DeviceSignIn,
     CopyLoginCode,
     CancelLogin,
@@ -232,11 +251,8 @@ impl Launcher {
                 self.list_targets.clear();
                 self.list_view = None;
                 k.targets.clear();
-                self.login.draw(
-                    &mut k,
-                    &self.catalog.config.name,
-                    self.catalog.editing == Some("name"),
-                );
+                self.login
+                    .draw(&mut k, &self.catalog.config.name, self.catalog.editing);
             }
             if let Some(chooser) = &mut self.chooser {
                 k.targets.clear();
@@ -507,16 +523,99 @@ impl Launcher {
                 .into();
             }
             Some(Action::Account) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.login.providers = true;
+                self.login.offline = false;
+                self.login.ely = false;
+                self.login.choosing = false;
                 self.login.visible = true;
+            }
+            Some(Action::OfflineAccount | Action::MicrosoftAccount) => {
+                self.login.providers = false;
+                self.login.offline = matches!(action, Some(Action::OfflineAccount));
+                self.login.ely = false;
+                self.login.choosing = false;
+                self.login.visible = true;
+            }
+            Some(Action::SavedAccounts) => {
+                self.login.providers = false;
+                self.login.refresh_status();
+                self.login.choosing = true;
+                self.login.ely = false;
+            }
+            Some(Action::SavedPage(next)) => {
+                if next && self.login.account_offset + 5 < self.login.saved_accounts.len() {
+                    self.login.account_offset += 5;
+                } else if !next {
+                    self.login.account_offset = self.login.account_offset.saturating_sub(5);
+                }
+            }
+            Some(Action::SelectAccount(index)) => {
+                let mut accounts = crate::account::Accounts::load();
+                if let Some(account) = self.login.saved_accounts.get(index)
+                    && accounts.accounts.iter().any(|a| a.key() == account.key())
+                {
+                    accounts.selected = Some(account.key());
+                    accounts.save()?;
+                }
+                self.session_ready = false;
+                self.prepared_session = None;
+                self.session_worker = None;
+                self.login.refresh_status();
+                if self.catalog.page == Page::Skins {
+                    self.wardrobe.open(
+                        &self.catalog.config.name,
+                        &self.catalog.config.microsoft_client_id,
+                    );
+                }
+            }
+            Some(Action::SelectOffline) => {
+                self.catalog.config.save(&self.home)?;
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.login.hide();
+                let mut accounts = crate::account::Accounts::load();
+                accounts.selected = None;
+                accounts.save()?;
+                self.session_ready = false;
+                self.prepared_session = None;
+                self.session_worker = None;
+                self.login.choosing = false;
+                self.login.refresh_status();
+                if self.catalog.page == Page::Skins {
+                    self.wardrobe.open(
+                        &self.catalog.config.name,
+                        &self.catalog.config.microsoft_client_id,
+                    );
+                }
+            }
+            Some(Action::ElySignIn) => {
+                self.login.providers = false;
+                self.login.close();
+                self.login.ely = true;
+                self.login.visible = true;
+            }
+            Some(Action::SubmitEly) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.session_ready = false;
+                self.prepared_session = None;
+                self.session_worker = None;
+                if !self.login.pending() {
+                    self.login.start_ely();
+                }
             }
             Some(Action::CloseLogin) => {
                 self.login.hide();
                 crate::platform::hide();
                 self.catalog.editing = None;
+                self.refresh_wardrobe_account();
             }
             Some(Action::DeviceSignIn) => {
                 self.session_ready = false;
                 self.prepared_session = None;
+                self.session_worker = None;
                 self.login
                     .start_device(&self.catalog.config.microsoft_client_id);
             }
@@ -529,12 +628,15 @@ impl Launcher {
             Some(Action::SignIn) => {
                 self.session_ready = false;
                 self.prepared_session = None;
+                self.session_worker = None;
                 self.login.start(&self.catalog.config.microsoft_client_id);
             }
             Some(Action::SignOut) => {
                 self.session_ready = false;
                 self.prepared_session = None;
+                self.session_worker = None;
                 self.login.sign_out();
+                self.refresh_wardrobe_account();
             }
             Some(Action::LoginLink) => self.login.open_link(),
             Some(Action::Page(page)) => {
@@ -552,6 +654,12 @@ impl Launcher {
                 if addons(page) {
                     self.view.last_addon = page;
                 }
+                if page == Page::Skins {
+                    self.wardrobe.open(
+                        &self.catalog.config.name,
+                        &self.catalog.config.microsoft_client_id,
+                    );
+                }
                 self.catalog.editing = None;
                 if crate::platform::active() {
                     crate::platform::hide();
@@ -568,6 +676,36 @@ impl Launcher {
                 self.launch_target = LaunchTarget::Title;
                 self.action(events)?;
             }
+            Some(Action::WardrobeKind(cape)) => {
+                self.wardrobe.capes = cape;
+                self.catalog.scroll = 0.0;
+            }
+            Some(Action::WardrobeSelect(index)) => self.wardrobe.select(index),
+            Some(Action::WardrobeImport) => self.wardrobe.import(),
+            Some(Action::WardrobeCloud) => self
+                .wardrobe
+                .cloud(&self.catalog.config.microsoft_client_id, None),
+            Some(Action::WardrobeUpload) => self.wardrobe.cloud(
+                &self.catalog.config.microsoft_client_id,
+                Some(wardrobe::CloudAction::Upload),
+            ),
+            Some(Action::WardrobeActivateCape(index)) => self.wardrobe.cloud(
+                &self.catalog.config.microsoft_client_id,
+                Some(wardrobe::CloudAction::Cape(index)),
+            ),
+            Some(Action::WardrobeUseCloud) => self.wardrobe.use_cloud(),
+            Some(Action::WardrobeModel) => self.wardrobe.model(),
+            Some(Action::WardrobeRotate(direction)) => {
+                self.wardrobe.camera.rotate(direction as f32 * 25.0, 0.0);
+                self.wardrobe.preview();
+            }
+            Some(Action::WardrobeZoom(inward)) => {
+                self.wardrobe
+                    .camera
+                    .zoom(if inward { 1.15 } else { 1.0 / 1.15 });
+                self.wardrobe.preview();
+            }
+            Some(Action::WardrobeHideCape) => self.wardrobe.hide_cape(),
             Some(Action::JoinServer) => {
                 crate::platform::hide();
                 self.catalog.editing = None;
@@ -642,11 +780,23 @@ impl Launcher {
                 }
             }
             Some(Action::FinishNameEdit) => {
+                if self.catalog.editing == Some("name") {
+                    self.refresh_wardrobe_account();
+                }
                 self.catalog.editing = None;
                 crate::platform::hide();
                 self.catalog.config.save(&self.home)?;
             }
             Some(Action::Field(name)) => {
+                if let Some(value) = self.login.field(name) {
+                    self.catalog.editing = Some(name);
+                    if name == "ely_password" || name == "ely_otp" {
+                        crate::platform::show_secret(value);
+                    } else {
+                        crate::platform::show(value);
+                    }
+                    return Ok(());
+                }
                 if name == "render_scale" {
                     self.catalog.render_scale_text =
                         self.catalog.config.render_scale.percent().to_string();
@@ -718,6 +868,7 @@ impl Launcher {
                 if self.session_worker.is_none() {
                     self.session_ready = false;
                     self.prepared_session = None;
+                    self.session_worker = None;
                 }
             }
             Some(Action::ExportWorld(index)) => {
@@ -851,6 +1002,15 @@ impl Launcher {
     }
 
     pub(super) fn touch_event(&mut self, events: &ActiveEventLoop, t: Touch) -> Result<()> {
+        if self.catalog.page == Page::Skins
+            && !self.login.visible
+            && self.wardrobe.gesture(&t, self.ui_density())
+        {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            return Ok(());
+        }
         self.focus = None;
         self.pending_focus = None;
         if let Some(window) = &self.window {
@@ -922,7 +1082,7 @@ impl Launcher {
             _ => key.text.map(|s| Output::Text(s.into())),
         };
         if let Some(out) = out {
-            self.catalog.edit(out, &self.home);
+            self.edit_text(out);
         }
     }
 }
