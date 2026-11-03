@@ -743,7 +743,8 @@ impl Launcher {
             Some(Action::WardrobeUseCloud) => self.wardrobe.use_cloud(),
             Some(Action::WardrobeModel) => self.wardrobe.model(),
             Some(Action::WardrobeRotate(direction)) => {
-                self.wardrobe.camera.rotate(direction as f32 * 25.0, 0.0);
+                // As a swipe: ‹ turns the model left.
+                self.wardrobe.camera.rotate(-(direction as f32) * 25.0, 0.0);
                 self.wardrobe.preview();
             }
             Some(Action::WardrobeZoom(inward)) => {

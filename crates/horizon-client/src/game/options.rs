@@ -165,6 +165,7 @@ impl Game<'_> {
     pub(super) fn draw_options(&mut self, batch: &mut HudBatch) {
         self.watch_pack_folder();
         let mut ui = std::mem::take(&mut self.ui.options);
+        ui.graphics.readout = self.boost_readout();
         ui.draw(&self.settings, batch, &self.gui.atlas, self.cursor);
         self.ui.options = ui;
         self.show_calibration(batch.height);
@@ -311,7 +312,6 @@ impl Game<'_> {
                     self.pad.touch.open_editor();
                     self.dragging = false;
                 }
-                Event::HorizonBoost => self.open_boost(),
                 Event::ButtonClick => self.audio.play_button_click(),
                 Event::Changed => {
                     #[cfg(target_os = "android")]

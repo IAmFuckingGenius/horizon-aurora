@@ -376,8 +376,9 @@ impl Wardrobe {
                 self.camera.zoom(distance(point) / before);
             }
         } else {
+            // The model follows the finger: a swipe left turns it left.
             self.camera
-                .rotate((point[0] - old[0]) * 0.7, (point[1] - old[1]) * 0.5);
+                .rotate((old[0] - point[0]) * 0.7, (point[1] - old[1]) * 0.5);
         }
         self.fingers.insert(touch.id, point);
         self.preview();

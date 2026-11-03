@@ -115,162 +115,27 @@ impl Game<'_> {
     }
 }
 
-/// Horizon Boost's sheet while it is open over the options.
-pub(super) struct BoostScreen {
-    ui: horizon_client::boost_ui::BoostUi,
-    /// The mouse's last position (physical pixels), for its buttons.
-    cursor: [f32; 2],
-    /// The finger driving the sheet; others are ignored.
-    finger: Option<u64>,
-}
-
-impl BoostScreen {
-    /// A tap's action, for the control socket's `boost tab`.
-    pub fn act(
-        &mut self,
-        act: horizon_client::boost_ui::Act,
-        s: &mut horizon_client::settings::Settings,
-    ) -> horizon_client::boost_ui::Outcome {
-        self.ui.act(act, s)
-    }
-}
-
 impl Game<'_> {
-    pub(super) fn open_boost(&mut self) {
-        self.capture(false);
-        self.boost_screen = Some(BoostScreen {
-            ui: Default::default(),
-            cursor: [self.cursor.0, self.cursor.1],
-            finger: None,
-        });
+    /// Boost's live line: frames per second and, where the system reports it, heat.
+    pub(super) fn boost_readout(&self) -> String {
+        let fps = self
+            .frame_graph
+            .averages()
+            .map(|(frame_ms, _)| frame_ms)
+            .filter(|ms| *ms > 0.0)
+            .map(|ms| {
+                horizon_client::lang::tr(
+                    "horizon.boost.readout.fps",
+                    &[&format!("{:.0}", 1000.0 / ms)],
+                )
+            });
+        [fps, self.thermal_summary()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
-    pub(super) fn close_boost(&mut self) {
-        if self.boost_screen.take().is_some() {
-            self.audio.play_button_click();
-        }
-    }
-    /// Input while the sheet is open: it takes every pointer, wheel and Escape (or
-    /// Back) event; true when it took `event`.
-    pub(super) fn boost_event(&mut self, event: &winit::event::WindowEvent) -> bool {
-        use horizon_client::boost_ui::Outcome;
-        use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
-        use winit::keyboard::{KeyCode, PhysicalKey};
-        let Some(screen) = self.boost_screen.as_mut() else {
-            return false;
-        };
-        let outcome = match event {
-            WindowEvent::Touch(t) => {
-                let at = [t.location.x as f32, t.location.y as f32];
-                match t.phase {
-                    TouchPhase::Started if screen.finger.is_none() => {
-                        screen.finger = Some(t.id);
-                        screen.ui.pointer_down(at);
-                        Outcome::None
-                    }
-                    TouchPhase::Moved if screen.finger == Some(t.id) => {
-                        screen.ui.pointer_move(at);
-                        Outcome::None
-                    }
-                    TouchPhase::Ended if screen.finger == Some(t.id) => {
-                        screen.finger = None;
-                        screen.ui.pointer_up(at, &mut self.settings)
-                    }
-                    TouchPhase::Cancelled if screen.finger == Some(t.id) => {
-                        screen.finger = None;
-                        screen.ui.cancel();
-                        Outcome::None
-                    }
-                    _ => Outcome::None,
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                screen.cursor = [position.x as f32, position.y as f32];
-                screen.ui.pointer_move(screen.cursor);
-                Outcome::None
-            }
-            WindowEvent::MouseInput {
-                state,
-                button: MouseButton::Left,
-                ..
-            } => {
-                if *state == ElementState::Pressed {
-                    screen.ui.pointer_down(screen.cursor);
-                    Outcome::None
-                } else {
-                    screen.ui.pointer_up(screen.cursor, &mut self.settings)
-                }
-            }
-            WindowEvent::MouseInput { .. } => Outcome::None,
-            WindowEvent::MouseWheel { delta, .. } => {
-                screen.ui.wheel(match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
-                });
-                Outcome::None
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed
-                    && matches!(
-                        event.physical_key,
-                        PhysicalKey::Code(KeyCode::Escape | KeyCode::BrowserBack)
-                    )
-                {
-                    Outcome::Close
-                } else {
-                    Outcome::None
-                }
-            }
-            _ => return false,
-        };
-        match outcome {
-            Outcome::None => {}
-            Outcome::Clicked => self.audio.play_button_click(),
-            Outcome::Changed => {
-                self.audio.play_button_click();
-                self.settings.save(&Self::options_path());
-                self.apply_settings();
-            }
-            Outcome::Close => self.close_boost(),
-        }
-        true
-    }
-    /// The sheet over everything else in `hud`, when it is open.
-    pub(super) fn draw_boost(&mut self, hud: &mut horizon_client::hud::HudBatch) {
-        if self.boost_screen.is_none() {
-            return;
-        }
-        let (frame_ms, gpu_ms) = self.frame_graph.averages().unwrap_or((0.0, 0.0));
-        let readout = horizon_client::boost_ui::Readout {
-            fps: if frame_ms > 0.0 {
-                1000.0 / frame_ms
-            } else {
-                0.0
-            },
-            frame_ms,
-            gpu_ms: (gpu_ms > 0.0).then_some(gpu_ms),
-            thermal: self.thermal_summary(),
-            thermal_level: if self.settings.horizon.boost.thermal == Heat::Off {
-                0
-            } else {
-                self.thermal.governor.level()
-            },
-        };
-        let density = self
-            .window
-            .as_ref()
-            .map_or(1.0, |w| w.scale_factor() as f32);
-        if let Some(screen) = self.boost_screen.as_mut() {
-            horizon_client::boost_ui::draw(
-                &mut screen.ui,
-                &self.settings,
-                &readout,
-                hud,
-                &self.gui.atlas,
-                density,
-            );
-        }
-    }
-    /// The thermal line for the sheet: as the overlay's, whatever its readout setting.
+    /// The thermal state and any heat limit, as one line.
     fn thermal_summary(&self) -> Option<String> {
         let g = &self.thermal.governor;
         let status = g.last.status?;

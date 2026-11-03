@@ -714,5 +714,12 @@
   "horizon.boost.value.heat.off": "Выкл.",
   "horizon.boost.value.heat.soft": "Мягко",
   "horizon.boost.value.heat.balanced": "Средне",
-  "horizon.boost.value.heat.strong": "Сильно"
+  "horizon.boost.value.heat.strong": "Сильно",
+  "Turn Weather on to use it.": "Включите погоду, чтобы это работало.",
+  "Turn Animated Textures on to use it.": "Включите анимацию текстур, чтобы это работало.",
+  "Turn Sky on to use it.": "Включите небо, чтобы это работало.",
+  "Turn Fog on to use it.": "Включите туман, чтобы это работало.",
+  "Turn the heat limit on to use it.": "Включите ограничение при нагреве, чтобы это работало.",
+  "Turn the performance overlay on to use it.": "Включите оверлей производительности, чтобы это работало.",
+  "Horizon Boost": "Horizon Boost"
 }

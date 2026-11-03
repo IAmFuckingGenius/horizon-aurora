@@ -15,7 +15,6 @@ const HELP: &[&str] = &[
     "terrain-passes single|split    A/B terrain pipelines; split requires a supported backend",
     "weather-shader classic|lean    A/B the rain and snow fragment shader (lean is the default)",
     "thermal-test STATUS [HEADROOM]|off  feed Horizon Boost's thermal governor a reading (status 0-6)",
-    "boost open|close|tab NAME      Horizon Boost's sheet (tabs: presets quality animations details performance)",
     "app-background                 what leaving the app does on Android: pause single player and save, waiting for the disk",
     "static-cutout on|off           A/B skipping unused LOD dithering in proven unfaded cutouts",
     "settled-terrain on|off         A/B specialization for fully visible non-RGSS terrain",
@@ -358,31 +357,6 @@ impl Game<'_> {
             "app-background" => {
                 self.left_app();
                 Ok(Some(json!({ "ok": true, "paused": self.pause })))
-            }
-            "boost" => {
-                match arg(1)? {
-                    "open" => self.open_boost(),
-                    "close" => self.close_boost(),
-                    "tab" => {
-                        use horizon_client::boost_ui::{Act, Tab};
-                        let tab = match arg(2)? {
-                            "presets" => Tab::Presets,
-                            "quality" => Tab::Quality,
-                            "animations" => Tab::Animations,
-                            "details" => Tab::Details,
-                            "performance" => Tab::Performance,
-                            other => return Err(format!("unknown Boost tab {other}").into()),
-                        };
-                        let Some(screen) = self.boost_screen.as_mut() else {
-                            return Err("Horizon Boost is not open".into());
-                        };
-                        screen.act(Act::Tab(tab), &mut self.settings);
-                    }
-                    _ => return Err("boost open|close|tab NAME".into()),
-                }
-                Ok(Some(
-                    json!({ "ok": true, "open": self.boost_screen.is_some() }),
-                ))
             }
             "thermal-test" => {
                 self.thermal.test_reading = match arg(1)? {

@@ -17,6 +17,8 @@ pub enum Level {
     Advanced,
     /// HDR output's own settings, opened from Advanced while HDR is on.
     Hdr,
+    /// Horizon Boost: speed, quality and heat on one page.
+    Boost,
 }
 
 /// Horizon's own settings (`graphics::Graphics`).
@@ -62,6 +64,131 @@ pub enum H {
 pub enum Item {
     Vanilla(Opt),
     Horizon(H),
+    /// Horizon Boost's own settings (`boost::Boost`).
+    Boost(B),
+}
+
+/// Horizon Boost's settings that no other screen has (`graphics::Graphics::boost`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum B {
+    WeatherDensity,
+    RainSplashes,
+    AnimateWater,
+    AnimateLava,
+    AnimateFire,
+    AnimatePortal,
+    AnimateOther,
+    Stars,
+    SunMoon,
+    FogStart,
+    Thermal,
+    ThermalMinFps,
+    ThermalResolution,
+    ThermalReadout,
+}
+impl B {
+    /// The language key part: `horizon.boost.knob.<key>`.
+    fn key(self) -> &'static str {
+        match self {
+            B::WeatherDensity => "weather_density",
+            B::RainSplashes => "rain_splashes",
+            B::AnimateWater => "animate_water",
+            B::AnimateLava => "animate_lava",
+            B::AnimateFire => "animate_fire",
+            B::AnimatePortal => "animate_portal",
+            B::AnimateOther => "animate_other",
+            B::Stars => "stars",
+            B::SunMoon => "sun_moon",
+            B::FogStart => "fog_start",
+            B::Thermal => "thermal",
+            B::ThermalMinFps => "thermal_min_fps",
+            B::ThermalResolution => "thermal_resolution",
+            B::ThermalReadout => "thermal_readout",
+        }
+    }
+    fn switch(self, s: &Settings) -> Option<bool> {
+        let b = &s.horizon.boost;
+        Some(match self {
+            B::AnimateWater => b.animate_water,
+            B::AnimateLava => b.animate_lava,
+            B::AnimateFire => b.animate_fire,
+            B::AnimatePortal => b.animate_portal,
+            B::AnimateOther => b.animate_other,
+            B::Stars => b.stars,
+            B::SunMoon => b.sun_moon,
+            B::ThermalResolution => b.thermal_resolution,
+            B::ThermalReadout => b.thermal_readout,
+            _ => return None,
+        })
+    }
+    fn label(self, s: &Settings) -> Text {
+        let b = &s.horizon.boost;
+        let caption = format!("horizon.boost.knob.{}", self.key());
+        let percent = |p: u32| format!("{p}%");
+        let value = match self {
+            B::WeatherDensity => percent(b.weather_density),
+            B::RainSplashes if b.rain_splashes == 0 => lang::get("horizon.boost.value.off"),
+            B::RainSplashes => percent(b.rain_splashes),
+            B::FogStart if b.fog_start == 0 => lang::get("horizon.boost.value.vanilla"),
+            B::FogStart => percent(b.fog_start),
+            B::Thermal => lang::get(&format!("horizon.boost.value.heat.{}", b.thermal.key())),
+            B::ThermalMinFps => lang::tr("horizon.boost.value.fps", &[&b.thermal_min_fps]),
+            _ => on_off(self.switch(s).unwrap_or(false)),
+        };
+        Text::literal(format!("{}: {value}", lang::get(&caption)))
+    }
+    fn cycle(self, s: &mut Settings, back: bool) {
+        use crate::boost::{DENSITIES, FOG_STARTS, Heat, SPLASHES, THERMAL_MIN_FPS};
+        fn step<T: Copy + PartialEq>(all: &[T], now: T, back: bool) -> T {
+            let i = all.iter().position(|x| *x == now).unwrap_or(0);
+            let n = all.len();
+            all[if back { (i + n - 1) % n } else { (i + 1) % n }]
+        }
+        let b = &mut s.horizon.boost;
+        match self {
+            B::WeatherDensity => b.weather_density = step(&DENSITIES, b.weather_density, back),
+            B::RainSplashes => b.rain_splashes = step(&SPLASHES, b.rain_splashes, back),
+            B::FogStart => b.fog_start = step(&FOG_STARTS, b.fog_start, back),
+            B::Thermal => b.thermal = step(&Heat::ALL, b.thermal, back),
+            B::ThermalMinFps => b.thermal_min_fps = step(&THERMAL_MIN_FPS, b.thermal_min_fps, back),
+            B::AnimateWater => b.animate_water = !b.animate_water,
+            B::AnimateLava => b.animate_lava = !b.animate_lava,
+            B::AnimateFire => b.animate_fire = !b.animate_fire,
+            B::AnimatePortal => b.animate_portal = !b.animate_portal,
+            B::AnimateOther => b.animate_other = !b.animate_other,
+            B::Stars => b.stars = !b.stars,
+            B::SunMoon => b.sun_moon = !b.sun_moon,
+            B::ThermalResolution => b.thermal_resolution = !b.thermal_resolution,
+            B::ThermalReadout => b.thermal_readout = !b.thermal_readout,
+        }
+    }
+    /// Why it does nothing now, when another setting turns it off.
+    fn blocked(self, s: &Settings) -> Option<&'static str> {
+        let g = &s.horizon;
+        match self {
+            B::WeatherDensity | B::RainSplashes if !g.weather => Some("Turn Weather on to use it."),
+            B::AnimateWater
+            | B::AnimateLava
+            | B::AnimateFire
+            | B::AnimatePortal
+            | B::AnimateOther
+                if !g.animated_textures =>
+            {
+                Some("Turn Animated Textures on to use it.")
+            }
+            B::Stars | B::SunMoon if !g.sky => Some("Turn Sky on to use it."),
+            B::FogStart if !g.fog => Some("Turn Fog on to use it."),
+            B::ThermalMinFps | B::ThermalResolution
+                if g.boost.thermal == crate::boost::Heat::Off =>
+            {
+                Some("Turn the heat limit on to use it.")
+            }
+            B::ThermalReadout if g.overlay == Overlay::Off => {
+                Some("Turn the performance overlay on to use it.")
+            }
+            _ => None,
+        }
+    }
 }
 
 pub struct Setting {
@@ -133,6 +260,7 @@ pub fn rows(level: Level) -> Vec<Row> {
         "Sets the options below together. Changing one makes it Custom.",
     );
     let mut rows = match level {
+        Level::Boost => return boost_rows(),
         Level::Simple => vec![preset, render, lod, far, fov, fps, vsync, gui],
         Level::Hdr => vec![
             Row::Header("HDR"),
@@ -363,6 +491,129 @@ pub fn rows(level: Level) -> Vec<Row> {
     rows
 }
 
+/// Horizon Boost's page: the preset, then quality, animations, details, speed and heat,
+/// each setting with Boost's own description of what it does and costs.
+fn boost_rows() -> Vec<Row> {
+    use Cost::*;
+    vec![
+        h(
+            H::Preset,
+            None,
+            "Sets the options below together. Changing one makes it Custom.",
+        ),
+        Row::Header("horizon.boost.tab.quality"),
+        v(
+            Opt::RenderDistance,
+            High,
+            "horizon.boost.knob.render_distance.desc",
+        ),
+        v(
+            Opt::EntityDistance,
+            Medium,
+            "horizon.boost.knob.entity_distance.desc",
+        ),
+        v(Opt::Particles, Medium, "horizon.boost.knob.particles.desc"),
+        v(Opt::Clouds, Low, "horizon.boost.knob.clouds.desc"),
+        h(H::Weather, Medium, "horizon.boost.knob.weather.desc"),
+        v(
+            Opt::WeatherRadius,
+            Medium,
+            "horizon.boost.knob.weather_radius.desc",
+        ),
+        b(
+            B::WeatherDensity,
+            Medium,
+            "horizon.boost.knob.weather_density.desc",
+        ),
+        b(
+            B::RainSplashes,
+            Low,
+            "horizon.boost.knob.rain_splashes.desc",
+        ),
+        v(Opt::CutoutLeaves, Medium, "horizon.boost.knob.leaves.desc"),
+        v(Opt::BiomeBlend, Low, "horizon.boost.knob.biome_blend.desc"),
+        v(Opt::Mipmaps, Low, "horizon.boost.knob.mipmaps.desc"),
+        Row::Header("horizon.boost.tab.animations"),
+        h(
+            H::AnimatedTextures,
+            Low,
+            "horizon.boost.knob.animate_all.desc",
+        ),
+        b(
+            B::AnimateWater,
+            Low,
+            "horizon.boost.knob.animate_water.desc",
+        ),
+        b(B::AnimateLava, Low, "horizon.boost.knob.animate_lava.desc"),
+        b(B::AnimateFire, Low, "horizon.boost.knob.animate_fire.desc"),
+        b(
+            B::AnimatePortal,
+            Low,
+            "horizon.boost.knob.animate_portal.desc",
+        ),
+        b(
+            B::AnimateOther,
+            Low,
+            "horizon.boost.knob.animate_other.desc",
+        ),
+        Row::Header("horizon.boost.tab.details"),
+        h(H::Sky, Low, "horizon.boost.knob.sky.desc"),
+        b(B::Stars, None, "horizon.boost.knob.stars.desc"),
+        b(B::SunMoon, None, "horizon.boost.knob.sun_moon.desc"),
+        h(H::Fog, Low, "horizon.boost.knob.fog.desc"),
+        b(B::FogStart, None, "horizon.boost.knob.fog_start.desc"),
+        v(Opt::Vignette, None, "horizon.boost.knob.vignette.desc"),
+        v(
+            Opt::EntityShadows,
+            Low,
+            "horizon.boost.knob.entity_shadows.desc",
+        ),
+        Row::Header("horizon.boost.tab.performance"),
+        v(Opt::MaxFps, None, "horizon.boost.knob.max_fps.desc"),
+        h(
+            H::ResolutionScale,
+            High,
+            "horizon.boost.knob.resolution_scale.desc",
+        ),
+        h(
+            H::ChunkUpdates,
+            Medium,
+            "horizon.boost.knob.chunk_updates.desc",
+        ),
+        h(H::Workers, Medium, "horizon.boost.knob.workers.desc"),
+        h(H::Overlay, None, "horizon.boost.knob.overlay.desc"),
+        h(
+            H::BatteryMode,
+            Saves,
+            "horizon.boost.knob.battery_mode.desc",
+        ),
+        Row::Header("horizon.boost.tab.heat"),
+        b(B::Thermal, None, "horizon.boost.knob.thermal.desc"),
+        b(
+            B::ThermalMinFps,
+            None,
+            "horizon.boost.knob.thermal_min_fps.desc",
+        ),
+        b(
+            B::ThermalResolution,
+            None,
+            "horizon.boost.knob.thermal_resolution.desc",
+        ),
+        b(
+            B::ThermalReadout,
+            None,
+            "horizon.boost.knob.thermal_readout.desc",
+        ),
+    ]
+}
+fn b(item: B, cost: Cost, text: &'static str) -> Row {
+    Row::Setting(Setting {
+        item: Item::Boost(item),
+        cost,
+        text,
+    })
+}
+
 const UPLOAD_STEPS: [u32; 8] = [0, 256, 512, 1024, 2048, 4096, 8192, 16384];
 /// What the LOD Distance slider stops at, in chunks: off, then each doubling
 /// up to the whole world.
@@ -391,7 +642,10 @@ const LOD_STEPS: [u32; 18] = [
 /// Upscaling is only there while TAA is, which does it.
 fn extra_rows(level: Level, settings: &Settings) -> Vec<Row> {
     let mut rows = rows(level);
-    rows.retain(|row| !matches!(row, Row::Setting(s) if matches!(s.item, Item::Vanilla(_))));
+    // Boost's page is its own: it keeps the vanilla settings it lists.
+    if level != Level::Boost {
+        rows.retain(|row| !matches!(row, Row::Setting(s) if matches!(s.item, Item::Vanilla(_))));
+    }
     if !settings.horizon.taa {
         rows.retain(|row| !matches!(row, Row::Setting(s) if s.item == Item::Horizon(H::Upscaling)));
     }
@@ -740,12 +994,16 @@ impl Item {
                 | H::HdrPaperWhite
                 | H::HdrUiBrightness,
             ) if !s.horizon.hdr => Some("Turn HDR on to use it."),
+            Item::Boost(b) => b.blocked(s),
             _ => None,
         }
     }
     /// On/off settings and their value.
     pub fn switch(self, s: &Settings) -> Option<bool> {
         let g = &s.horizon;
+        if let Item::Boost(b) = self {
+            return b.switch(s);
+        }
         Some(match self {
             Item::Horizon(H::CaveCulling) => g.cave_culling,
             Item::Horizon(H::EntityCulling) => g.entity_culling,
@@ -773,6 +1031,7 @@ impl Item {
         match self {
             Item::Vanilla(o) => o.slider_position(s),
             Item::Horizon(h) => h.slider(s),
+            Item::Boost(_) => None,
         }
     }
     pub fn label(self, s: &Settings) -> Text {
@@ -783,6 +1042,7 @@ impl Item {
             ),
             Item::Vanilla(o) => o.label(s),
             Item::Horizon(h) => h.label(s),
+            Item::Boost(b) => b.label(s),
         }
     }
     pub fn set_slider(self, s: &mut Settings, v: f32) {
@@ -792,6 +1052,7 @@ impl Item {
         match self {
             Item::Vanilla(o) => o.set_slider(s, v),
             Item::Horizon(h) => h.set_slider(s, v),
+            Item::Boost(_) => {}
         }
         self.touched(s);
     }
@@ -802,6 +1063,7 @@ impl Item {
         match self {
             Item::Vanilla(o) => o.cycle(s, back, framebuffer),
             Item::Horizon(h) => h.cycle(s, back),
+            Item::Boost(b) => b.cycle(s, back),
         }
         self.touched(s);
     }
@@ -832,6 +1094,8 @@ impl Item {
                     | Opt::Vignette
                     | Opt::Autosave
                     | Opt::AttackIndicator
+            ) | Item::Boost(
+                B::Thermal | B::ThermalMinFps | B::ThermalResolution | B::ThermalReadout
             )
         );
         if !presetless {
@@ -842,6 +1106,7 @@ impl Item {
         match self {
             Item::Vanilla(o) => o.slider_steps(),
             Item::Horizon(h) => h.slider_steps(),
+            Item::Boost(_) => None,
         }
     }
     pub fn step_slider(self, s: &mut Settings, forward: bool, width: f32) {
@@ -915,6 +1180,8 @@ pub struct GraphicsUi {
     /// Each setting row's height as the last frame measured it (a description wraps onto as
     /// many lines as it needs), for the level it was measured on.
     measured: Option<(Level, Vec<f32>)>,
+    /// The game's frame rate and heat, beside Boost's title.
+    pub readout: String,
 }
 
 impl GraphicsUi {
@@ -1007,8 +1274,8 @@ impl GraphicsUi {
         let other = match level {
             Level::Simple => Action::OpenAdvanced,
             Level::Advanced => Action::OpenSimple,
-            // One Done, back to Advanced.
-            Level::Hdr => {
+            // One Done, back to the screen that opened it.
+            Level::Hdr | Level::Boost => {
                 widgets.push(Widget {
                     x: cx - 100.0,
                     y: by,
@@ -1158,8 +1425,13 @@ impl GraphicsUi {
             Level::Simple => "Graphics",
             Level::Advanced => "Graphics: Advanced",
             Level::Hdr => "Graphics: HDR",
+            Level::Boost => "Horizon Boost",
         };
-        STYLE.title(batch, atlas, &Text::literal(lang::get(title)));
+        let mut title = lang::get(title);
+        if level == Level::Boost && !self.readout.is_empty() {
+            title = format!("{title} · {}", self.readout);
+        }
+        STYLE.title(batch, atlas, &Text::literal(title));
         if let Some(lines) = tooltip {
             ui::tooltip(batch, atlas, &lines, cursor);
         }
@@ -2115,5 +2387,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn boost_page_is_translated_blocks_dependents_and_cycles_heat() {
+        let en: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
+            "../../horizon-client/assets/horizon/lang/en_us.json"
+        ))
+        .unwrap();
+        let ru: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!(
+            "../../horizon-client/assets/horizon/lang/ru_ru.json"
+        ))
+        .unwrap();
+        let mut s = Settings::default();
+        for row in rows(Level::Boost) {
+            let (key, extra) = match row {
+                Row::Header(name) => (name, None),
+                Row::Setting(st) => {
+                    let caption = match st.item {
+                        Item::Boost(b) => Some(format!("horizon.boost.knob.{}", b.key())),
+                        _ => None,
+                    };
+                    (st.text, caption)
+                }
+            };
+            for key in std::iter::once(key.to_owned()).chain(extra) {
+                assert!(en.contains_key(&key), "{key} has no English text");
+                assert!(ru.contains_key(&key), "{key} has no Russian text");
+            }
+        }
+        // Settings that depend on another say why they do nothing.
+        s.horizon.boost.thermal = crate::boost::Heat::Off;
+        s.horizon.sky = false;
+        for (item, on) in [
+            (B::ThermalMinFps, false),
+            (B::ThermalResolution, false),
+            (B::Stars, false),
+            (B::Thermal, true),
+        ] {
+            let why = Item::Boost(item).blocked(&s);
+            assert_eq!(why.is_none(), on, "{item:?}");
+            if let Some(why) = why {
+                assert!(en.contains_key(why) && ru.contains_key(why), "{why}");
+            }
+        }
+        // The heat limit cycles through its modes both ways, and is no preset's.
+        s.horizon.preset = Preset::Balanced;
+        let thermal = Item::Boost(B::Thermal);
+        thermal.cycle(&mut s, false, [1, 1]);
+        assert_eq!(s.horizon.boost.thermal, crate::boost::Heat::Soft);
+        thermal.cycle(&mut s, true, [1, 1]);
+        thermal.cycle(&mut s, true, [1, 1]);
+        assert_eq!(s.horizon.boost.thermal, crate::boost::Heat::Strong);
+        assert_eq!(s.horizon.preset, Preset::Balanced);
+        // A quality setting makes the preset Custom.
+        Item::Boost(B::WeatherDensity).cycle(&mut s, false, [1, 1]);
+        assert_eq!(s.horizon.boost.weather_density, 50);
+        assert_eq!(s.horizon.preset, Preset::Custom);
     }
 }

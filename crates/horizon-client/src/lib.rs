@@ -32,7 +32,6 @@ pub mod benchmark;
 pub mod block_entity_item;
 pub mod block_pattern;
 pub mod block_transform;
-pub mod boost_ui;
 pub mod boss_overlay;
 pub mod cauldron;
 pub mod chunk_io;

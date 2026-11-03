@@ -2724,7 +2724,6 @@ struct Game<'a> {
     /// Leaving the app and memory pressure on Android (game/app_lifecycle.rs).
     lifecycle: app_lifecycle::Lifecycle,
     /// Horizon Boost's sheet while it is open over the options (game/boost.rs).
-    boost_screen: Option<boost::BoostScreen>,
     /// The mobs `mob_geometry` drew last frame (`lastEntityRenderStateCount`).
     rendered_mobs: std::cell::Cell<usize>,
     /// `ServerChunkCache.lastSpawnState` of each level: its spawnable chunks
@@ -14971,8 +14970,6 @@ impl Game<'_> {
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
             }
         }
-        // Horizon Boost's sheet over the HUD, the options and the touch controls.
-        self.draw_boost(&mut hud);
         self.flush_ime(&mut hud);
         let title = self.shows_panorama();
         let (yaw, pitch) = if title {
@@ -16124,10 +16121,6 @@ impl Game<'_> {
             None => self.options.headless,
         };
         if !ours {
-            return;
-        }
-        // Horizon Boost's sheet takes the pointer, the wheel and Escape while it is open.
-        if self.boost_screen.is_some() && self.boost_event(&event) {
             return;
         }
         #[cfg(target_os = "android")]
@@ -18444,7 +18437,6 @@ impl<'a> Game<'a> {
             gpu_utilization: 0.0,
             thermal: Default::default(),
             lifecycle: Default::default(),
-            boost_screen: None,
             rendered_mobs: Default::default(),
             spawn_counts: HashMap::new(),
             pause_menu: true,

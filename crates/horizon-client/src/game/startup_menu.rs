@@ -653,7 +653,7 @@ impl Loading {
                     self.menu.click_sound(self.settings.volumes);
                 }
                 // Horizon Boost's button shows only in a world.
-                Event::CopyAgentDetails | Event::Volume(..) | Event::HorizonBoost => {}
+                Event::CopyAgentDetails | Event::Volume(..) => {}
             }
         }
     }

@@ -710,5 +710,12 @@
   "horizon.boost.value.heat.off": "Off",
   "horizon.boost.value.heat.soft": "Soft",
   "horizon.boost.value.heat.balanced": "Balanced",
-  "horizon.boost.value.heat.strong": "Strong"
+  "horizon.boost.value.heat.strong": "Strong",
+  "Turn Weather on to use it.": "Turn Weather on to use it.",
+  "Turn Animated Textures on to use it.": "Turn Animated Textures on to use it.",
+  "Turn Sky on to use it.": "Turn Sky on to use it.",
+  "Turn Fog on to use it.": "Turn Fog on to use it.",
+  "Turn the heat limit on to use it.": "Turn the heat limit on to use it.",
+  "Turn the performance overlay on to use it.": "Turn the performance overlay on to use it.",
+  "Horizon Boost": "Horizon Boost"
 }

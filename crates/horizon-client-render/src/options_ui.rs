@@ -1445,6 +1445,8 @@ pub enum Page {
     Graphics,
     GraphicsAdvanced,
     GraphicsHdr,
+    /// Horizon Boost: speed, quality and heat (`graphics_ui::Level::Boost`).
+    Boost,
     /// HDR calibration, full screen (`calibration`).
     HdrCalibration,
     /// Horizon's controller settings and button binds.
@@ -1510,7 +1512,7 @@ enum Act {
     CopyAgentDetails,
     #[cfg(target_os = "android")]
     TouchControls,
-    /// Video Settings' Horizon Boost button (in a world).
+    /// Horizon Boost's button (Video Settings, Horizon Settings): its page.
     HorizonBoost,
 }
 enum WKind {
@@ -1644,8 +1646,6 @@ pub enum Event {
     CopyAgentDetails,
     #[cfg(target_os = "android")]
     TouchControls,
-    /// Open Horizon Boost's sheet over the options.
-    HorizonBoost,
     /// The narrator option changed (after its `Changed`): the option's
     /// `onValueUpdate`, `GameNarrator.updateNarratorStatus`.
     Narrator,
@@ -2361,7 +2361,7 @@ impl OptionsUi {
         }
         if matches!(
             page,
-            Page::Graphics | Page::GraphicsAdvanced | Page::GraphicsHdr
+            Page::Graphics | Page::GraphicsAdvanced | Page::GraphicsHdr | Page::Boost
         ) {
             self.graphics.reset();
         }
@@ -2375,6 +2375,7 @@ impl OptionsUi {
             Page::Graphics => Some(crate::graphics_ui::Level::Simple),
             Page::GraphicsAdvanced => Some(crate::graphics_ui::Level::Advanced),
             Page::GraphicsHdr => Some(crate::graphics_ui::Level::Hdr),
+            Page::Boost => Some(crate::graphics_ui::Level::Boost),
             _ => None,
         }
     }
@@ -2408,6 +2409,7 @@ impl OptionsUi {
             Page::Graphics | Page::GraphicsAdvanced | Page::GraphicsHdr | Page::HdrCalibration => {
                 "options.videoTitle"
             }
+            Page::Boost => "horizon.boost.title",
             Page::Controller => "horizon.pages.controller",
             Page::PadBinds => "horizon.pages.controller_binds",
             Page::Extras => "horizon.pages.extras",
@@ -4403,7 +4405,7 @@ impl OptionsUi {
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         #[cfg(target_os = "android")]
                         Act::TouchControls => events.push(Event::TouchControls),
-                        Act::HorizonBoost => events.push(Event::HorizonBoost),
+                        Act::HorizonBoost => self.push(Page::Boost),
                         Act::None => {}
                     }
                 }
@@ -5354,7 +5356,7 @@ impl OptionsUi {
                         }
                         #[cfg(target_os = "android")]
                         Act::TouchControls => events.push(Event::TouchControls),
-                        Act::HorizonBoost => events.push(Event::HorizonBoost),
+                        Act::HorizonBoost => self.push(Page::Boost),
                         Act::Credits => events.push(Event::Credits),
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         Act::None => {}
