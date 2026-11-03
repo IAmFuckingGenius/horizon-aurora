@@ -558,6 +558,8 @@ impl Game<'_> {
             "dirty_light":self.world.dirty_light.len(),"pending_uploads":self.pending_uploads.len(),
             "pending_mesh_bytes":self.pending_uploads.iter().map(|(_,m)|(m.solid.len()+m.translucent.len()) as u64*std::mem::size_of::<horizon_client::mesher::TerrainVertex>() as u64).sum::<u64>(),
             "remote_backlog":self.remote_backlog(),
+            "boost_thermal":self.thermal_json(),
+            "lifecycle":self.lifecycle_json(),
             "streaming":self.streaming.stages().into_iter().collect::<std::collections::BTreeMap<_,_>>()})
     }
     pub(super) fn android_key_up(&mut self, key: KeyCode) {

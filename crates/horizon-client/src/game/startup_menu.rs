@@ -652,7 +652,8 @@ impl Loading {
                     #[cfg(target_os = "android")]
                     self.menu.click_sound(self.settings.volumes);
                 }
-                Event::CopyAgentDetails | Event::Volume(..) => {}
+                // Horizon Boost's button shows only in a world.
+                Event::CopyAgentDetails | Event::Volume(..) | Event::HorizonBoost => {}
             }
         }
     }

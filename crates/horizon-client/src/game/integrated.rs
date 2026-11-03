@@ -189,6 +189,22 @@ impl Integrated {
             .ok()?;
         rx.recv_timeout(Duration::from_secs(10)).ok()
     }
+    /// Saves everything on the server thread between two ticks and waits there until the
+    /// chunks are on disk, without the window waiting: Android may end a process in the
+    /// background without telling it, so leaving the app saves as closing the world does.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn save_in_background(&self) {
+        let _ = self.tasks.send(Box::new(|g| {
+            let started = std::time::Instant::now();
+            match g.save_game_with(true) {
+                Ok(()) => log::info!(
+                    "Horizon: saved the world for the background in {} ms",
+                    started.elapsed().as_millis()
+                ),
+                Err(error) => log::warn!("Horizon: background save failed: {error}"),
+            }
+        }));
+    }
     /// `IntegratedServer.halt(true)`: returns once the world is saved and let go.
     pub fn stop(mut self) -> Result<()> {
         self.halt()

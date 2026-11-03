@@ -311,6 +311,7 @@ impl Game<'_> {
                     self.pad.touch.open_editor();
                     self.dragging = false;
                 }
+                Event::HorizonBoost => self.open_boost(),
                 Event::ButtonClick => self.audio.play_button_click(),
                 Event::Changed => {
                     #[cfg(target_os = "android")]
@@ -449,6 +450,33 @@ impl Game<'_> {
             }
         }
     }
+    /// Horizon Boost's animation switches on this renderer's block sprites: the layers
+    /// of the groups switched off keep their frame. Cheap when nothing changed, so it
+    /// runs every frame (a new renderer or resource reload starts with none held).
+    pub(super) fn sync_still_animations(&mut self) {
+        let b = &self.settings.horizon.boost;
+        let flags = [
+            b.animate_water,
+            b.animate_lava,
+            b.animate_fire,
+            b.animate_portal,
+            b.animate_other,
+        ];
+        let Some(r) = self.renderer.as_mut() else {
+            return;
+        };
+        if r.still_animations_for == Some(flags) {
+            return;
+        }
+        r.still_animations_for = Some(flags);
+        let layers = &self.pack.render.sprite_layers;
+        r.set_still_animations(
+            layers
+                .iter()
+                .filter(|(name, _)| !b.animates(name))
+                .map(|(_, &layer)| layer),
+        );
+    }
     /// Settings that Horizon applies beyond render distance, volume and GUI scale.
     pub(super) fn apply_ui_settings(&mut self) {
         if horizon_client_render::mipmap::set_dither_cutouts(
@@ -470,12 +498,6 @@ impl Game<'_> {
                 s.file.int("textureFiltering"),
                 s.file.int("maxAnisotropyBit"),
             );
-            r.set_world_post(
-                s.horizon.resolution_scale as f32 / 100.0,
-                s.horizon.fxaa,
-                s.horizon.taa,
-                s.horizon.upscaling.ratio(),
-            );
             r.set_hdr(
                 s.horizon.hdr,
                 s.horizon.paper_white_nits() as f32,
@@ -485,6 +507,9 @@ impl Game<'_> {
                 &Self::options_path().with_file_name(horizon_client::graphics::HDR_MARKER),
             );
         }
+        // Resolution scale, anti-aliasing and upscaling, under the thermal governor.
+        self.apply_world_scale();
+        let s = &self.settings;
         let mut volumes = s.volumes;
         volumes[0] = 1.0;
         // Splitscreen: the speakers are P1's, and so are their volumes.
@@ -576,9 +601,12 @@ impl Game<'_> {
             has_overlay: false,
         };
         let limit = framerate_limit(self.settings.max_fps as i32, context);
-        self.settings
+        let limit = self
+            .settings
             .horizon
-            .battery_limit(limit, self.title.is_none(), self.focused)
+            .battery_limit(limit, self.title.is_none(), self.focused);
+        // Horizon Boost's thermal governor: no change while the device is cool.
+        self.thermal_limits().fps_cap(limit)
     }
     /// `Minecraft.runTick`'s frame limiter: `FramerateLimiter.limitDisplayFPS`
     /// below 260 frames per second, sleeping then spin-waiting until the

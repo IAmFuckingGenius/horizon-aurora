@@ -521,6 +521,10 @@ impl ApplicationHandler for Split<'_> {
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
         self.host.suspended(event_loop);
     }
+    #[cfg(target_os = "android")]
+    fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
+        self.host.memory_warning(event_loop);
+    }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.host.resumed(event_loop);
         if !self.surfaces.is_empty() {

@@ -14,6 +14,8 @@ const HELP: &[&str] = &[
     "sky-order early|late           A/B vanilla sky ordering on supported Android Vulkan devices",
     "terrain-passes single|split    A/B terrain pipelines; split requires a supported backend",
     "weather-shader classic|lean    A/B the rain and snow fragment shader (lean is the default)",
+    "thermal-test STATUS [HEADROOM]|off  feed Horizon Boost's thermal governor a reading (status 0-6)",
+    "boost open|close|tab NAME      Horizon Boost's sheet (tabs: presets quality animations details performance)",
     "static-cutout on|off           A/B skipping unused LOD dithering in proven unfaded cutouts",
     "settled-terrain on|off         A/B specialization for fully visible non-RGSS terrain",
     "status                         game, player, streaming and renderer state",
@@ -351,6 +353,42 @@ impl Game<'_> {
                     .ok_or("no renderer")?
                     .set_static_cutout(on)?;
                 ok()
+            }
+            "boost" => {
+                match arg(1)? {
+                    "open" => self.open_boost(),
+                    "close" => self.close_boost(),
+                    "tab" => {
+                        use horizon_client::boost_ui::{Act, Tab};
+                        let tab = match arg(2)? {
+                            "presets" => Tab::Presets,
+                            "quality" => Tab::Quality,
+                            "animations" => Tab::Animations,
+                            "details" => Tab::Details,
+                            "performance" => Tab::Performance,
+                            other => return Err(format!("unknown Boost tab {other}").into()),
+                        };
+                        let Some(screen) = self.boost_screen.as_mut() else {
+                            return Err("Horizon Boost is not open".into());
+                        };
+                        screen.act(Act::Tab(tab), &mut self.settings);
+                    }
+                    _ => return Err("boost open|close|tab NAME".into()),
+                }
+                Ok(Some(
+                    json!({ "ok": true, "open": self.boost_screen.is_some() }),
+                ))
+            }
+            "thermal-test" => {
+                self.thermal.test_reading = match arg(1)? {
+                    "off" => None,
+                    status => Some(horizon_client::boost::Thermal {
+                        status: Some(status.parse::<i32>()?.clamp(0, 6)),
+                        headroom: words.get(2).map(|h| h.parse::<f32>()).transpose()?,
+                    }),
+                };
+                self.tick_thermal();
+                Ok(Some(self.thermal_json()))
             }
             "weather-shader" => {
                 let classic = match arg(1)? {
@@ -1331,6 +1369,9 @@ impl Game<'_> {
         status["border"] = json!({ "center": self.border.center(), "size": self.border.size() });
         // The scoreboard sidebar the HUD shows.
         status["sidebar"] = self.sidebar_status();
+        // Horizon Boost's thermal governor and the frame cap it leads to.
+        status["thermal"] = self.thermal_json();
+        status["fps_limit"] = self.framerate_limit().into();
         status
     }
 }

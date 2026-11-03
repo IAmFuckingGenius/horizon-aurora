@@ -57,6 +57,7 @@ mod allays;
 mod android_bundled;
 #[cfg(target_os = "android")]
 mod android_input;
+mod app_lifecycle;
 mod armor_stands;
 mod atlas_slots;
 mod banners;
@@ -72,6 +73,7 @@ mod boat_leads;
 mod boat_passengers;
 mod boats;
 mod books;
+mod boost;
 mod bossbars;
 mod breezes;
 mod brush;
@@ -2715,6 +2717,12 @@ struct Game<'a> {
     /// `Minecraft.gpuUtilization`: the last timed frame's GPU time over its
     /// CPU time, in percent.
     gpu_utilization: f64,
+    /// Horizon Boost's thermal governor (game/boost.rs).
+    thermal: boost::ThermalState,
+    /// Leaving the app and memory pressure on Android (game/app_lifecycle.rs).
+    lifecycle: app_lifecycle::Lifecycle,
+    /// Horizon Boost's sheet while it is open over the options (game/boost.rs).
+    boost_screen: Option<boost::BoostScreen>,
     /// The mobs `mob_geometry` drew last frame (`lastEntityRenderStateCount`).
     rendered_mobs: std::cell::Cell<usize>,
     /// `ServerChunkCache.lastSpawnState` of each level: its spawnable chunks
@@ -13553,8 +13561,13 @@ impl Game<'_> {
         let mut rain = Vec::new();
         let mut snow_vertices = Vec::new();
         // Saturation keeps extreme camera coordinates from overflowing the loop.
+        let boost = &self.settings.horizon.boost;
         for z in cz.saturating_sub(radius)..=cz.saturating_add(radius) {
             for x in cx.saturating_sub(radius)..=cx.saturating_add(radius) {
+                // Horizon Boost's rain density (all of them by default).
+                if !boost.keeps_weather_column(x, z) {
+                    continue;
+                }
                 let top = self.rain_height(x, z);
                 let y0 = cy.saturating_sub(radius).max(top);
                 let y1 = cy.saturating_add(radius).max(top);
@@ -14555,6 +14568,9 @@ impl Game<'_> {
         if self.renderer.as_mut().is_some_and(|r| r.display_changed()) {
             self.apply_ui_settings();
         }
+        self.sync_still_animations();
+        self.tick_thermal();
+        self.frame_graph.note = self.thermal_line();
         // Minecraft.doWorldLoad: the LevelLoadingScreen while single player's
         // server starts, with the server's chunk map and progress.
         if let Some(starting) = &self.integrated_starting {
@@ -14948,6 +14964,8 @@ impl Game<'_> {
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
             }
         }
+        // Horizon Boost's sheet over the HUD, the options and the touch controls.
+        self.draw_boost(&mut hud);
         self.flush_ime(&mut hud);
         let title = self.shows_panorama();
         let (yaw, pitch) = if title {
@@ -15168,12 +15186,16 @@ impl Game<'_> {
             additive: &additive,
             see_through: &see_through,
             shadow_only: &shadow_only,
-            celestial: if self.settings.horizon.sky || title {
+            celestial: if title
+                || (self.settings.horizon.sky && self.settings.horizon.boost.sun_moon)
+            {
                 &celestial
             } else {
                 &[]
             },
-            stars: stars.filter(|_| self.settings.horizon.sky || title),
+            stars: stars.filter(|_| {
+                title || (self.settings.horizon.sky && self.settings.horizon.boost.stars)
+            }),
             hand: &hand,
             hand_fov_degrees: self.hud_fov_degrees(camera_alpha as f32, camera.to_array()),
             screen: &screen,
@@ -15675,7 +15697,8 @@ impl Game<'_> {
         let g = &self.settings.horizon;
         let reduced = g.far_detail == horizon_client::graphics::FarDetail::Reduced;
         if g.lod_distance > 0 {
-            return (g.lod_distance, reduced);
+            // Held at half for a while under memory pressure (game/app_lifecycle.rs).
+            return (self.memory_far_cap(g.lod_distance), reduced);
         }
         match self.mod_far_terrain() {
             Some(f) => (f.distance, reduced || f.reduced),
@@ -15826,9 +15849,11 @@ impl Game<'_> {
         let (far_distance, far_reduced) = self.far_terrain_choice();
         if let Some(renderer) = self.renderer.as_mut() {
             let g = &self.settings.horizon;
+            // The player's chunk updates, under Horizon Boost's thermal governor.
+            let chunk_updates = self.thermal.governor_chunk_updates(g);
             let mobile_uploads =
                 cfg!(target_os = "android") && self.options.execution_role.is_client();
-            let budgeted = g.chunk_updates > 0 || g.upload_budget_kib > 0 || mobile_uploads;
+            let budgeted = chunk_updates > 0 || g.upload_budget_kib > 0 || mobile_uploads;
             if !budgeted && self.pending_uploads.is_empty() && uploads.len() <= AUTO_UPLOADS_AT_ONCE
             {
                 horizon_client::spans::time("upload", || {
@@ -15861,7 +15886,7 @@ impl Game<'_> {
                 let far = |k: &(i32, i32, i32)| (k.0 - centre.0).pow(2) + (k.2 - centre.1).pow(2);
                 pending.sort_unstable_by_key(|(k, _)| std::cmp::Reverse(far(k)));
                 let mut budget = horizon_client::gfx::upload_budget::UploadBudget::with_wait(
-                    g.chunk_updates as usize,
+                    chunk_updates as usize,
                     u64::from(g.upload_budget_kib) * 1024,
                     mobile_uploads,
                     renderer.last_wait,
@@ -15950,6 +15975,14 @@ impl ApplicationHandler for Game<'_> {
         if let Some(renderer) = &mut self.renderer {
             renderer.suspend_surface();
         }
+        // No frame publishes the pause while Android holds the window: tell the server
+        // thread now, and save before Android may end the process in the background.
+        self.left_app();
+    }
+    #[cfg(target_os = "android")]
+    fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
+        // onLowMemory: the whole system is short of memory.
+        self.trim_memory("low memory", true);
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(target_os = "android")]
@@ -16084,6 +16117,10 @@ impl Game<'_> {
             None => self.options.headless,
         };
         if !ours {
+            return;
+        }
+        // Horizon Boost's sheet takes the pointer, the wheel and Escape while it is open.
+        if self.boost_screen.is_some() && self.boost_event(&event) {
             return;
         }
         #[cfg(target_os = "android")]
@@ -17937,6 +17974,20 @@ impl Game<'_> {
             self.handle_window_event(event_loop, WindowId::dummy(), WindowEvent::RedrawRequested);
             return;
         }
+        #[cfg(target_os = "android")]
+        {
+            self.watch_background();
+            self.poll_memory_pressure();
+            // Android sends no frames while it has paused the activity: wait instead of
+            // spinning a core in the background. A requested frame still comes at once
+            // while it runs.
+            if self.frames_stalled() {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(50),
+                ));
+                return;
+            }
+        }
         event_loop.set_control_flow(ControlFlow::Poll);
     }
 }
@@ -18377,6 +18428,9 @@ impl<'a> Game<'a> {
             debug_options: None,
             memory_meter: Default::default(),
             gpu_utilization: 0.0,
+            thermal: Default::default(),
+            lifecycle: Default::default(),
+            boost_screen: None,
             rendered_mobs: Default::default(),
             spawn_counts: HashMap::new(),
             pause_menu: true,
@@ -20365,6 +20419,12 @@ impl ApplicationHandler for App {
         match self {
             App::Loading(loading) => loading.resumed(event_loop),
             App::Ready(game) => game.resumed(event_loop),
+        }
+    }
+    #[cfg(target_os = "android")]
+    fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
+        if let App::Ready(game) = self {
+            game.memory_warning(event_loop);
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
