@@ -1334,6 +1334,7 @@ impl GraphicsUi {
                 Row::Header(_) => None,
             })
             .collect();
+        let heights = self.row_heights(level, &extra_rows(level, s));
         let mut index = 0;
         let mut tooltip = None;
         for wd in &widgets {
@@ -1344,43 +1345,48 @@ impl GraphicsUi {
             match wd.target {
                 Target::Item(item) => {
                     let (cost, text) = descriptions[index];
+                    let row_height = heights.get(index).copied().unwrap_or(STYLE.row_height);
                     index += 1;
-                    if !shown(wd.y, 20.0) {
+                    // A row stays drawn while any of it is in the list: a long description
+                    // shows its visible lines even once its control has scrolled away.
+                    if wd.y + row_height <= top || wd.y >= bottom {
                         continue;
                     }
-                    let mut label = item.label(s);
-                    if item == Item::Horizon(H::HdrKey) && self.binding.is_some() {
-                        // KeyBindsScreen: "> key <" while it waits.
-                        label = Text::literal(format!("{}: > ", lang::get("Shortcut")))
-                            .append(crate::keybinds::display_name(&s.horizon.hdr_key))
-                            .append(" <");
-                    }
-                    let blocked = item.blocked(s);
-                    let live = blocked.is_none();
-                    if hover && let Some(why) = blocked {
-                        tooltip = Some(atlas.font.split(&Text::literal(lang::get(why)), 170.0));
-                    }
-                    match item.slider(s) {
-                        Some(value) => STYLE.slider_ext(
-                            batch,
-                            atlas,
-                            (wd.x, wd.y, wd.w),
-                            &label,
-                            value,
-                            hover || self.dragging == Some(item),
-                            is_focused,
-                            self.can_change_value && is_focused,
-                            live,
-                            self.dragging == Some(item),
-                        ),
-                        None => STYLE.button(
-                            batch,
-                            atlas,
-                            (wd.x, wd.y, wd.w),
-                            &label,
-                            hover && live,
-                            live,
-                        ),
+                    if shown(wd.y, 20.0) {
+                        let mut label = item.label(s);
+                        if item == Item::Horizon(H::HdrKey) && self.binding.is_some() {
+                            // KeyBindsScreen: "> key <" while it waits.
+                            label = Text::literal(format!("{}: > ", lang::get("Shortcut")))
+                                .append(crate::keybinds::display_name(&s.horizon.hdr_key))
+                                .append(" <");
+                        }
+                        let blocked = item.blocked(s);
+                        let live = blocked.is_none();
+                        if hover && let Some(why) = blocked {
+                            tooltip = Some(atlas.font.split(&Text::literal(lang::get(why)), 170.0));
+                        }
+                        match item.slider(s) {
+                            Some(value) => STYLE.slider_ext(
+                                batch,
+                                atlas,
+                                (wd.x, wd.y, wd.w),
+                                &label,
+                                value,
+                                hover || self.dragging == Some(item),
+                                is_focused,
+                                self.can_change_value && is_focused,
+                                live,
+                                self.dragging == Some(item),
+                            ),
+                            None => STYLE.button(
+                                batch,
+                                atlas,
+                                (wd.x, wd.y, wd.w),
+                                &label,
+                                hover && live,
+                                live,
+                            ),
+                        }
                     }
                     // A long description may reach past the list's bottom: cut there.
                     let start = batch.vertices.len();

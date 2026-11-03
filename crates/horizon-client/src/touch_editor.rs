@@ -732,24 +732,33 @@ fn control_props(
     footer_restore_hide(k, x, y, w)
 }
 
-/// "Back to its place" and "Hide", side by side; returns the y below them.
+/// "Back to its place" and "Hide": side by side when both labels fit, else one per
+/// row; returns the y below them.
 fn footer_restore_hide(k: &mut Kit<Act>, x: f32, y: f32, w: f32) -> f32 {
+    let (restore, hide) = (t("restore"), t("hide"));
     let half = (w - 8.0) / 2.0;
+    let fits = k.button_width(Style::Secondary, Some(Icon::Pixel("reload")), &restore) <= half
+        && k.button_width(Style::Danger, Some(Icon::Sprite(EYE_OFF)), &hide) <= half;
+    let (first, second) = if fits {
+        ([x, y, half, 44.0], [x + half + 8.0, y, half, 44.0])
+    } else {
+        ([x, y, w, 44.0], [x, y + 52.0, w, 44.0])
+    };
     k.button(
-        [x, y, half, 44.0],
+        first,
         Style::Secondary,
         Some(Icon::Pixel("reload")),
-        &t("restore"),
+        &restore,
         Some(Act::Restore),
     );
     k.button(
-        [x + half + 8.0, y, half, 44.0],
+        second,
         Style::Danger,
         Some(Icon::Sprite(EYE_OFF)),
-        &t("hide"),
+        &hide,
         Some(Act::Delete),
     );
-    y + 56.0
+    second[1] + 56.0
 }
 
 fn utility_props(
