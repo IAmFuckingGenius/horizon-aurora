@@ -287,10 +287,18 @@ mod tests {
         assert_eq!(en.get("horizon.options.controller"), Some("Controller"));
         let ru = Language::load(&[&empty], "ru_ru");
         assert_eq!(ru.get("horizon.options.controller"), Some("Геймпад"));
-        // Every bundled string carries both languages: a key added to one file
-        // and forgotten in the other shows as a key name on screen.
-        for key in en.map().keys() {
-            assert!(ru.get(key).is_some(), "{key} has no ru_ru value");
+        // Every bundled string carries both languages: the Russian file itself
+        // has each key of the English one (the en_us layer under it would hide
+        // a forgotten one, which then reads in English).
+        let file = |code: &str| -> HashMap<String, String> {
+            let body = Bundled
+                .read(&format!("assets/horizon/lang/{code}.json"))
+                .unwrap();
+            serde_json::from_slice(&body).unwrap()
+        };
+        let ru_file = file("ru_ru");
+        for key in file("en_us").keys() {
+            assert!(ru_file.contains_key(key), "{key} has no ru_ru value");
         }
         assert_eq!(en.get("horizon.pages.mods"), Some("Mods"));
         assert_eq!(ru.get("horizon.pages.mods"), Some("Моды"));
@@ -300,10 +308,11 @@ mod tests {
         assert_eq!(zh.get("Preset"), Some("预设"));
         assert_eq!(zh.get("%s chunks"), Some("%s 个区块"));
         // Not every bundle is complete: the en_us layer is in every map, so a
-        // missing key falls back to English (`horizon.mods.not_built` is not
-        // in ru_ru either).
+        // missing key falls back to English (`horizon.pages.mod_settings` is
+        // not in zh_cn).
         assert_eq!(zh.get("LOD Distance"), Some("LOD 距离"));
-        assert_eq!(ru.get("horizon.mods.not_built"), Some(" (Not built)"));
+        assert_eq!(zh.get("horizon.pages.mod_settings"), Some("Mod Settings"));
+        assert_eq!(ru.get("horizon.mods.not_built"), Some(" (не собран)"));
         let pl = Language::load(&[&empty], "pl_pl");
         assert_eq!(pl.get("horizon.options.controller"), Some("Kontroler"));
         assert_eq!(pl.get("horizon.options.vibration"), Some("Wibracje"));
