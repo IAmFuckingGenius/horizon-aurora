@@ -150,3 +150,134 @@ switch. A ten-second camera flight through the area measured 31.90 FPS and
 ARM64 Clippy, ARMv7 compile checks and four flat-index planning/GPU tests passed.
 Golden Hour was enabled in-world and disabled again on this APK; this is not a
 validation of every native or classic shader pack.
+
+## 2026-11-03: rain cost, thermal governor, leaving the app, Horizon Boost
+
+### Leaving the app saves the world
+
+Android stops delivering frames once it pauses the activity (Home, the app
+switcher, a document picker over the game). The pause and the server-thread
+notification were both published from the frame, so single player kept
+simulating in the background and nothing was saved until the next 5-minute
+autosave; swiping the app away from recents then lost that time. The event loop
+also polled without waiting while no frames came.
+
+Now the window's suspension, or frames stopping while the window has no focus,
+opens the pause menu, tells the server thread at once and asks it for a full save
+that waits for the region writer, once per stay in the background. The pause's own
+save is skipped when that save has just run. While no frames come, the loop waits
+50 ms between iterations. Multiplayer and LAN guests have nothing to save locally;
+a world open to LAN is saved but keeps running, as in vanilla.
+
+Desktop check with the developer command `app-background`, which runs the same
+code: place a block and give items, then `kill -9` the game and reopen the world.
+With the command, the block, the items and the player position were kept; without
+it, all three were lost. Android's lifecycle callbacks themselves were not run on a
+device for this change.
+
+### Rain and snow on the GPU
+
+Rain is a camera-facing quad per column within the weather radius (21 × 21 columns
+at radius 10), up to 20 blocks tall. About 97% of `rain.png`'s texels are
+transparent, so the cost is almost entirely fragments that look up one texel and
+discard: roughly five to six screen layers in open rain. Particles, sky darkening
+and fog changes did not measurably add GPU time.
+
+The classic pass now draws weather through a shader with only the inputs it reads,
+which computes the sprite's texel rectangle once per vertex instead of per pixel.
+With ticks frozen, frames were bit-identical to the previous shader (0 differing
+pixels at 1920 × 1013). `weather-shader classic|lean` switches between them.
+Shader packs keep their own weather path.
+
+Desktop measurements, AMD Radeon 780M (RADV, Vulkan), 1920 × 1013 offscreen,
+uncapped, standing in plains rain at seed 1234 (−960 120 80), mean of three
+4-second runs. Each configuration is a separate game; "added" is rain minus clear
+in the same game:
+
+| Configuration | Clear GPU | Rain GPU | Added by rain |
+| --- | ---: | ---: | ---: |
+| Previous shader (alternating A/B, same game) | 0.94 ms | 1.27 ms | 0.33 ms |
+| Lean shader (alternating A/B, same game) | 0.94 ms | 1.19 ms | 0.25 ms |
+| Lean shader, vanilla settings | 0.91 ms | 1.14 ms | 0.23 ms |
+| Rain density 50% | 0.89 ms | 1.04 ms | 0.15 ms |
+| Rain density 25% | 0.92 ms | 0.99 ms | 0.07 ms |
+| Weather distance 5 (vanilla's Fast radius) | 0.93 ms | 1.09 ms | 0.15 ms |
+| Weather distance 5 and density 50% | 0.95 ms | 1.02 ms | 0.06 ms |
+| No rain splashes | 0.93 ms | 1.19 ms | 0.26 ms |
+
+Splash particles cost CPU time on the client, not GPU time; their phone CPU cost
+was not measured. On the RTX 4060 Laptop GPU rain added 0.33 ms with the previous
+shader. These are desktop numbers; the phone's 26 ms rain frames (from the user's
+report, S21 FE, 2340 × 1080) need the phone measurement below. A tile-based mobile
+GPU is expected to be fragment-bound in the same way, but no percentage is claimed
+for it.
+
+Not done: clipping column quads to the texture's non-empty texel columns (about a
+fifth fewer rain fragments, at the cost of instanced geometry) and drawing weather
+at a lower resolution.
+
+### Thermal governor
+
+Horizon Boost's **Adapt to heat** (on by default) reads `AThermal_getCurrentThermalStatus`
+(API 30, once a second) and `AThermal_getThermalHeadroom` (API 31, every 2 s, 10 s
+forecast), resolved with `dlsym`, or `PowerManager.getCurrentThermalStatus` through
+JNI on API 29. Levels:
+
+| Level | Entered at | Frame cap | Chunk uploads/frame | Render scale |
+| --- | --- | ---: | ---: | ---: |
+| 0 | status none/light and headroom < 0.75 | unchanged | unchanged | unchanged |
+| 1 | moderate, or headroom ≥ 0.75 | 60 | unchanged | unchanged |
+| 2 | severe, or headroom ≥ 0.85 | 45 | 4 | unchanged |
+| 3 | critical or above, or headroom ≥ 0.95 | 30 | 2 | −20 points, ≥ 50% |
+
+A level rises at once and falls one step after readings have allowed it for 30 s
+(lower thresholds 0.65/0.78/0.88). A cap never raises the player's own lower cap.
+Status, headroom, level and caps are in `status` (`thermal`), in performance
+reports (`context.boost_thermal`) and, with the performance overlay on, as its last
+line. `thermal-test STATUS [HEADROOM]|off` injects readings: on desktop the measured
+frame rate went from unlimited to 59.8, 44.9 and 30.0 FPS at levels 1–3, and the
+world resolution to 80%.
+
+### Memory pressure
+
+`onLowMemory` (winit's memory warning) and new trim levels read from
+`ActivityManager.getMyMemoryState` (every 5 s in play, 2 s in the background; acted
+on from RUNNING_LOW in play and from BACKGROUND when away) drop decoded sounds,
+pooled mesh buffers and the staging belts, and return free allocator pages. At
+RUNNING_CRITICAL or onLowMemory, LOD distance (when set) is held at half for three
+minutes. Performance reports count trims (`context.lifecycle`). Not verified on a
+device under real memory pressure.
+
+### Horizon Boost
+
+Horizon Boost is a settings sheet in the engine, opened with **Horizon Boost...** in
+Video Settings while in a world (or `boost open`). It is not a bundled native mod:
+the bundled modules are pinned third-party sources wired to fixed hook points, whose
+settings pages are button lists, and they cannot reach the renderer's animation
+masks, weather columns, frame limiter or thermal governor without new engine APIs.
+The sheet reuses the existing settings (vanilla options and `horizon-graphics.txt`)
+and adds rain density, rain splash share, stars, sun and moon, edge-fog start and
+switches for water, lava, fire, nether portal and other block animations. Every
+default draws what vanilla draws; the Performance preset halves rain columns and
+splashes. Animations already update only for layers visible on screen.
+
+Not implemented: dynamic resolution driven by GPU time.
+
+### Phone measurement
+
+1. Install the build with launcher **Performance recording** on and ADPF/GPU
+   profiling as usual; note thermal status before starting (cool device).
+2. Rain cost: fixed spot in open plains, `/weather rain`, `/gamerule advance_time
+   false`, camera still for 60 s. Record GPU ms; repeat with `/weather clear`. Then,
+   through the developer control socket, `weather-shader classic` and `lean`, 60 s
+   each, alternating twice. Then Boost → Quality: Rain density 50% and 25%, Weather
+   distance 5, 60 s each.
+3. Thermal: Boost → Performance → Adapt to heat on, overlay on. Play 15 minutes in
+   rain without a frame cap; record when the overlay's thermal line and cap change,
+   FPS and GPU ms. Repeat with Adapt to heat off from a cool start.
+4. Leaving the app: in a single-player world place a block and pick up items, press
+   Home, wait 2 s, swipe the app away from recents, reopen the world: the block,
+   items and position must be there. Also with a document picker or share sheet open
+   over the game. Logcat should show `saved the world for the background`.
+5. Memory: with LOD distance on, open several heavy apps, return, and check
+   `context.lifecycle.memory_trims` in the report and that no chunks are missing.

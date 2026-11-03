@@ -14570,7 +14570,12 @@ impl Game<'_> {
         }
         self.sync_still_animations();
         self.tick_thermal();
-        self.frame_graph.note = self.thermal_line();
+        self.frame_graph.note =
+            if self.settings.horizon.overlay == horizon_client::graphics::Overlay::Off {
+                None
+            } else {
+                self.thermal_line()
+            };
         // Minecraft.doWorldLoad: the LevelLoadingScreen while single player's
         // server starts, with the server's chunk map and progress.
         if let Some(starting) = &self.integrated_starting {
