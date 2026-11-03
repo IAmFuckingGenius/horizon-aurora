@@ -116,8 +116,23 @@ fn open_mode(
             env.call_method(&cursor, "close", "()V", &[])?;
             result?
         }.unwrap_or_else(|| fallback.into());
+        const OPEN: &str = "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;";
+        let read_only = mode == "r";
         let mode = JObject::from(env.new_string(mode)?);
-        let fd = env.call_method(&resolver, "openFileDescriptor", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;", &[JValue::Object(&uri), JValue::Object(&mode)])?.l()?;
+        let fd = match env.call_method(&resolver, "openFileDescriptor", OPEN, &[JValue::Object(&uri), JValue::Object(&mode)]) {
+            Ok(fd) => fd.l()?,
+            // The storage providers open a shared file for reading through MediaStore's
+            // redaction check, which some systems fail inside (Waydroid's MediaProvider
+            // throws a NullPointerException from AppOps). A read-write open of the same
+            // document skips that check; the picker granted both. Nothing is written.
+            Err(jni::errors::Error::JavaException) if read_only => {
+                let reason = take_exception(env).unwrap_or_default();
+                log::warn!("Read-only document open failed ({reason}); retrying read-write");
+                let rw = JObject::from(env.new_string("rw")?);
+                env.call_method(&resolver, "openFileDescriptor", OPEN, &[JValue::Object(&uri), JValue::Object(&rw)])?.l()?
+            }
+            Err(error) => return Err(error.into()),
+        };
         if fd.is_null() { return Err("Document provider returned no file".into()); }
         let raw = env.call_method(&fd, "detachFd", "()I", &[])?.i()?;
         if raw < 0 { return Err("Document provider returned an invalid descriptor".into()); }
