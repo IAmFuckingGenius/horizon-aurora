@@ -22,12 +22,12 @@ in the [Android guide](android.md#check).
 | Single player | Default integrated server and optional in-frame path. Editor pauses unpublished single player through the engine pause decision |
 | Servers | Existing protocol 777 client. Manual matching-version server address supported; Android device-code sign-in and session handoff implemented; temporary Switch dev ID with Microsoft Live device-code flow, browser Custom Tab, code copy and persistent pending login; initial code request accepted, full account login unverified |
 | Play with Friends | Shared core exists, but relay/account/clipboard/background behavior needs an Android end-to-end pass before advertising parity |
-| Saves and backups | Engine save logic works; Android Storage Access Framework import/export and share UI remain to implement. Uninstalling the app deletes internal data |
+| Saves and backups | Engine save logic works. Worlds exports a world as a ZIP and imports a world ZIP through the system file picker ([content guide](android-content.md#world-zips)). Uninstalling the app deletes internal data |
 | Lifecycle | Touch/key cancellation, vibration stop and surface release/recreation. Leaving the game returns to the native launcher; background process termination still needs broader save/recovery testing |
-| Android file access | System-picker import for add-ons; Horizon Android in system Files exposes mods, resource packs, shaders, worlds and reports. Physical game files stay internal. F2 gallery export uses MediaStore; Android 8.1–9 requests storage access for that explicit action. World folders can be copied in Files while the game is closed; dedicated ZIP-world import/export remains separate |
+| Android file access | System-picker import for add-ons; Horizon Android in system Files exposes mods, resource packs, shaders, worlds and reports. Physical game files stay internal. F2 gallery export uses MediaStore; Android 8.1–9 requests storage access for that explicit action. World folders can be copied in Files while the game is closed. Reports (diagnostic ZIP, performance JSONL, launch log) can be saved through the picker or shared |
 | Physical device tuning | Thermal/frame-pacing and GPU-driver comparisons need measurements on the target phone; an emulator is not evidence of phone performance |
 | Desktop updates / telemetry services | Desktop deployment/auto-update infrastructure is not an Android updater; fork exports keep original workflows inactive |
 
-Priorities after this change: world import/export, Minecraft Services approval and production account validation,
+Priorities after this change: Minecraft Services approval and production account validation,
 hardware gamepads, then measured lifecycle and thermal behavior. Preserve
 the current engine performance baseline while adding these platform bridges.

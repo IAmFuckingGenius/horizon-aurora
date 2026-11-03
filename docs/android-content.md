@@ -69,8 +69,8 @@ existing content. Original URI grants are not retained after copying.
 The allowlisted DocumentsProvider supports browsing, copying files in and out,
 editing, renaming files and deleting add-ons. Fixed directories cannot be removed;
 nonempty subdirectories must be emptied explicitly. Hidden paths, traversal and
-symlinks are rejected. It does not require MANAGE_EXTERNAL_STORAGE. World import/
-export and moving the game to an external folder remain separate tasks.
+symlinks are rejected. It does not require MANAGE_EXTERNAL_STORAGE. Moving the
+game to an external folder remains a separate task.
 
 Copying directly with a file manager bypasses the Import file validator; wait for
 the copy to finish before starting the game, and use the game's pack selection to
@@ -84,6 +84,25 @@ the game. Test the complete APK on Android for picker cancellation, file-provide
 permissions, duplicate-name choices, deletion and keyboard/background recovery.
 `python tools/test_android_storage.py --serial DEVICE --browse` tests the actual
 provider and Bionic file lock in a separate small probe app with fresh app data.
+
+## World ZIPs
+
+**Worlds → Export** beside a world asks where to save `<world name>.zip`
+(Android's ACTION_CREATE_DOCUMENT). The ZIP holds the world folder as its top
+folder, is written a file at a time while a dialog shows progress, and skips the
+game's `session.lock` and symbolic links. Cancel or a failure removes the
+unfinished document. A destination that can only be written front to back is
+packed in the profile first, then copied.
+
+**Worlds → Import world** opens the document picker for a ZIP. Before anything is
+unpacked, every entry is checked: a `level.dat` must be at the root or in exactly
+one folder one level down; absolute paths, drive letters, `..`, backslashes,
+symbolic links, password protection and unsupported compression are refused with a
+message. The world unpacks into a hidden folder beside `saves`, then moves in under
+the ZIP's folder name, or the ZIP's file name; a taken name gets " (2)", " (3)" and so on.
+Free space for the unpacked size is checked first. Cancel or a failure leaves no
+partial world. `python tools/test_android_worlds.py` runs the archive rules on the
+host.
 
 For a native shader smoke test, package Horizon's included Golden Hour example:
 

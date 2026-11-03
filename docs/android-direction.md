@@ -35,7 +35,6 @@ same device, settings, world and camera path.
 
 ## Remaining platform work
 
-- Android Storage Access Framework world import/export and log sharing.
 - Production account registration and broader authenticated-server validation.
 - Hardware gamepad axes, controller rumble and complete TV navigation.
 - Low-memory and legacy GPU testing, lifecycle recovery and thermal profiling.
