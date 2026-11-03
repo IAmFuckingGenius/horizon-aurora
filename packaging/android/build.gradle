@@ -7,7 +7,9 @@ android {
         applicationId providers.gradleProperty('appId').getOrElse('dev.horizon.android')
         minSdk providers.gradleProperty('minSdk').getOrElse('28').toInteger()
         targetSdk 35
-        versionCode providers.gradleProperty('devVersionCode').getOrElse('29').toInteger()
+        // CI dev builds pass devVersionCode; local builds localVersionCode. Both count minutes
+        // since 2020, so the newer build installs over the older whichever made it.
+        versionCode providers.gradleProperty('devVersionCode').orElse(providers.gradleProperty('localVersionCode')).getOrElse('29').toInteger()
         versionName '0.7.7' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
         ndk { abiFilters providers.gradleProperty('abi').get() }
     }

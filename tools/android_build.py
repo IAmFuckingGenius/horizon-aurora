@@ -231,8 +231,12 @@ def main():
     # builds): start from no APK so each one holds only what it lists.
     shutil.rmtree(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}', ignore_errors=True)
     shutil.rmtree(ROOT / f'.local/android/gradle-build/intermediates/incremental/package{variant.title()}', ignore_errors=True)
+    # Minutes since 2020 (as CI's --dev-version-code): a newer local build updates an
+    # installed dev APK, and a newer CI build updates a local one.
+    import time
+    local_version = ['-PlocalVersionCode=' + str(int((time.time() - 1577836800) // 60))]
     dev_properties = (['-PappId=dev.horizon.android.dev', '-PdevBuild=' + args.dev_build,
-                       '-PdevVersionCode=' + str(args.dev_version_code)] if args.dev_build else [])
+                       '-PdevVersionCode=' + str(args.dev_version_code)] if args.dev_build else local_version)
     run([gradle, '--no-daemon', '-p', ROOT / 'packaging/android', '-Pabi=' + args.abi, '-PminSdk=' + str(min_sdk), *dev_properties, 'assemble' + variant.title()], cwd=ROOT, env=environment)
     apk = output / ('horizon-android-public.apk' if args.public else 'horizon-android-release.apk' if args.release_candidate else 'horizon-android.apk')
     shutil.copyfile(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}/HorizonAndroid-{variant}.apk', apk)

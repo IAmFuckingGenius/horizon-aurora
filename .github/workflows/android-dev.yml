@@ -1,9 +1,9 @@
-name: Android dev APKs
-run-name: Android dev · ${{ github.sha }}
+name: Horizon Aurora dev APKs
+run-name: Aurora dev · ${{ github.sha }}
 
 on:
   push:
-    branches: [android]
+    branches: [main]
     paths:
       - 'crates/**'
       - 'Cargo.toml'
@@ -33,8 +33,11 @@ concurrency:
 jobs:
   build:
     # Never expose a signing secret to pull requests or arbitrary dispatch refs.
-    if: github.ref == 'refs/heads/android'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    # Publishing the rolling `dev` pre-release needs to write releases.
+    permissions:
+      contents: write
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -112,7 +115,7 @@ jobs:
             --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME_17_X64" --gradle "$(command -v gradle)" \
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
             --dev-build "${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}" \
-            --dev-version-code "$((1000 + GITHUB_RUN_NUMBER))"
+            --dev-version-code "$(( ($(date +%s) - 1577836800) / 60 ))"
       - name: Collect only audited APK and public metadata
         env:
           ABI: ${{ matrix.abi }}
@@ -123,7 +126,7 @@ jobs:
           out = Path('dist')
           out.mkdir()
           sha, abi = os.environ['GITHUB_SHA'], os.environ['ABI']
-          name = f'Horizon-Android-dev.{os.environ["GITHUB_RUN_NUMBER"]}.{sha[:12]}-{abi}.apk'
+          name = f'Horizon-Aurora-dev.{os.environ["GITHUB_RUN_NUMBER"]}.{sha[:12]}-{abi}.apk'
           apk = out / name
           shutil.copyfile(Path('.local/android/apk') / abi / 'horizon-android-public.apk', apk)
           (out / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(apk.read_bytes()).hexdigest()}  {name}\n')
@@ -133,9 +136,9 @@ jobs:
               'package': 'dev.horizon.android.dev', 'experimental': True,
               'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'}, indent=2) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write(f'### Dev APK: {abi}\n\nCommit: `{sha}`. Optimized release profile; experimental build.\n\n'
-                  'Download the APK artifact below. Installs separately from the stable app. '
-                  'Existing worlds/accounts are not copied automatically.\n')
+              summary.write(f'### Horizon Aurora dev APK: {abi}\n\nCommit: `{sha}`. Optimized release profile; experimental build.\n\n'
+                  'Download the APK artifact below, or from the `dev` pre-release (arm64-v8a). '
+                  'It updates an installed Horizon Aurora dev build in place.\n')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -143,6 +146,19 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+      - name: Publish the rolling dev pre-release
+        # One release, replaced by every build of main: the newest arm64 APK, downloadable
+        # from a phone without signing in. Other ABIs stay workflow artifacts.
+        if: matrix.abi == 'arm64-v8a'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          notes="Automatic build of ${SHA:0:12} from main (run ${GITHUB_RUN_NUMBER}). Experimental. Installs as Horizon Aurora and updates the previous dev build in place. What the fork adds: see the README."
+          gh release delete dev --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create dev --repo "$GITHUB_REPOSITORY" --prerelease --target "$SHA" \
+            --title "Dev build ${GITHUB_RUN_NUMBER} (${SHA:0:12})" --notes "$notes" \
+            dist/*.apk dist/SHA256SUMS.txt
       - name: Remove signing key
         if: always()
         run: rm -f .local/android/debug.keystore

@@ -1,45 +1,42 @@
 # Development APKs
 
-The **Android dev APKs** Actions workflow builds ARM64 on code pushes to `android`.
+The **Horizon Aurora dev APKs** Actions workflow builds ARM64 on code pushes to `main`.
 Documentation-only pushes are skipped. Older in-progress builds are cancelled
 when a newer commit arrives. **Run workflow → all_abis** builds all four ABIs.
 Pull requests never receive the signing key or trigger this workflow.
 
 These APKs use the optimized Rust `release` profile (including ThinLTO), public
 payload checks and official resource downloads. The package is
-`dev.horizon.android.dev`, separate from the normal release, and the visible
-version contains the run number and source commit. Test data is separate;
-worlds and accounts are not automatically copied from the release app.
-The workflow does not publish GitHub Releases or send Discord messages.
+`dev.horizon.android.dev`; the visible version contains the run number and source
+commit. Each ARM64 build replaces the **`dev` pre-release** on the Releases page, so the
+newest APK downloads on a phone without signing in. Other ABIs stay run artifacts.
+
+The version code is the number of minutes since 2020 for CI and for local builds alike
+(`tools/android_build.py` passes it), so the newer APK installs over the older one
+whichever made it, as long as both are signed with the same key.
 
 ## One-time maintainer setup
 
-Create a **new, dedicated dev key**, not the release signing key. In PowerShell:
+The workflow signs with `ANDROID_DEV_KEYSTORE_BASE64` (repository Settings → Secrets
+and variables → Actions). This fork uses the local development key,
+`.local/android/debug.keystore` (created by `tools/android_build.py`; password and
+alias `android` / `androiddebugkey`), so CI builds update locally built dev APKs in
+place:
 
-```powershell
-keytool -genkeypair -keystore "$env:TEMP/horizon-ci-dev.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -validity 10000 -dname "CN=Horizon Android Dev CI"
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP/horizon-ci-dev.keystore")) | Set-Clipboard
+```sh
+base64 -w0 .local/android/debug.keystore | gh secret set ANDROID_DEV_KEYSTORE_BASE64
 ```
 
-In repository Settings → Secrets and variables → Actions, add
-`ANDROID_DEV_KEYSTORE_BASE64` with the clipboard contents. Keep a private backup
-of this key outside the repository. The password/alias above match the existing
-build configuration. Clear the clipboard afterwards. Never attach the key to an
-issue, artifact, release or message.
-
-The workflow fails early if the secret is absent. Keeping the same key permits
-in-place updates between CI dev builds; replacing it requires reinstalling the
-dev app. Existing locally signed debug APKs may use a different key as well.
-Back up their test data before uninstalling. Normal release installations are
-unaffected. Do not reset this workflow's run counter: its increasing value is
-used as Android's dev-channel version code.
+Keep a private backup of that keystore outside the repository: losing it means the
+next dev APK needs a reinstall (and worlds exported first). Never attach the key to an
+issue, artifact, release or message. It is a development key, not a release key.
 
 ## Sharing with testers
 
-Open Actions → Android dev APKs → the successful run → Artifacts. Share the run
-URL in Discord and specify its commit and architecture. Download and unpack the
-artifact ZIP, then install its APK. GitHub requires sign-in to download workflow
-artifacts; artifacts expire after 14 days. Each contains the APK, checksums,
+The simplest link is the `dev` pre-release on the Releases page: its ARM64 APK
+downloads without signing in. Run artifacts (Actions → Horizon Aurora dev APKs → the
+run → Artifacts) also hold the other ABIs; GitHub requires sign-in to download them,
+and they expire after 14 days. Each contains the APK, checksums,
 license notices and `BUILD.json` identifying the exact source and build profile.
 Experimental builds have not automatically passed gameplay or performance tests.
 
