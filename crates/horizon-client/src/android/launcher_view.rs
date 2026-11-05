@@ -2181,7 +2181,7 @@ impl Launcher {
         let engines: Vec<(Option<usize>, String, String)> = std::iter::once((
             None,
             t("Built-in engine").to_owned(),
-            format!("Horizon {}", crate::backend::VERSION),
+            format!("Horizon Aurora {}", crate::backend::VERSION),
         ))
         .chain(self.view.engines.iter().enumerate().map(|(i, e)| {
             let m = &e.manifest;
@@ -2999,7 +2999,7 @@ impl Launcher {
                     Row::mono(
                         t("Version"),
                         &format!(
-                            "Horizon {} · Minecraft {} · {}",
+                            "Horizon Aurora {} · Minecraft {} · {}",
                             crate::backend::VERSION,
                             horizon_core::VANILLA_VERSION,
                             std::env::consts::ARCH
@@ -3028,7 +3028,7 @@ impl Launcher {
         let mut rows = vec![match &running {
             None => Row::mono(
                 t("Engine in use: built into the app"),
-                &format!("Horizon {} · {commit}", crate::backend::VERSION),
+                &format!("Horizon Aurora {} · {commit}", crate::backend::VERSION),
                 Control::Text(()),
             ),
             Some(id) => {

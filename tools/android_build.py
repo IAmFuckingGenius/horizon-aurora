@@ -15,6 +15,16 @@ import hashlib
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
+# Horizon Aurora's packages: releases, and dev builds (CI's rolling `dev`, local builds)
+# installed beside them.
+APP_ID = 'io.github.iamfuckinggenius.aurora'
+DEV_APP_ID = APP_ID + '.dev'
+
+
+def app_version():
+    """The release version: versionName in packaging/android/build.gradle."""
+    text = (ROOT / 'packaging/android/build.gradle').read_text(encoding='utf-8')
+    return re.search(r"versionName\s+'([^']+)'", text).group(1)
 TARGETS = {'x86_64': 'x86_64-linux-android', 'arm64-v8a': 'aarch64-linux-android',
            'armeabi-v7a': 'armv7-linux-androideabi', 'x86': 'i686-linux-android'}
 
@@ -106,6 +116,9 @@ def main():
     parser.add_argument('--public', action='store_true', help='Distribution APK: generated tables only; original resources download from Mojang')
     parser.add_argument('--dev-build', help='Public, non-debuggable dev channel label (separate .dev package)')
     parser.add_argument('--dev-version-code', type=int, help='Monotonically increasing dev channel version code')
+    parser.add_argument('--version-code', type=int, help='Version code of a non-dev build (default: minutes since 2020)')
+    parser.add_argument('--release-key', type=Path, help='Sign a public release with this keystore; its password in AURORA_RELEASE_PASSWORD')
+    parser.add_argument('--release-key-alias', default='aurora', help='The release key alias (default: aurora)')
     parser.add_argument('--profile', choices=['release', 'fast', 'dev'], help='Public/candidate builds default to release (ThinLTO); local builds default to optimized fast')
     parser.add_argument('--gradle', type=Path, help='Gradle 8.14 executable (otherwise discover the cached distribution)')
     parser.add_argument('--check', action='store_true', help='Only type-check the Android target')
@@ -119,6 +132,14 @@ def main():
             parser.error('--dev-build requires --dev-version-code in 1..2100000000')
     elif args.dev_version_code is not None:
         parser.error('--dev-version-code requires --dev-build')
+    if args.version_code is not None and (args.dev_build is not None or not 1 <= args.version_code <= 2100000000):
+        parser.error('--version-code is for non-dev builds, in 1..2100000000')
+    if args.release_key is not None:
+        if not args.public or args.dev_build is not None:
+            parser.error('--release-key signs public release builds only (no --dev-build)')
+        if not args.release_key.is_file() or not os.environ.get('AURORA_RELEASE_PASSWORD'):
+            parser.error('--release-key needs the keystore file and AURORA_RELEASE_PASSWORD set')
+        args.release_key = args.release_key.resolve()
     if args.profile is None:
         args.profile = 'release' if args.public or args.release_candidate else 'fast'
     if args.public:
@@ -159,6 +180,9 @@ def main():
     environment[f'CARGO_TARGET_{triple.upper()}_LINKER'] = str(clang)
     environment['CARGO_PROFILE_DEV_DEBUG'] = '0'
     environment['HORIZON_ANDROID_PUBLIC'] = '1' if args.public else '0'
+    # The version the launcher shows and reports: the release's, marked on dev builds.
+    environment['HORIZON_ANDROID_VERSION'] = app_version() + (
+        f'-dev.{args.dev_build}' if args.dev_build else '' if args.public else '-dev')
     try:
         environment['HORIZON_ANDROID_BUILD_COMMIT'] = subprocess.check_output(
             ['git', 'rev-parse', '--short=12', 'HEAD'], cwd=ROOT,
@@ -234,18 +258,23 @@ def main():
     # Minutes since 2020 (as CI's --dev-version-code): a newer local build updates an
     # installed dev APK, and a newer CI build updates a local one.
     import time
-    local_version = ['-PlocalVersionCode=' + str(int((time.time() - 1577836800) // 60))]
-    dev_properties = (['-PappId=dev.horizon.android.dev', '-PdevBuild=' + args.dev_build,
+    local_version = ['-PlocalVersionCode=' + str(args.version_code or int((time.time() - 1577836800) // 60))]
+    dev_properties = (['-PappId=' + DEV_APP_ID, '-PdevBuild=' + args.dev_build,
                        '-PdevVersionCode=' + str(args.dev_version_code)] if args.dev_build else local_version)
+    if args.release_key:
+        dev_properties += ['-PreleaseKeystore=' + str(args.release_key), '-PreleaseKeyAlias=' + args.release_key_alias]
+    elif args.public and not args.dev_build:
+        print('Note: no --release-key, so this APK is signed with the development key and cannot '
+              'update an installed Aurora release.', flush=True)
     run([gradle, '--no-daemon', '-p', ROOT / 'packaging/android', '-Pabi=' + args.abi, '-PminSdk=' + str(min_sdk), *dev_properties, 'assemble' + variant.title()], cwd=ROOT, env=environment)
     apk = output / ('horizon-android-public.apk' if args.public else 'horizon-android-release.apk' if args.release_candidate else 'horizon-android.apk')
     shutil.copyfile(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}/HorizonAndroid-{variant}.apk', apk)
     # Invoke the signing JAR directly so Windows does not need a batch-file shell.
     signer = [args.java_home / 'bin' / ('java' + suffix), '-jar', tools / 'lib/apksigner.jar']
-    run([*signer, 'verify', '--verbose', apk])
+    run([*signer, 'verify', '--verbose', *(['--print-certs'] if args.release_candidate else []), apk])
     if args.release_candidate:
         import sys
-        run([sys.executable, ROOT / 'tools/check_android_release.py', apk, '--aapt2', tools / ('aapt2' + suffix), *(['--public'] if args.public else []), *(['--app-id', 'dev.horizon.android.dev'] if args.dev_build else [])], cwd=ROOT)
+        run([sys.executable, ROOT / 'tools/check_android_release.py', apk, '--aapt2', tools / ('aapt2' + suffix), *(['--public'] if args.public else []), '--app-id', DEV_APP_ID if args.dev_build else APP_ID], cwd=ROOT)
     print(f'APK: {apk}', flush=True)
 
 

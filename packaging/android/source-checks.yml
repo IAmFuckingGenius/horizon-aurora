@@ -38,6 +38,7 @@ jobs:
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml
           cmp .github/workflows/android-dev.yml packaging/android/dev-builds.yml
+          cmp .github/workflows/android-release.yml packaging/android/release-builds.yml
   native:
     if: github.event_name == 'workflow_dispatch' && inputs.native_checks
     needs: source

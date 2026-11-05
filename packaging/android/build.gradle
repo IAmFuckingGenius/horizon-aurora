@@ -4,14 +4,20 @@ android {
     namespace 'dev.horizon.android'
     compileSdk 35
     defaultConfig {
-        applicationId providers.gradleProperty('appId').getOrElse('dev.horizon.android')
+        // Horizon Aurora's package; debug builds add `.dev` (a separate app beside releases).
+        applicationId providers.gradleProperty('appId').getOrElse('io.github.iamfuckinggenius.aurora')
         minSdk providers.gradleProperty('minSdk').getOrElse('28').toInteger()
         targetSdk 35
-        // CI dev builds pass devVersionCode; local builds localVersionCode. Both count minutes
-        // since 2020, so the newer build installs over the older whichever made it.
+        // CI dev builds pass devVersionCode; other builds localVersionCode (a release: its
+        // tagged commit's time). All count minutes since 2020, so a newer build installs over
+        // an older one of the same package whichever made it.
         versionCode providers.gradleProperty('devVersionCode').orElse(providers.gradleProperty('localVersionCode')).getOrElse('29').toInteger()
-        versionName '0.7.7' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
+        // The release's version, also shown in the launcher (tools/android_build.py reads it).
+        // A release tag is `v` + this; bump it before tagging the next one.
+        versionName '0.7.7-aurora.1' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
         ndk { abiFilters providers.gradleProperty('abi').get() }
+        // Dev builds sit beside the release on the home screen: name them apart.
+        manifestPlaceholders = [appLabel: providers.gradleProperty('devVersionCode').isPresent() ? 'Aurora Dev' : 'Horizon Aurora']
     }
     signingConfigs {
         development {
@@ -20,20 +26,31 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Releases: the Aurora release key, from tools/android_build.py --release-key (CI
+        // restores it from a secret). Without it a release build uses the development key
+        // and is not a release: it cannot update an installed Aurora release.
+        if (providers.gradleProperty('releaseKeystore').isPresent()) {
+            release {
+                storeFile file(providers.gradleProperty('releaseKeystore').get())
+                storePassword providers.environmentVariable('AURORA_RELEASE_PASSWORD').get()
+                keyAlias providers.gradleProperty('releaseKeyAlias').getOrElse('aurora')
+                keyPassword providers.environmentVariable('AURORA_RELEASE_PASSWORD').get()
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.development
             versionNameSuffix '-dev.' + providers.gradleProperty('devBuild').getOrElse('local')
+            manifestPlaceholders = [appLabel: 'Aurora Dev']
             if (!providers.gradleProperty('appId').isPresent()) { applicationIdSuffix '.dev' }
         }
         release {
             debuggable false
             jniDebuggable false
             minifyEnabled false
-            // Retain the existing installation's signing identity for upgrades.
-            // Only the public certificate enters the APK; the key stays in .local/.
-            signingConfig signingConfigs.development
+            // Only the public certificate enters the APK; the keys stay out of Git.
+            signingConfig = providers.gradleProperty('releaseKeystore').isPresent() ? signingConfigs.release : signingConfigs.development
         }
     }
     sourceSets.main {

@@ -133,12 +133,12 @@ jobs:
           for source, dest in [('LICENSE', 'LICENSE.txt'), ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
               shutil.copyfile(source, out / dest)
           (out / 'BUILD.json').write_text(json.dumps({'commit': sha, 'abi': abi, 'profile': 'release',
-              'package': 'dev.horizon.android.dev', 'experimental': True,
+              'package': 'io.github.iamfuckinggenius.aurora.dev', 'experimental': True,
               'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'}, indent=2) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f'### Horizon Aurora dev APK: {abi}\n\nCommit: `{sha}`. Optimized release profile; experimental build.\n\n'
                   'Download the APK artifact below, or from the `dev` pre-release (arm64-v8a). '
-                  'It updates an installed Horizon Aurora dev build in place.\n')
+                  'It installs beside the Aurora release as Horizon Aurora dev and updates an installed dev build in place.\n')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -154,7 +154,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
         run: |
-          notes="Automatic build of ${SHA:0:12} from main (run ${GITHUB_RUN_NUMBER}). Experimental. Installs as Horizon Aurora and updates the previous dev build in place. What the fork adds: see the README."
+          notes="Automatic build of ${SHA:0:12} from main (run ${GITHUB_RUN_NUMBER}). Experimental. Installs beside the Aurora release (package io.github.iamfuckinggenius.aurora.dev) and updates the previous dev build in place. What the fork adds: see the README."
           gh release delete dev --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create dev --repo "$GITHUB_REPOSITORY" --prerelease --target "$SHA" \
             --title "Dev build ${GITHUB_RUN_NUMBER} (${SHA:0:12})" --notes "$notes" \

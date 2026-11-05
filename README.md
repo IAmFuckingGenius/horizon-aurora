@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="#download"><b>Download</b></a> ·
   <a href="#whats-new"><b>What's new</b></a> ·
   <a href="#screenshots"><b>Screenshots</b></a> ·
   <a href="#engines-and-instances"><b>Engines &amp; instances</b></a> ·
@@ -31,6 +32,14 @@
 > the Android port of [Horizon](https://github.com/ludovic111/horizon). It is not an official build of either project,
 > and it is not affiliated with or endorsed by Mojang or Microsoft. Report problems with this fork
 > [here](https://github.com/IAmFuckingGenius/horizon-aurora/issues), not upstream.
+
+## Download
+
+**[Latest release](https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest)**: one APK per architecture;
+most phones need **arm64-v8a**. On first start the app downloads Minecraft's original resources from Mojang.
+Aurora installs as its own app beside Horizon Android: move worlds over with world export and import.
+Experimental builds of every change are in the [`dev` pre-release](https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev)
+("Aurora Dev", installs beside the release). How releases are made: [docs/android-releases.md](docs/android-releases.md).
 
 ## What's new
 
@@ -170,6 +179,10 @@ accounts, APKs and signing keys stay outside Git.
 
 **Horizon Aurora** — неофициальный форк [Horizon Android](https://github.com/Vasysik/horizon-android): Minecraft Java 26.3,
 переписанный на Rust, на Android.
+
+**Скачать:** [последний релиз](https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest), большинству телефонов
+нужен APK **arm64-v8a**. Aurora ставится отдельным приложением рядом с Horizon Android; миры переносятся экспортом и
+импортом. Свежие экспериментальные сборки — в пре-релизе [`dev`](https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev).
 
 - **Новый лаунчер** в пиксельном стиле: Главная, Инстансы, Дополнения, Миры, Скины, Настройки. Альбомная и портретная
   ориентация, русский и английский с переключателем в настройках.

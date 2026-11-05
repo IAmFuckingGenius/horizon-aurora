@@ -7,8 +7,9 @@ Pull requests never receive the signing key or trigger this workflow.
 
 These APKs use the optimized Rust `release` profile (including ThinLTO), public
 payload checks and official resource downloads. The package is
-`dev.horizon.android.dev`; the visible version contains the run number and source
-commit. Each ARM64 build replaces the **`dev` pre-release** on the Releases page, so the
+`io.github.iamfuckinggenius.aurora.dev` ("Aurora Dev" on the phone), beside the release
+app ([releases](android-releases.md)); the visible version contains the run number and
+source commit. Each ARM64 build replaces the **`dev` pre-release** on the Releases page, so the
 newest APK downloads on a phone without signing in. Other ABIs stay run artifacts.
 
 The version code is the number of minutes since 2020 for CI and for local builds alike

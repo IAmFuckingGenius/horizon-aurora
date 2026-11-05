@@ -77,10 +77,11 @@ mod world_archive;
 mod skins;
 // The shared account protocol needs only the launcher's version and data path.
 mod backend {
-    pub const VERSION: &str = if crate::PUBLIC_BUILD {
-        "0.7.7"
-    } else {
-        "0.7.7-dev"
+    /// Horizon Aurora's version: `versionName` in packaging/android/build.gradle, marked
+    /// on dev builds (tools/android_build.py passes it).
+    pub const VERSION: &str = match option_env!("HORIZON_ANDROID_VERSION") {
+        Some(version) => version,
+        None => "0.7.7-aurora.1-dev",
     };
     static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     pub fn initialize(home: std::path::PathBuf) {
