@@ -210,6 +210,9 @@ impl Game<'_> {
                 && self.screen != Screen::Options;
             self.pad.touch.inventory_screen =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
+            if !self.pad.touch.inventory_mode {
+                self.pad.touch.inventory_shift = false;
+            }
             self.pad.touch_ui.utility = self.pad.touch.settings.utility;
             if !matches!(self.screen, Screen::Inventory | Screen::Creative) {
                 self.pad.touch_ui.reset_inventory_pointer();

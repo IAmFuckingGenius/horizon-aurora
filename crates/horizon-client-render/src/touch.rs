@@ -151,6 +151,8 @@ pub struct TouchControls {
     pub inventory_mode: bool,
     /// The open screen is the inventory, where "Controls in inventory" shows its set.
     pub inventory_screen: bool,
+    /// The inventory's Shift (quick move) is latched by the Sneak button.
+    pub inventory_shift: bool,
     pub editor: Option<editor::Editor>,
     /// The editor's layer while it is open (kept outside the editor so visibility
     /// checks see it while the editor handles a touch).
@@ -413,7 +415,12 @@ impl TouchControls {
             let held = (self.inventory_mode
                 && Self::inventory_token(control)
                     .is_some_and(|token| self.held_custom_tokens().any(|held| held == token)))
-                || (control == Control::Sneak && self.sneaking)
+                || (control == Control::Sneak
+                    && if self.inventory_mode {
+                        self.inventory_shift
+                    } else {
+                        self.sneaking
+                    })
                 || Self::button(control).is_some_and(|bt| {
                     state.held(bt)
                         || (bt == Button::LeftTrigger && state.triggers[0] > 0.0)
@@ -821,6 +828,7 @@ impl TouchControls {
         self.sprint_latched = sprint;
     }
     pub fn clear(&mut self) {
+        self.inventory_shift = false;
         self.clear_custom();
         self.fingers.clear();
         self.button_drags.clear();
@@ -2185,6 +2193,24 @@ mod tests {
         t.update(2, [0.7, 0.4], false, false);
         t.update(2, [0.7, 0.4], false, true);
         assert_eq!(t.poll_state().triggers, [0.0; 2]);
+    }
+
+    #[test]
+    fn crosshair_attack_button_can_turn_without_releasing_attack() {
+        for enabled in [true, false] {
+            let mut touch = TouchControls::default();
+            touch.settings.mode = Mode::Crosshair;
+            assert!(touch.settings.button_look);
+            touch.settings.button_look = enabled;
+            let start = touch.placement(Control::Attack).center;
+            touch.update(1, start, true, false);
+            assert_eq!(touch.poll_state().triggers[1], 1.0);
+            let end = [start[0] - 0.2, start[1] - 0.1];
+            assert_eq!(touch.update(1, end, false, false) != [0.0; 2], enabled);
+            assert_eq!(touch.poll_state().triggers[1], 1.0);
+            touch.update(1, end, false, true);
+            assert_eq!(touch.poll_state().triggers[1], 0.0);
+        }
     }
 
     #[test]
