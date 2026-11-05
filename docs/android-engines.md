@@ -49,11 +49,39 @@ writes `.local/android/engines/<id>-<abi>.hengine`: a ZIP of `engine.json` and
 | `version`, `commit`, `dirty`, `built` | Where the build came from |
 | `abi` | `arm64-v8a`, `armeabi-v7a`, `x86_64` or `x86`; must match the device |
 | `size`, `sha256` | Of the library, checked on import |
+| `shell` | The [shell level](#shell-levels) it needs |
 
 On import the launcher checks the format, id, ABI, the ELF header's machine, the
 size and the SHA-256, then installs the library read-only (Android 14 requires
 code an app loads from its own files to be read-only). An engine with the same id
 replaces the old one.
+
+## Engines from Aurora's releases
+
+**Settings › Engines › Engines from Aurora › Check** reads the engine lists published
+with the latest release and with the rolling `dev` pre-release (`engines.json`, written by
+`tools/android_engine_index.py`), and offers the engines built for this device:
+
+- **Aurora Dev** (`aurora-dev`): the engine of the newest dev build, so a release app can
+  try what is coming on its own instance;
+- **Horizon Aurora** (`aurora`): the latest release's engine, for an app that has not been
+  updated yet. The engine the app already carries shows as "Same as the built-in engine".
+
+A download is checked against the list (size and SHA-256), then installed like an
+imported engine (the checks below), and **Update** appears when the list has a newer
+build of an installed engine. Lists and files come only from this repository's releases.
+
+## Shell levels
+
+An engine relies on the APK around it: the boot library, the Java side
+(`packaging/android/java`) and the manifest. `horizon_boot::SHELL` numbers what an APK
+offers; the boot library exports it and `engine.json` records the level an engine was
+built with (`shell`). The launcher refuses an engine with a higher level than its app's
+("Update Horizon Aurora first") instead of letting it fail at start. Engines packed before
+levels existed have none (0). When the Java side or the manifest changes,
+`tools/test_android_engines.py` fails until `SHELL` is bumped (if engines built from the
+tree need the change) and the new state is recorded with `--record-shell`
+(`packaging/android/shell.json`).
 
 ## Instances
 

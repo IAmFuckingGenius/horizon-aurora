@@ -5,6 +5,7 @@ The first release of **Horizon Aurora**, an unofficial fork of [Horizon Android]
 - **A new launcher**: Home, Instances, Add-ons, Worlds, Skins and Settings in one pixel-art style, landscape and portrait. English and Russian, with a language switch in Settings.
 - **Instances**: each with its own name, worlds, settings, add-ons and engine. A new instance starts with your language, controls and graphics settings.
 - **Swappable engines**: build the game on a computer (for example with native mods), pack it as a `.hengine` and start it without reinstalling the app. The launcher asks before an import; an engine that fails to start falls back to the built-in one and says why.
+- **Engines from Aurora**: Settings › Engines downloads the newest dev engine (new features before a release, on its own instance) or a newer release's engine, checked against the release's list, without reinstalling the app.
 - **Horizon Boost** as a Minecraft-style page: weather, texture animations, sky, fog, chunk uploads, and a heat limit that is Off, Soft, Balanced or Strong, with a frame-rate floor.
 - **Touch layout editor**: custom buttons (key combinations, toggle, swipe, shapes, colours), where each control shows, named layouts with share codes.
 - **Accounts and skins**: offline, Microsoft and Ely.by accounts with quick switching; a skin and cape wardrobe with a 3D preview.

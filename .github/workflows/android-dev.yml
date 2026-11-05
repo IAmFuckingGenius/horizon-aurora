@@ -140,6 +140,14 @@ jobs:
                   'Download the APK artifact below, or from the `dev` pre-release (arm64-v8a). '
                   'It installs beside the Aurora release as Horizon Aurora dev and updates an installed dev build in place.\n')
           PY
+      - name: Pack the engine for the launcher's engine list
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          version=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" packaging/android/build.gradle | head -n 1)
+          python3 tools/android_engine_pack.py --abi "$ABI" --skip-build --profile release \
+            --id aurora-dev --name 'Aurora Dev' --version "$version-dev.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}" \
+            --output "dist/aurora-dev-$ABI.hengine"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: horizon-dev-${{ github.run_number }}-${{ matrix.abi }}
@@ -155,10 +163,13 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           notes="Automatic build of ${SHA:0:12} from main (run ${GITHUB_RUN_NUMBER}). Experimental. Installs beside the Aurora release (package io.github.iamfuckinggenius.aurora.dev) and updates the previous dev build in place. What the fork adds: see the README."
+          # The engine list the launcher reads (Settings › Engines › Engines from Aurora).
+          python3 tools/android_engine_index.py --output dist/engines.json \
+            --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/dev/" dist/*.hengine
           gh release delete dev --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create dev --repo "$GITHUB_REPOSITORY" --prerelease --target "$SHA" \
             --title "Dev build ${GITHUB_RUN_NUMBER} (${SHA:0:12})" --notes "$notes" \
-            dist/*.apk dist/SHA256SUMS.txt
+            dist/*.apk dist/SHA256SUMS.txt dist/*.hengine dist/engines.json
       - name: Remove signing key
         if: always()
         run: rm -f .local/android/debug.keystore

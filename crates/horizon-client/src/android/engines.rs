@@ -32,6 +32,10 @@ pub struct Manifest {
     pub built: String,
     pub size: u64,
     pub sha256: String,
+    /// The shell level of the tree it was built from (`horizon_boot::SHELL`); 0 for
+    /// engines packed before levels existed.
+    #[serde(default)]
+    pub shell: u32,
 }
 
 /// An engine installed on this device.
@@ -105,10 +109,144 @@ fn check(manifest: &Manifest) -> Result<(), String> {
     if manifest.size == 0 || manifest.size > LIMIT {
         return Err("The engine library has an impossible size.".into());
     }
-    if manifest.sha256.len() != 64 || !manifest.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !checksum(&manifest.sha256) {
         return Err("The engine has no valid checksum.".into());
     }
+    if manifest.shell > shell() {
+        return Err(NEEDS_NEWER_APP.into());
+    }
     Ok(())
+}
+fn checksum(sha256: &str) -> bool {
+    sha256.len() == 64 && sha256.chars().all(|c| c.is_ascii_hexdigit())
+}
+const NEEDS_NEWER_APP: &str =
+    "This engine needs a newer version of the app. Update Horizon Aurora first.";
+
+/// The app's shell level: what its boot library exports (`horizon_boot::SHELL` of the
+/// APK, whichever engine runs), 0 for an app from before levels.
+pub fn shell() -> u32 {
+    apk_shell().unwrap_or(0)
+}
+#[cfg(target_os = "android")]
+fn apk_shell() -> Option<u32> {
+    // Bionic's flags: RTLD_NOW is 0 on 32-bit ABIs.
+    const NOW: std::ffi::c_int = if cfg!(target_pointer_width = "64") {
+        2
+    } else {
+        0
+    };
+    const NOLOAD: std::ffi::c_int = 4;
+    #[link(name = "dl")]
+    unsafe extern "C" {
+        fn dlopen(name: *const std::ffi::c_char, flags: std::ffi::c_int) -> *mut std::ffi::c_void;
+        fn dlsym(
+            handle: *mut std::ffi::c_void,
+            name: *const std::ffi::c_char,
+        ) -> *mut std::ffi::c_void;
+    }
+    // NativeActivity loaded the boot library before any engine: find it, do not load it.
+    let handle = unsafe { dlopen(c"libhorizon_boot.so".as_ptr(), NOW | NOLOAD) };
+    if handle.is_null() {
+        return None;
+    }
+    let level = unsafe { dlsym(handle, c"HORIZON_BOOT_SHELL".as_ptr()) };
+    (!level.is_null()).then(|| unsafe { *level.cast::<u32>() })
+}
+#[cfg(not(target_os = "android"))]
+fn apk_shell() -> Option<u32> {
+    Some(horizon_boot::SHELL)
+}
+
+/// Where Aurora publishes engines: each release, and the rolling `dev` pre-release,
+/// carries an `engines.json` beside its APKs (`tools/android_engine_index.py`).
+pub const STORE: &str = "https://github.com/IAmFuckingGenius/horizon-aurora/releases/";
+/// The lists: the latest release's, then the dev builds'.
+pub const LISTS: [&str; 2] = [
+    "https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest/download/engines.json",
+    "https://github.com/IAmFuckingGenius/horizon-aurora/releases/download/dev/engines.json",
+];
+
+/// An engine offered for download: an entry of an `engines.json`, with the `.hengine`
+/// file's address, size and SHA-256.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct Offer {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub commit: String,
+    pub abi: String,
+    #[serde(default)]
+    pub shell: u32,
+    #[serde(default)]
+    pub built: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// The offers in an `engines.json` this device can take: its ABI, a file in Aurora's
+/// releases, a sane size and a checksum.
+pub fn offers(list: &[u8]) -> Result<Vec<Offer>, String> {
+    #[derive(serde::Deserialize)]
+    struct List {
+        format: u32,
+        #[serde(default)]
+        engines: Vec<Offer>,
+    }
+    let list: List = serde_json::from_slice(list)
+        .map_err(|_| "The list of engines cannot be read.".to_owned())?;
+    if list.format != FORMAT {
+        return Err("The list of engines is for another version of the app.".into());
+    }
+    Ok(list
+        .engines
+        .into_iter()
+        .filter(|o| {
+            o.abi == abi()
+                && valid_id(&o.id)
+                && o.id != BUILT_IN
+                && o.url
+                    .strip_prefix(STORE)
+                    .is_some_and(|rest| !rest.contains("..") && rest.starts_with("download/"))
+                && (1..=LIMIT).contains(&o.size)
+                && checksum(&o.sha256)
+        })
+        .collect())
+}
+
+/// What an offer is to this app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OfferState {
+    /// Not installed.
+    New,
+    /// Installed in an older build.
+    Update,
+    /// Installed in this build or a newer one.
+    Installed,
+    /// The engine the app carries itself.
+    BuiltIn,
+    /// Built for a higher shell level than this app's.
+    NeedsNewerApp,
+}
+/// The state of `offer` beside the `installed` engines, for an app with the engine of
+/// `built_in` (its commit) and shell level `shell`.
+pub fn offer_state(offer: &Offer, installed: &[Engine], built_in: &str, shell: u32) -> OfferState {
+    if offer.shell > shell {
+        return OfferState::NeedsNewerApp;
+    }
+    if !offer.commit.is_empty() && offer.commit == built_in {
+        return OfferState::BuiltIn;
+    }
+    match installed.iter().find(|e| e.manifest.id == offer.id) {
+        None => OfferState::New,
+        Some(e) if e.manifest.commit == offer.commit || e.manifest.built >= offer.built => {
+            OfferState::Installed
+        }
+        Some(_) => OfferState::Update,
+    }
 }
 
 /// Installs the `.hengine` in `file` (replacing an engine with the same id), checking
@@ -338,6 +476,7 @@ mod tests {
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect(),
+            shell: horizon_boot::SHELL,
         }
     }
     fn home(tag: &str) -> PathBuf {
@@ -431,6 +570,8 @@ mod tests {
         short.size += 10;
         let mut future = manifest(&lib);
         future.format = FORMAT + 1;
+        let mut newer_app = manifest(&lib);
+        newer_app.shell = horizon_boot::SHELL + 1;
         let not_elf = vec![0u8; 64];
         for (name, file) in [
             ("checksum", pack(&bad_sum, &lib)),
@@ -438,6 +579,7 @@ mod tests {
             ("id", pack(&escape, &lib)),
             ("size", pack(&short, &lib)),
             ("format", pack(&future, &lib)),
+            ("shell", pack(&newer_app, &lib)),
             ("elf", pack(&manifest(&not_elf), &not_elf)),
             ("zip", b"hello".to_vec()),
         ] {
@@ -449,5 +591,73 @@ mod tests {
             .unwrap_or_default();
         assert!(leftovers.is_empty(), "{leftovers:?}");
         fs::remove_dir_all(home).unwrap();
+    }
+
+    fn offer(id: &str, commit: &str, built: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "name": id, "version": "0.7.7-aurora.1", "commit": commit,
+            "abi": abi(), "shell": horizon_boot::SHELL, "built": built,
+            "url": format!("{STORE}download/dev/{id}-{}.hengine", abi()),
+            "size": 1000, "sha256": "ab".repeat(32),
+        })
+    }
+
+    #[test]
+    fn a_list_offers_only_this_devices_engines_from_auroras_releases() {
+        let good = offer("aurora-dev", "c1", "2026-11-06T10:00:00Z");
+        let mut other_abi = offer("x86-only", "c1", "");
+        other_abi["abi"] = (if abi() == "x86" { "arm64-v8a" } else { "x86" }).into();
+        let mut elsewhere = offer("elsewhere", "c1", "");
+        elsewhere["url"] = "https://example.com/releases/download/dev/e.hengine".into();
+        let mut climbing = offer("climbing", "c1", "");
+        climbing["url"] = format!("{STORE}download/../../evil.hengine").into();
+        let mut no_sum = offer("no-sum", "c1", "");
+        no_sum["sha256"] = "zz".into();
+        let mut huge = offer("huge", "c1", "");
+        huge["size"] = (LIMIT + 1).into();
+        let built_in_id = offer(BUILT_IN, "c1", "");
+        let list = serde_json::json!({"format": FORMAT, "engines": [
+            good, other_abi, elsewhere, climbing, no_sum, huge, built_in_id,
+        ]});
+        let found = offers(list.to_string().as_bytes()).unwrap();
+        if abi() == "unknown" {
+            assert!(found.is_empty());
+            return;
+        }
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].id, "aurora-dev");
+        assert!(offers(br#"{"format": 99, "engines": []}"#).is_err());
+        assert!(offers(b"<html>").is_err());
+    }
+
+    #[test]
+    fn an_offer_is_new_an_update_installed_built_in_or_too_new() {
+        let o: Offer =
+            serde_json::from_value(offer("aurora-dev", "c2", "2026-11-06T10:00:00Z")).unwrap();
+        let shell = horizon_boot::SHELL;
+        let installed = |commit: &str, built: &str| Engine {
+            manifest: Manifest {
+                id: "aurora-dev".into(),
+                commit: commit.into(),
+                built: built.into(),
+                ..manifest(b"x")
+            },
+        };
+        assert_eq!(offer_state(&o, &[], "c0", shell), OfferState::New);
+        let older = installed("c1", "2026-11-05T10:00:00Z");
+        assert_eq!(offer_state(&o, &[older], "c0", shell), OfferState::Update);
+        let same = installed("c2", "2026-11-06T10:00:00Z");
+        assert_eq!(offer_state(&o, &[same], "c0", shell), OfferState::Installed);
+        let newer = installed("c3", "2026-11-07T10:00:00Z");
+        assert_eq!(
+            offer_state(&o, &[newer], "c0", shell),
+            OfferState::Installed
+        );
+        // The release engine the app already carries is not offered again.
+        assert_eq!(offer_state(&o, &[], "c2", shell), OfferState::BuiltIn);
+        assert_eq!(
+            offer_state(&o, &[], "c0", shell - 1),
+            OfferState::NeedsNewerApp
+        );
     }
 }

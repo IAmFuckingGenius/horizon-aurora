@@ -48,8 +48,10 @@ gh secret set AURORA_RELEASE_PASSWORD -R IAmFuckingGenius/horizon-aurora < .loca
 
 4. The **Horizon Aurora release** workflow checks that the tag matches the version and the
    notes exist, builds the four public APKs from the tagged commit, signs them with the
-   release key, audits them and opens a **draft** release with the APKs, `SHA256SUMS.txt`,
-   `LICENSE.txt` and `THIRD_PARTY_NOTICES.md`.
+   release key, audits them and opens a **draft** release with the APKs, the same engines
+   as `.hengine` files with their list `engines.json` (an older Aurora updates its engine
+   from them: [engines](android-engines.md#engines-from-auroras-releases)),
+   `SHA256SUMS.txt`, `LICENSE.txt` and `THIRD_PARTY_NOTICES.md`.
 5. Install the draft's arm64 APK on a phone and check it starts, downloads the resources
    and opens a world. Then press **Publish** on the draft.
 

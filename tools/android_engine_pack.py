@@ -5,7 +5,7 @@ An engine is the full game (`libhorizon_android.so`, with any native mods compil
 that Horizon Android's launcher installs into `files/engines/<id>/` and starts in place
 of the APK's own engine, without reinstalling the app. The file is a ZIP:
 
-    engine.json              format, id, name, version, commit, ABI, size, SHA-256
+    engine.json              format, id, name, version, commit, ABI, size, SHA-256, shell
     libhorizon_android.so    the stripped engine library
 
 Usage:
@@ -58,6 +58,12 @@ def app_version():
     return match.group(1) if match else '0'
 
 
+def shell_level():
+    """The shell level of this tree (horizon_boot::SHELL): the app an engine needs."""
+    text = (ROOT / 'crates/horizon-boot/src/lib.rs').read_text()
+    return int(re.search(r'pub const SHELL: u32 = (\d+);', text).group(1))
+
+
 def ndk_strip():
     sdk = Path(os.environ.get('ANDROID_HOME', Path.home() / 'Android/Sdk'))
     for tool in sorted((sdk / 'ndk').glob('*/toolchains/llvm/prebuilt/*/bin/llvm-strip'), reverse=True):
@@ -72,6 +78,7 @@ def main():
     parser.add_argument('--id', help='Folder name on the phone: letters, digits, - _ . (default: from the commit)')
     parser.add_argument('--profile', choices=['fast', 'release', 'dev'], default='fast')
     parser.add_argument('--skip-build', action='store_true', help='Pack the library already built')
+    parser.add_argument('--version', help='Version shown in the launcher (default: versionName in build.gradle)')
     parser.add_argument('--output', type=Path, help='Where to write the .hengine')
     args = parser.parse_args()
 
@@ -106,13 +113,14 @@ def main():
             'format': FORMAT,
             'id': engine_id,
             'name': name,
-            'version': app_version(),
+            'version': args.version or app_version(),
             'commit': commit,
             'dirty': dirty,
             'abi': args.abi,
             'built': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             'size': len(data),
             'sha256': hashlib.sha256(data).hexdigest(),
+            'shell': shell_level(),
         }
         output = args.output or ROOT / '.local/android/engines' / f'{engine_id}-{args.abi}.hengine'
         output.parent.mkdir(parents=True, exist_ok=True)

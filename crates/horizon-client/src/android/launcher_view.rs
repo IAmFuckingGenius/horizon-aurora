@@ -60,6 +60,8 @@ pub(super) struct ViewState {
     pub instance_edit: Option<InstanceEdit>,
     /// The question before an engine is imported.
     pub engine_confirm: bool,
+    /// Engines offered in Aurora's releases, once checked, and a download.
+    pub engine_store: crate::engine_store::Store,
 }
 
 /// The instance sheet: a new instance (`id` none) or one being changed.
@@ -104,6 +106,7 @@ impl Default for ViewState {
             instances_loaded: None,
             instance_edit: None,
             engine_confirm: false,
+            engine_store: Default::default(),
         }
     }
 }
@@ -3096,6 +3099,103 @@ impl Launcher {
                     ),
                 ),
             ));
+        }
+        rows.extend(self.store_rows());
+        rows
+    }
+    /// Engines from Aurora's releases: a check, then each offer with its state.
+    fn store_rows(&self) -> Vec<Row> {
+        use crate::engines::OfferState;
+        let store = &self.view.engine_store;
+        let checking = store.busy() && store.downloading.is_none();
+        let mut rows = vec![Row::new(
+            t("Engines from Aurora"),
+            t(
+                "Official builds from Horizon Aurora's releases. The dev engine has new features before a release and may be unstable: run it on its own instance.",
+            ),
+            if checking {
+                Control::Text(())
+            } else {
+                Control::Button(
+                    Style::Secondary,
+                    "reload",
+                    if store.checked {
+                        t("Check again")
+                    } else {
+                        t("Check")
+                    },
+                    Action::CheckEngines,
+                )
+            },
+        )];
+        if checking {
+            rows.push(Row::new(t("Checking…"), "", Control::Text(())));
+        }
+        if let Some(error) = &store.error {
+            rows.push(Row::mono(
+                t("Could not load the list of engines"),
+                error,
+                Control::Text(()),
+            ));
+        } else if store.checked && !checking && store.offers.is_empty() {
+            rows.push(Row::new(
+                t("No engines for this device yet"),
+                "",
+                Control::Text(()),
+            ));
+        }
+        let built_in = option_env!("HORIZON_ANDROID_BUILD_COMMIT").unwrap_or("local");
+        let shell = crate::engines::shell();
+        for (i, offer) in store.offers.iter().enumerate() {
+            let state = crate::engines::offer_state(offer, &self.view.engines, built_in, shell);
+            let mut details = format!(
+                "{} · {} · {}",
+                if offer.version.is_empty() {
+                    "?"
+                } else {
+                    &offer.version
+                },
+                if offer.commit.is_empty() {
+                    "?"
+                } else {
+                    &offer.commit
+                },
+                size(offer.size)
+            );
+            if let Some(day) = offer.built.get(..10) {
+                details.push_str(&format!(" · {day}"));
+            }
+            let note = match state {
+                _ if store.downloading.as_deref() == Some(offer.id.as_str()) => Some(tf(
+                    "Downloading… {}%",
+                    &[&format!("{:.0}", store.progress() * 100.0)],
+                )),
+                OfferState::Installed => Some(t("Installed").to_owned()),
+                OfferState::BuiltIn => Some(t("Same as the built-in engine").to_owned()),
+                OfferState::NeedsNewerApp => Some(
+                    t("Needs a newer version of the app. Update Horizon Aurora first.").to_owned(),
+                ),
+                OfferState::New | OfferState::Update => None,
+            };
+            if let Some(note) = &note {
+                details.push_str(&format!(" · {note}"));
+            }
+            let control = match state {
+                _ if note.is_some() || store.busy() => Control::Text(()),
+                OfferState::Update => Control::Button(
+                    Style::Primary,
+                    "download",
+                    t("Update"),
+                    Action::DownloadEngine(i),
+                ),
+                _ => Control::Button(
+                    Style::Primary,
+                    "download",
+                    t("Download"),
+                    Action::DownloadEngine(i),
+                ),
+            };
+            rows.push(Row::mono(&offer.name, &details, control));
         }
         rows
     }

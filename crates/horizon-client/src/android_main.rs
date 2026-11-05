@@ -53,6 +53,8 @@ mod platform;
 #[allow(dead_code)]
 #[path = "../../../launcher/src/proxy.rs"]
 mod proxy;
+#[path = "android/engine_store.rs"]
+mod engine_store;
 #[path = "android/engines.rs"]
 mod engines;
 #[path = "android/instances.rs"]

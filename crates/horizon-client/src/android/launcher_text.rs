@@ -1171,6 +1171,70 @@ static RU: &[(&str, &str)] = &[
         "Движок — это код игры. Он работает со всеми правами Horizon: доступ к вашим мирам, аккаунтам и файлам. Ставьте только движок, который собрали сами или получили от того, кому доверяете.",
     ),
     ("Choose the file", "Выбрать файл"),
+    ("Engines from Aurora", "Движки от Aurora"),
+    (
+        "Official builds from Horizon Aurora's releases. The dev engine has new features before a release and may be unstable: run it on its own instance.",
+        "Официальные сборки из релизов Horizon Aurora. В dev-движке новые функции появляются раньше релиза, и он может быть нестабильным: запускайте его на отдельном инстансе.",
+    ),
+    ("Check", "Проверить"),
+    ("Check again", "Проверить снова"),
+    ("Checking…", "Проверка…"),
+    ("Download", "Скачать"),
+    ("Update", "Обновить"),
+    ("Downloading… {}%", "Загрузка… {}%"),
+    (
+        "Could not load the list of engines",
+        "Не удалось загрузить список движков",
+    ),
+    (
+        "No engines for this device yet",
+        "Для этого устройства движков пока нет",
+    ),
+    (
+        "Same as the built-in engine",
+        "Совпадает со встроенным движком",
+    ),
+    (
+        "Needs a newer version of the app. Update Horizon Aurora first.",
+        "Нужна более новая версия приложения. Сначала обновите Horizon Aurora.",
+    ),
+    (
+        "This engine needs a newer version of the app. Update Horizon Aurora first.",
+        "Этому движку нужна более новая версия приложения. Сначала обновите Horizon Aurora.",
+    ),
+    ("«{}» installed", "«{}» установлен"),
+    (
+        "Start it below, or choose it for an instance.",
+        "Запустите его ниже или выберите для инстанса.",
+    ),
+    (
+        "The list of engines cannot be read.",
+        "Список движков не читается.",
+    ),
+    (
+        "The list of engines is for another version of the app.",
+        "Список движков сделан для другой версии приложения.",
+    ),
+    (
+        "The engine file is larger than its list says.",
+        "Файл движка больше, чем указано в списке.",
+    ),
+    (
+        "The download is incomplete. Try again.",
+        "Загрузка не завершилась. Попробуйте ещё раз.",
+    ),
+    (
+        "The engine file is damaged: its checksum does not match.",
+        "Файл движка повреждён: контрольная сумма не совпадает.",
+    ),
+    (
+        "The engine file is not the engine the list names.",
+        "В файле не тот движок, что указан в списке.",
+    ),
+    (
+        "The download stopped unexpectedly.",
+        "Загрузка неожиданно прервалась.",
+    ),
 ];
 
 #[cfg(test)]

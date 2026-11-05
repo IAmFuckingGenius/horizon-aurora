@@ -125,13 +125,18 @@ jobs:
             --sdk "$ANDROID_HOME" --java-home "$JAVA_HOME_17_X64" --gradle "$(command -v gradle)" \
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
             --version-code "$VERSION_CODE" --release-key .local/android/aurora-release.jks
-      - name: Collect the APK
+      - name: Collect the APK and the engine
         env:
           ABI: ${{ matrix.abi }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           mkdir dist
           cp ".local/android/apk/$ABI/horizon-android-public.apk" "dist/Horizon-Aurora-$VERSION-$ABI.apk"
+          # The same engine for the launcher's engine list: an older Aurora updates its
+          # engine from here without reinstalling.
+          python3 tools/android_engine_pack.py --abi "$ABI" --skip-build --profile release \
+            --id aurora --name "Horizon Aurora $VERSION" --version "$VERSION" \
+            --output "dist/Horizon-Aurora-$VERSION-$ABI.hengine"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: aurora-release-${{ matrix.abi }}
@@ -163,8 +168,11 @@ jobs:
         run: |
           cp LICENSE dist/LICENSE.txt
           cp THIRD_PARTY_NOTICES.md dist/
-          (cd dist && sha256sum Horizon-Aurora-*.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          (cd dist && sha256sum Horizon-Aurora-*.apk Horizon-Aurora-*.hengine > SHA256SUMS.txt && cat SHA256SUMS.txt)
           test "$(ls dist/Horizon-Aurora-*.apk | wc -l)" -eq 4
+          test "$(ls dist/Horizon-Aurora-*.hengine | wc -l)" -eq 4
+          python3 tools/android_engine_index.py --output dist/engines.json \
+            --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/" dist/Horizon-Aurora-*.hengine
           # A rerun replaces its own draft; a published release is never replaced.
           if draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
             if [[ "$draft" != "true" ]]; then
@@ -175,7 +183,8 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
             --title "Horizon Aurora $VERSION" --notes-file "docs/releases/aurora-$VERSION.md" \
-            dist/Horizon-Aurora-*.apk dist/SHA256SUMS.txt dist/LICENSE.txt dist/THIRD_PARTY_NOTICES.md
+            dist/Horizon-Aurora-*.apk dist/Horizon-Aurora-*.hengine dist/engines.json \
+            dist/SHA256SUMS.txt dist/LICENSE.txt dist/THIRD_PARTY_NOTICES.md
           {
             echo "### Draft release Horizon Aurora $VERSION"
             echo

@@ -70,6 +70,10 @@ pub(super) enum Action {
     LaunchEngine(usize),
     DeleteEngine(usize),
     BuiltInEngine,
+    /// Read the lists of engines in Aurora's releases.
+    CheckEngines,
+    /// Download and install an offered engine.
+    DownloadEngine(usize),
     SignOut,
     LoginLink,
     CloseLogin,
@@ -682,6 +686,12 @@ impl Launcher {
                 }
             }
             Some(Action::BuiltInEngine) => self.restart_on(None, None),
+            Some(Action::CheckEngines) => self.view.engine_store.check(),
+            Some(Action::DownloadEngine(index)) => {
+                if let Some(offer) = self.view.engine_store.offers.get(index).cloned() {
+                    self.view.engine_store.download(self.home.clone(), offer);
+                }
+            }
             Some(Action::DeleteEngine(index)) => {
                 let confirmed = self.view.engine_delete.is_some_and(|(at, when)| {
                     at == index && when.elapsed() < std::time::Duration::from_secs(5)

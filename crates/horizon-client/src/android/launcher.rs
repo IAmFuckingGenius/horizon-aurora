@@ -848,6 +848,22 @@ impl ApplicationHandler for Launcher {
                 self.fail(error);
             }
         }
+        match self.view.engine_store.poll() {
+            Some(crate::engine_store::Done::Installed(manifest)) => {
+                self.refresh_engines();
+                self.toast(
+                    text::tf("«{}» installed", &[&manifest.name]),
+                    text::t("Start it below, or choose it for an instance."),
+                    false,
+                );
+            }
+            Some(crate::engine_store::Done::Failed(error)) => self.toast(
+                text::t("Could not install the engine"),
+                text::t_dyn(&error),
+                true,
+            ),
+            Some(crate::engine_store::Done::Checked) | None => {}
+        }
         while let Some(notice) = crate::transfers::poll() {
             if notice.worlds {
                 self.refresh_worlds();

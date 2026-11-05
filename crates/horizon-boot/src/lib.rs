@@ -23,6 +23,12 @@ pub const LIBRARY: &str = "libhorizon_android.so";
 /// The engine id of a request for the APK's own engine (to open an instance on it
 /// from an installed engine). No installed engine may take this id.
 pub const BUILT_IN: &str = "builtin";
+/// The APK's shell level: what it gives an engine besides this library (its Java side,
+/// the documents provider, the manifest). An engine records the level of the tree it
+/// was built from (`shell` in `engine.json`), and the launcher installs only engines up
+/// to the app's own level. Bump it when the Java side changes; CI fails until then
+/// (`packaging/android/shell.json`, checked by `tools/test_android_engines.py`).
+pub const SHELL: u32 = 1;
 
 /// Takes the launch request in `files` (the app's files directory): the requested
 /// engine's id and its library, `None` for the APK's own engine, when the request
@@ -77,6 +83,10 @@ mod android {
         internal_data_path: *const c_char,
     }
     type OnCreate = unsafe extern "C" fn(*mut ANativeActivity, *mut c_void, usize);
+
+    /// The APK's shell level, read by the engine it starts (`engines::shell`).
+    #[unsafe(no_mangle)]
+    pub static HORIZON_BOOT_SHELL: u32 = super::SHELL;
 
     const RTLD_NOW: c_int = 2;
     const INFO: c_int = 4;
