@@ -1476,7 +1476,7 @@ pub(super) fn warn_no_block_entity(block: &str, id: &str) {
 }
 
 #[cfg(test)]
-mod tests {
+mod native_bundle_tests {
     use super::*;
     use horizon_client::mod_list::Installed;
     use std::io::Write;
