@@ -249,6 +249,69 @@ pub fn offer_state(offer: &Offer, installed: &[Engine], built_in: &str, shell: u
     }
 }
 
+/// The engine each published build of the app carries, named in its release's list
+/// (`.github/workflows/android-release.yml`, `android-dev.yml`).
+const RELEASE_ENGINE: &str = "aurora";
+const DEV_ENGINE: &str = "aurora-dev";
+
+/// Which builds of the app a build looks for newer ones of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Channel {
+    /// A release: the latest release.
+    Release,
+    /// A dev build (`-dev.<label>`): the rolling dev pre-release.
+    Dev,
+}
+/// The channel of an app of `version` (`backend::VERSION`); none for a local build
+/// (`-dev` with no label), which has nothing published to compare with.
+pub fn channel(version: &str) -> Option<Channel> {
+    match version.split_once("-dev") {
+        None => Some(Channel::Release),
+        Some((_, label)) if label.len() > 1 && label.starts_with('.') => Some(Channel::Dev),
+        Some(_) => None,
+    }
+}
+/// Where a newer build of the app is downloaded: the release's page.
+pub fn release_page(channel: Channel) -> &'static str {
+    match channel {
+        Channel::Release => "https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest",
+        Channel::Dev => "https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev",
+    }
+}
+/// A newer build of the app than one of `version` built from `commit`, among the
+/// `offers` of the lists: every published build carries its engine, so the release
+/// engine's version is that release's, and the dev engine's commit the dev build's.
+/// A release looks for a later version; a dev build for a dev build of another commit.
+pub fn app_update<'a>(offers: &'a [Offer], version: &str, commit: &str) -> Option<&'a Offer> {
+    match channel(version)? {
+        Channel::Release => offers
+            .iter()
+            .find(|o| o.id == RELEASE_ENGINE && newer_version(&o.version, version)),
+        Channel::Dev => {
+            let known = commit.len() >= 7 && commit.bytes().all(|b| b.is_ascii_hexdigit());
+            offers.iter().find(|o| {
+                o.id == DEV_ENGINE
+                    && known
+                    && o.commit.len() >= 7
+                    && !o.commit.starts_with(commit)
+                    && !commit.starts_with(&o.commit)
+            })
+        }
+    }
+}
+/// Whether version `a` is later than `b`, number by number: "0.7.10-aurora.1" is later
+/// than "0.7.9-aurora.2", and "0.7.7-aurora.2" than "0.7.7-aurora.1".
+pub fn newer_version(a: &str, b: &str) -> bool {
+    fn numbers(version: &str) -> Vec<u64> {
+        version
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|n| !n.is_empty())
+            .map(|n| n.parse().unwrap_or(u64::MAX))
+            .collect()
+    }
+    numbers(a) > numbers(b)
+}
+
 /// Installs the `.hengine` in `file` (replacing an engine with the same id), checking
 /// its manifest, ABI, ELF header, size and SHA-256. The library ends up read-only, as
 /// Android 14 requires of code an app loads from its own files.
@@ -659,5 +722,65 @@ mod tests {
             offer_state(&o, &[], "c0", shell - 1),
             OfferState::NeedsNewerApp
         );
+    }
+
+    fn listed(id: &str, version: &str, commit: &str) -> Offer {
+        let mut o = offer(id, commit, "2026-11-08T10:00:00Z");
+        o["version"] = version.into();
+        serde_json::from_value(o).unwrap()
+    }
+
+    #[test]
+    fn versions_compare_number_by_number() {
+        assert!(newer_version("0.7.8-aurora.1", "0.7.7-aurora.1"));
+        assert!(newer_version("0.7.7-aurora.2", "0.7.7-aurora.1"));
+        assert!(newer_version("0.7.10-aurora.1", "0.7.9-aurora.2"));
+        assert!(newer_version("0.8.0", "0.7.7-aurora.1"));
+        assert!(!newer_version("0.7.7-aurora.1", "0.7.7-aurora.1"));
+        assert!(!newer_version("0.7.6-aurora.3", "0.7.7-aurora.1"));
+    }
+
+    #[test]
+    fn builds_follow_their_own_channel() {
+        assert_eq!(channel("0.7.7-aurora.1"), Some(Channel::Release));
+        assert_eq!(channel("0.7.7-aurora.1-dev.12"), Some(Channel::Dev));
+        // A local build has nothing published to compare with.
+        assert_eq!(channel("0.7.7-aurora.1-dev"), None);
+    }
+
+    #[test]
+    fn a_release_is_told_of_a_later_release_only() {
+        let later = [listed("aurora", "0.7.8-aurora.1", "aaaaaaaaaaaa")];
+        let same = [listed("aurora", "0.7.7-aurora.1", "aaaaaaaaaaaa")];
+        let dev = [listed(
+            "aurora-dev",
+            "0.7.9-aurora.1-dev.4.bbbbbbbbbbbb",
+            "bbbbbbbbbbbb",
+        )];
+        let found = app_update(&later, "0.7.7-aurora.1", "cccccccccccc");
+        assert_eq!(found.map(|o| o.version.as_str()), Some("0.7.8-aurora.1"));
+        assert!(app_update(&same, "0.7.7-aurora.1", "cccccccccccc").is_none());
+        // Dev builds are not offered to a release.
+        assert!(app_update(&dev, "0.7.7-aurora.1", "cccccccccccc").is_none());
+    }
+
+    #[test]
+    fn a_dev_build_is_told_of_a_dev_build_of_another_commit() {
+        let list = [
+            listed("aurora", "0.7.8-aurora.1", "aaaaaaaaaaaa"),
+            listed(
+                "aurora-dev",
+                "0.7.7-aurora.1-dev.5.bbbbbbbbbbbb",
+                "bbbbbbbbbbbb",
+            ),
+        ];
+        let found = app_update(&list, "0.7.7-aurora.1-dev.4", "cccccccccccc");
+        assert_eq!(found.map(|o| o.id.as_str()), Some("aurora-dev"));
+        // The same commit: up to date.
+        assert!(app_update(&list, "0.7.7-aurora.1-dev.5", "bbbbbbbbbbbb").is_none());
+        // A build from an unknown commit (a source export) cannot tell.
+        assert!(app_update(&list, "0.7.7-aurora.1-dev.5", "source-export").is_none());
+        // A local build is told of nothing.
+        assert!(app_update(&list, "0.7.7-aurora.1-dev", "cccccccccccc").is_none());
     }
 }

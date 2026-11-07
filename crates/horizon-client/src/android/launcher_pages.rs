@@ -74,6 +74,10 @@ pub(super) enum Action {
     CheckEngines,
     /// Download and install an offered engine.
     DownloadEngine(usize),
+    /// Open the release page of the newer build of the app.
+    OpenAppUpdate,
+    /// Read the release lists when the launcher opens, or not.
+    UpdateCheck,
     SignOut,
     LoginLink,
     CloseLogin,
@@ -687,6 +691,18 @@ impl Launcher {
             }
             Some(Action::BuiltInEngine) => self.restart_on(None, None),
             Some(Action::CheckEngines) => self.view.engine_store.check(),
+            Some(Action::OpenAppUpdate) => {
+                if let Some(channel) = crate::engines::channel(crate::backend::VERSION) {
+                    crate::platform::open_url(crate::engines::release_page(channel));
+                }
+            }
+            Some(Action::UpdateCheck) => {
+                self.catalog.config.skip_update_check ^= true;
+                self.catalog.config.save(&self.home)?;
+                if !self.catalog.config.skip_update_check {
+                    self.view.engine_store.check();
+                }
+            }
             Some(Action::DownloadEngine(index)) => {
                 if let Some(offer) = self.view.engine_store.offers.get(index).cloned() {
                     self.view.engine_store.download(self.home.clone(), offer);

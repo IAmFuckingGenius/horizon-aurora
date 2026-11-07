@@ -515,6 +515,25 @@ static RU: &[(&str, &str)] = &[
         "Скачиваем .hmod по HTTPS…",
     ),
     (
+        "A newer Horizon Aurora is out",
+        "Вышла новая версия Horizon Aurora",
+    ),
+    (
+        "Install its APK over this app: worlds and settings stay.",
+        "Установите её APK поверх этого приложения: миры и настройки сохранятся.",
+    ),
+    ("Check for updates", "Проверять обновления"),
+    (
+        "Reads the list of Aurora's latest release on GitHub when the launcher opens.",
+        "При запуске лаунчер читает список последнего релиза Aurora на GitHub.",
+    ),
+    ("A new dev build is out", "Вышла новая dev-сборка"),
+    ("Horizon Aurora {} is out", "Вышла Horizon Aurora {}"),
+    (
+        "Settings › Engines: open its page to update.",
+        "«Настройки › Движки»: откройте страницу релиза, чтобы обновиться.",
+    ),
+    (
         "Installed {}. Turn it on in Installed.",
         "Установлен {}. Включите его в разделе «Установлено».",
     ),

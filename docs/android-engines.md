@@ -71,6 +71,16 @@ A download is checked against the list (size and SHA-256), then installed like a
 imported engine (the checks below), and **Update** appears when the list has a newer
 build of an installed engine. Lists and files come only from this repository's releases.
 
+### A newer build of the app
+
+The same lists tell the app of a newer build of itself, since every published build
+carries its engine: a release looks for a release engine of a later version, a dev build
+(`-dev.<label>`) for a dev engine of another commit, and a local build for nothing. The
+launcher reads the lists when it opens, says so once in a notice, and shows **A newer
+Horizon Aurora is out** with **Open** (the release's page; the APK installs over the app,
+keeping worlds and settings) at the top of Engines from Aurora. **Check for updates** there
+turns the reading at start off; the lists are then read only on **Check**.
+
 ## Shell levels
 
 An engine relies on the APK around it: the boot library, the Java side

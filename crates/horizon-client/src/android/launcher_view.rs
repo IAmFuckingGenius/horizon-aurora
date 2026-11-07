@@ -62,6 +62,8 @@ pub(super) struct ViewState {
     pub engine_confirm: bool,
     /// Engines offered in Aurora's releases, once checked, and a download.
     pub engine_store: crate::engine_store::Store,
+    /// A newer build of the app was told of (once a run).
+    pub app_update_told: bool,
 }
 
 /// The instance sheet: a new instance (`id` none) or one being changed.
@@ -107,6 +109,7 @@ impl Default for ViewState {
             instance_edit: None,
             engine_confirm: false,
             engine_store: Default::default(),
+            app_update_told: false,
         }
     }
 }
@@ -158,6 +161,14 @@ fn when(time: SystemTime) -> String {
         1 => t("yesterday").into(),
         n => tf("{} days ago", &[&n.to_string()]),
     }
+}
+/// A newer build of this app among the offers the store read.
+pub(super) fn app_update(store: &crate::engine_store::Store) -> Option<&crate::engines::Offer> {
+    crate::engines::app_update(
+        &store.offers,
+        crate::backend::VERSION,
+        option_env!("HORIZON_ANDROID_BUILD_COMMIT").unwrap_or(""),
+    )
 }
 /// A size in binary units, with a decimal comma in Russian.
 fn size(bytes: u64) -> String {
@@ -3103,12 +3114,33 @@ impl Launcher {
         rows.extend(self.store_rows());
         rows
     }
-    /// Engines from Aurora's releases: a check, then each offer with its state.
+    /// Engines from Aurora's releases: a newer build of the app, the check when the
+    /// launcher opens, a check, then each offer with its state.
     fn store_rows(&self) -> Vec<Row> {
         use crate::engines::OfferState;
         let store = &self.view.engine_store;
         let checking = store.busy() && store.downloading.is_none();
-        let mut rows = vec![Row::new(
+        let mut rows = Vec::new();
+        if let Some(update) = app_update(store) {
+            let mut details = update.version.clone();
+            if let Some(day) = update.built.get(..10) {
+                details.push_str(&format!(" · {day}"));
+            }
+            rows.push(Row::mono(
+                t("A newer Horizon Aurora is out"),
+                &format!(
+                    "{details} · {}",
+                    t("Install its APK over this app: worlds and settings stay.")
+                ),
+                Control::Button(Style::Primary, "download", t("Open"), Action::OpenAppUpdate),
+            ));
+        }
+        rows.push(Row::new(
+            t("Check for updates"),
+            t("Reads the list of Aurora's latest release on GitHub when the launcher opens."),
+            Control::Switch(!self.catalog.config.skip_update_check, Action::UpdateCheck),
+        ));
+        rows.push(Row::new(
             t("Engines from Aurora"),
             t(
                 "Official builds from Horizon Aurora's releases. The dev engine has new features before a release and may be unstable: run it on its own instance.",
@@ -3127,7 +3159,7 @@ impl Launcher {
                     Action::CheckEngines,
                 )
             },
-        )];
+        ));
         if checking {
             rows.push(Row::new(t("Checking…"), "", Control::Text(())));
         }

@@ -80,6 +80,9 @@ pub struct Config {
     pub home_hide_profile: bool,
     /// The launcher's language: Android's (when it is Russian), English or Russian.
     pub launcher_language: LauncherLanguage,
+    /// Do not read Aurora's release lists when the launcher opens: no notice of a newer
+    /// build of the app (read by default; Settings › Engines checks on demand).
+    pub skip_update_check: bool,
 }
 
 /// The launcher's language choice.

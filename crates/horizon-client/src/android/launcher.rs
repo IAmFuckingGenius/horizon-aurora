@@ -272,6 +272,10 @@ impl Launcher {
         };
         // Shown as a dialog until dismissed: a toast could expire before the
         // window is up.
+        // A newer build of the app: the release lists, read in the background.
+        if !launcher.catalog.config.skip_update_check {
+            launcher.view.engine_store.check();
+        }
         if let Some((id, reason)) = boot_error {
             launcher.view.transfer_error = Some((
                 text::tf("Engine «{}» did not start", &[&id]),
@@ -863,7 +867,24 @@ impl ApplicationHandler for Launcher {
                 text::t_dyn(&error),
                 true,
             ),
-            Some(crate::engine_store::Done::Checked) | None => {}
+            Some(crate::engine_store::Done::Checked) => {
+                if !self.view.app_update_told
+                    && let Some(update) = view::app_update(&self.view.engine_store)
+                {
+                    self.view.app_update_told = true;
+                    let title = if update.id == "aurora-dev" {
+                        text::t("A new dev build is out").to_owned()
+                    } else {
+                        text::tf("Horizon Aurora {} is out", &[&update.version])
+                    };
+                    self.toast(
+                        title,
+                        text::t("Settings › Engines: open its page to update."),
+                        false,
+                    );
+                }
+            }
+            None => {}
         }
         while let Some(notice) = crate::transfers::poll() {
             if notice.worlds {
