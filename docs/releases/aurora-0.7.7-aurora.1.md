@@ -1,4 +1,4 @@
-The first release of **Horizon Aurora**, an unofficial fork of [Horizon Android](https://github.com/Vasysik/horizon-android) 0.7.7: Minecraft: Java Edition 26.3, rewritten in Rust, on Android.
+The first release of **Horizon Aurora**: Minecraft: Java Edition 26.3, rewritten in Rust, on Android. Aurora is an independent fork of [Horizon](https://github.com/horizon-rust/horizon) that carries on the Horizon Android port (now merged into [Starling](https://github.com/starling-client/starling)): it is built on Horizon Android 0.7.7 with the fixes of 0.7.8.
 
 ## What Aurora adds
 
@@ -10,6 +10,12 @@ The first release of **Horizon Aurora**, an unofficial fork of [Horizon Android]
 - **Touch layout editor**: custom buttons (key combinations, toggle, swipe, shapes, colours), where each control shows, named layouts with share codes.
 - **Accounts and skins**: offline, Microsoft and Ely.by accounts with quick switching; a skin and cape wardrobe with a 3D preview.
 - World ZIP import and export, reports and logs through Android's file picker.
+
+## Fixes from Horizon Android 0.7.8
+
+- A relaunch releases the previous session's resources; pausing when the app leaves the screen, and plugging in a keyboard or controller, no longer recreate the game; held input no longer sticks (KylePine, Horizon Android #211).
+- Captured mouse movement is no longer lost when Android batches it (#238).
+- Cached Minecraft files are checked before they are unpacked and copied (#237).
 
 ## Install
 
@@ -32,4 +38,4 @@ Not affiliated with or endorsed by Mojang, Microsoft, Horizon or Horizon Android
 
 ---
 
-**По-русски.** Первый релиз Horizon Aurora — неофициального форка Horizon Android 0.7.7: новый лаунчер, инстансы, сменные движки, Horizon Boost, редактор управления, аккаунты и гардероб. Большинству телефонов нужен APK **arm64-v8a**. Aurora — отдельное приложение: миры из Horizon Android переносятся экспортом в ZIP и импортом в **Миры › Импорт мира**, в аккаунты нужно войти заново.
+**По-русски.** Первый релиз Horizon Aurora — самостоятельного форка Horizon, продолжающего Horizon Android (основа 0.7.7 с исправлениями 0.7.8): новый лаунчер, инстансы, сменные движки, Horizon Boost, редактор управления, аккаунты и гардероб. Большинству телефонов нужен APK **arm64-v8a**. Aurora — отдельное приложение: миры из Horizon Android переносятся экспортом в ZIP и импортом в **Миры › Импорт мира**, в аккаунты нужно войти заново.

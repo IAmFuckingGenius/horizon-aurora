@@ -2,9 +2,11 @@
 
 <p align="center">
   <b>Minecraft: Java Edition 26.3, rewritten in Rust, on Android</b><br>
-  An unofficial fork of <a href="https://github.com/Vasysik/horizon-android">Horizon Android</a> with a redesigned launcher,
-  instances, swappable engines, Horizon Boost and a full touch layout editor.
+  An independent fork of <a href="https://github.com/horizon-rust/horizon">Horizon</a> that carries on the Horizon Android port,
+  with a redesigned launcher, instances, swappable engines, Horizon Boost and a full touch layout editor.
 </p>
+
+<p align="center"><b>English</b> · <a href="README.ru.md">Русский</a></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Android-9%2B-3DDC84?logo=android&logoColor=white" alt="Android 9+">
@@ -20,24 +22,24 @@
   <a href="#screenshots"><b>Screenshots</b></a> ·
   <a href="#engines-and-instances"><b>Engines &amp; instances</b></a> ·
   <a href="#build"><b>Build</b></a> ·
-  <a href="#credits-and-licence"><b>Credits</b></a> ·
-  <a href="#по-русски"><b>По-русски</b></a>
+  <a href="#where-aurora-comes-from"><b>Where it comes from</b></a> ·
+  <a href="#credits-and-licence"><b>Credits</b></a>
 </p>
 
 <p align="center">
   <img src="docs/media/aurora/home.webp" alt="The Aurora launcher's Home: Play, the instance picker, the last world and quick join over a pixel sunset" width="100%">
 </p>
 
-> **Unofficial.** Horizon Aurora is a fork of [Vasysik/horizon-android](https://github.com/Vasysik/horizon-android),
-> the Android port of [Horizon](https://github.com/ludovic111/horizon). It is not an official build of either project,
-> and it is not affiliated with or endorsed by Mojang or Microsoft. Report problems with this fork
-> [here](https://github.com/IAmFuckingGenius/horizon-aurora/issues), not upstream.
+> **Unofficial and independent.** Horizon Aurora is a fork of [Horizon](https://github.com/horizon-rust/horizon) built on
+> the code of Horizon Android, the Android port that has since merged into [Starling](https://github.com/starling-client/starling).
+> It is not an official build of Horizon, Horizon Android or Starling, and it is not affiliated with or endorsed by Mojang
+> or Microsoft. Report problems with Aurora [here](https://github.com/IAmFuckingGenius/horizon-aurora/issues), not upstream.
 
 ## Download
 
 **[Latest release](https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest)**: one APK per architecture;
 most phones need **arm64-v8a**. On first start the app downloads Minecraft's original resources from Mojang.
-Aurora installs as its own app beside Horizon Android: move worlds over with world export and import.
+Aurora installs as its own app beside Horizon Android and Starling: move worlds over with world export and import.
 Experimental builds of every change are in the [`dev` pre-release](https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev)
 ("Aurora Dev", installs beside the release). How releases are made: [docs/android-releases.md](docs/android-releases.md).
 
@@ -137,6 +139,9 @@ runs with all the app's rights, so install only engines you built or trust). Cre
 **Instances › New instance**, and press **Play**: the app restarts on that engine and opens the instance. Worlds,
 accounts and downloaded game files stay shared.
 
+Or skip the computer: **Settings › Engines › Engines from Aurora** downloads the newest dev engine, or a newer
+release's engine, straight from this repository's releases, checked against the release's list.
+
 How it works, the `.hengine` format and the checks on import: [docs/android-engines.md](docs/android-engines.md).
 
 ## Build
@@ -163,38 +168,26 @@ The launcher and every setting added by this fork are written in English and tra
 follows Android's language or the choice under **Settings › Display › Language**; the game has its own language in
 its Options, with Minecraft's translations for vanilla text.
 
+## Where Aurora comes from
+
+- **[Horizon](https://github.com/horizon-rust/horizon)** is Minecraft: Java Edition 26.3 rewritten in Rust, checked
+  against the real game by differential harnesses. Aurora is a fork of it and merges its changes directly.
+- **Horizon Android** ported Horizon to Android: the native activity, Vulkan and GLES rendering, touch controls, the
+  launcher, on-device resource installation. In November 2026 it merged into
+  [Starling](https://github.com/starling-client/starling), a separate Android port that became the base of the merged
+  project; Horizon Android 0.7.8 was its last release.
+- **Horizon Aurora** keeps Horizon Android's code as its base and goes on with it on its own: its own launcher, instances,
+  engines, Horizon Boost and releases, Horizon's updates merged here, and Horizon Android's last fixes carried over.
+
 ## Credits and licence
 
-- [Horizon](https://github.com/ludovic111/horizon) by Ludovic Marie and the Horizon contributors: the Rust engine.
-- [Horizon Android](https://github.com/Vasysik/horizon-android) by Vasysik and contributors: the Android port this fork builds on.
-- Horizon Aurora: the launcher redesign, instances, engines, Horizon Boost, the touch layout editor and the Android
-  integration described above.
+- [Horizon](https://github.com/horizon-rust/horizon) by Ludovic Marie and the Horizon contributors: the Rust engine.
+- Horizon Android by Vasysik and its contributors: the Android port Aurora is built on (now part of
+  [Starling](https://github.com/starling-client/starling)).
+- Horizon Aurora: the launcher redesign, instances, engines, Horizon Boost, the touch layout editor, releases and the
+  Android integration described above.
 
 [MIT](LICENSE) for the project's original work; dependencies keep their own licences
 ([notices](THIRD_PARTY_NOTICES.md)). Minecraft is a trademark of Mojang Synergies AB; its code and assets belong to
 Mojang and Microsoft under the [Minecraft EULA](https://www.minecraft.net/en-us/eula). Game files, prepared resources,
 accounts, APKs and signing keys stay outside Git.
-
-## По-русски
-
-**Horizon Aurora** — неофициальный форк [Horizon Android](https://github.com/Vasysik/horizon-android): Minecraft Java 26.3,
-переписанный на Rust, на Android.
-
-**Скачать:** [последний релиз](https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest), большинству телефонов
-нужен APK **arm64-v8a**. Aurora ставится отдельным приложением рядом с Horizon Android; миры переносятся экспортом и
-импортом. Свежие экспериментальные сборки — в пре-релизе [`dev`](https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev).
-
-- **Новый лаунчер** в пиксельном стиле: Главная, Инстансы, Дополнения, Миры, Скины, Настройки. Альбомная и портретная
-  ориентация, русский и английский с переключателем в настройках.
-- **Инстансы**: у каждого своё имя, миры, настройки, дополнения и движок.
-- **Сменные движки**: соберите игру на ПК со своими нативными модами
-  (`python3 tools/android_engine_pack.py --abi arm64-v8a --name "Моя сборка"`), закиньте `.hengine` на телефон и запустите
-  без переустановки приложения. Если движок не запустится, включится встроенный.
-- **Horizon Boost**: скорость, качество и нагрев на одной странице в стиле Minecraft. Ограничение при нагреве можно
-  выключить или выбрать режим и минимум кадров.
-- **Редактор управления**: свои кнопки (комбинации клавиш, переключатель, свайп, формы, цвета), где показывать каждую
-  кнопку, именованные раскладки с кодом для обмена.
-- **Аккаунты** офлайн, Microsoft и Ely.by, **гардероб** скинов и плащей с 3D-превью.
-- **Импорт и экспорт миров**, отчёты и журналы через системный выбор файлов.
-
-Сообщения об ошибках форка — [сюда](https://github.com/IAmFuckingGenius/horizon-aurora/issues), а не в исходные проекты.
