@@ -16,12 +16,9 @@ jni = "0.21"
 winit = { version = "0.30.13", features = ["android-native-activity"] }
 
 [features]
-# WebAssembly code mods (`mods`) no longer run: Horizon dropped them; content mods and the
-# built-in native mods still do.
 default = ["audio"]
 audio = ["horizon-client/audio"]
 controllers = []
-mods = ["horizon-client/mods"]
 
 [lints]
 workspace = true

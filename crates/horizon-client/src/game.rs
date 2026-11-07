@@ -220,14 +220,9 @@ mod mob_looting;
 mod mob_sounds;
 mod mod_api_host;
 mod mod_browser;
-mod mod_input;
-#[cfg(feature = "mods")]
-mod mod_panel;
-mod mod_render;
 mod mods;
 mod mount_menu;
 mod mounts;
-mod moved_extras;
 mod moving_pistons;
 mod music;
 mod names;
@@ -371,7 +366,6 @@ mod screenshot_sequence;
 mod sculk;
 mod sculk_fixture;
 mod server_links;
-mod server_mods;
 mod server_packs;
 mod server_travel;
 mod session;
@@ -3833,10 +3827,6 @@ impl Game<'_> {
             if horizon_client::touch::item_uses_on_tap(&stack.item) {
                 return false;
             }
-            #[cfg(feature = "mods")]
-            if self.mods.mods.claims(&stack.item) {
-                return true;
-            }
             let Some(info) = self.items().get(&stack.item) else {
                 return false;
             };
@@ -6749,9 +6739,6 @@ impl Game<'_> {
                 correct_tool,
             )
         });
-        if removed {
-            self.mod_block_event(pos, broken, false);
-        }
         if removed && !creative {
             let held = self.held().cloned();
             self.mine_block_with_held(&facts.name, facts.hardness);
@@ -7518,7 +7505,6 @@ impl Game<'_> {
         };
         let target = [pos.x, pos.y, pos.z];
         let state = self.apply_item_block_state(target, state, &stack)?;
-        self.mod_block_event(target, state, true);
         let name = self.res.facts().get(state).name.clone();
         if let Some(entity) = self.new_block_entity(&name) {
             let key = (target[0], target[1], target[2]);
@@ -19445,7 +19431,8 @@ impl Game<'_> {
                     WindowEvent::CursorMoved {
                         device_id: touch.device_id,
                         position: touch.location,
-                    }, input_trace::InputOrigin::User,
+                    },
+                    input_trace::InputOrigin::User,
                 );
                 if touch.phase != TouchPhase::Moved {
                     self.handle_window_event(
@@ -19459,7 +19446,8 @@ impl Game<'_> {
                             } else {
                                 ElementState::Released
                             },
-                        }, input_trace::InputOrigin::User,
+                        },
+                        input_trace::InputOrigin::User,
                     );
                 }
                 if touch.phase == TouchPhase::Ended {
@@ -20313,7 +20301,6 @@ impl Game<'_> {
                                 return Ok(());
                             }
                             self.extras_mouse(button, pressed);
-                            self.mod_mouse_key(button, pressed);
                             if pressed
                                 && self.settings.keys.get("key.smoothCamera")
                                     == horizon_client::keybinds::mouse_name(button)
@@ -20726,7 +20713,6 @@ impl Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
-                    self.mod_key(key, event.state == ElementState::Pressed, event.repeat);
                     self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
                     // Screen.keyPressed sees the physical key, repeats included.
                     if event.state == ElementState::Pressed
@@ -20838,7 +20824,6 @@ impl Game<'_> {
                         }
                     }
                     self.extras_frame(elapsed);
-                    self.poll_moved_extras();
                     self.extras_retry()?;
                     self.apply_mouse_look();
                     self.pad_look(elapsed.as_secs_f32());
@@ -23487,7 +23472,6 @@ fn start_game<'a>(
     // Benchmarks measure the game alone.
     if game.options.benchmark.is_none() {
         game.mods.dev = game.options.dev_mods.clone();
-        game.start_moved_extras();
         game.start_mods();
     }
     // After the mods: their templates are among the ids it lists.

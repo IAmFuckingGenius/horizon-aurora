@@ -152,13 +152,14 @@ pub mod world_primitives;
 pub mod world_spawn;
 // Horizon Android's render-side modules: the Android runtime and gamepads, the keypad, the
 // touch controls, file locks.
-pub use horizon_client_render::{android_gamepad, android_runtime, boost, file_lock, keypad, touch};
+pub use horizon_client_render::{
+    android_gamepad, android_runtime, boost, file_lock, keypad, touch,
+};
 // Horizon Android's own client modules: resources installed on the device, the touch
 // controls and their editor, the on-screen keyboard's editing, the launcher's pixel kit.
 pub mod android_resources;
 pub mod content_files;
 pub mod ime_edit;
-pub mod moved_extras;
 pub mod official_install;
 pub mod pixel_kit;
 pub mod resource_install;

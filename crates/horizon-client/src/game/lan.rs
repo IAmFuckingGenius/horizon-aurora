@@ -2074,7 +2074,6 @@ impl Game<'_> {
                     action,
                 } => self.chat_filtered(&mut host, sender, &name, place, &text, count, action),
                 HostEvent::PlayerChat { sender, text } => {
-                    self.mod_player_chat(super::server_mods::Who::Uuid(sender), &text);
                     if let Some(g) = host.hub.guests.iter().find(|g| g.uuid == sender) {
                         if self.options.dedicated.is_some() {
                             super::dedicated::events::record(

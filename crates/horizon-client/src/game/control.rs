@@ -711,10 +711,8 @@ impl Game<'_> {
                         self.debug_key(key, KeyAction::Release);
                     }
                 }
-                // Mods' keys (capability `input`) see the key as the keyboard
-                // hook does.
+                // Native mods see the key as the keyboard hook does.
                 let action = arg(2)?;
-                self.mod_key(physical, action != "up", action == "repeat");
                 // ScreenEvent.KeyPressed.Pre: the open screen hears of the
                 // press before it acts on it, as the window's key event hands
                 // it over. A cancelled press goes no further — not to the
@@ -728,7 +726,6 @@ impl Game<'_> {
                 }
                 self.native_key_event(physical, action != "up", action == "repeat");
                 if action == "tap" {
-                    self.mod_key(physical, false, false);
                     self.native_key_event(physical, false, false);
                 }
                 // The merchant's focused offer and the recipe book's last
@@ -836,19 +833,15 @@ impl Game<'_> {
                 match arg(2)? {
                     "down" => {
                         self.extras_mouse(button, true);
-                        self.mod_mouse_key(button, true);
                         self.mouse_mapping(button, true, Source::Agent)?
                     }
                     "up" => {
                         self.extras_mouse(button, false);
-                        self.mod_mouse_key(button, false);
                         self.mouse_mapping(button, false, Source::Agent)?
                     }
                     "click" => {
                         self.extras_mouse(button, true);
-                        self.mod_mouse_key(button, true);
                         self.extras_mouse(button, false);
-                        self.mod_mouse_key(button, false);
                         self.mouse_mapping(button, true, Source::Agent)?;
                         self.mouse_mapping(button, false, Source::Agent)?;
                     }

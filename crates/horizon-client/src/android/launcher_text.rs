@@ -232,7 +232,7 @@ static RU: &[(&str, &str)] = &[
         "Java mods: browse only, they cannot run here",
         "Java-моды: только просмотр, здесь они не запускаются",
     ),
-    ("Sandboxed .hmod mods", "Моды .hmod в песочнице"),
+    ("Content mods (.hmod)", "Контентные моды (.hmod)"),
     ("Shader ZIPs: experimental", "ZIP-шейдеры: экспериментально"),
     ("Horizon .hshader packs", "Пакеты .hshader для Horizon"),
     ("Disable", "Выключить"),
@@ -511,12 +511,16 @@ static RU: &[(&str, &str)] = &[
         "Выбор сохранён до следующего запуска игры",
     ),
     (
-        "Sandboxed code mods require a 64-bit APK",
-        "Модам с кодом нужен 64-битный APK",
+        "Downloading .hmod over HTTPS...",
+        "Скачиваем .hmod по HTTPS…",
     ),
     (
-        "Downloading sandboxed .hmod over HTTPS...",
-        "Скачиваем .hmod по HTTPS…",
+        "Installed {}. Turn it on in Installed.",
+        "Установлен {}. Включите его в разделе «Установлено».",
+    ),
+    (
+        "This .hnmod is a native mod: build an engine with it on a computer and import it in Settings › Engines. .hmod content mods install here.",
+        "Это нативный мод .hnmod: соберите с ним движок на компьютере и импортируйте его в «Настройки › Движки». Контентные моды .hmod ставятся здесь.",
     ),
     (
         "Downloading experimental shader ZIP...",

@@ -123,7 +123,12 @@ impl Game<'_> {
             force: None,
             id: POINTER,
         };
-        self.handle_window_event(events, id, WindowEvent::Touch(touch), super::input_trace::InputOrigin::User);
+        self.handle_window_event(
+            events,
+            id,
+            WindowEvent::Touch(touch),
+            super::input_trace::InputOrigin::User,
+        );
         true
     }
 
@@ -192,7 +197,6 @@ impl Game<'_> {
             } else {
                 self.physical_keys.remove(&key);
             }
-            self.mod_key(key, down, false);
             self.native_key_event(key, down, false);
             let action = if down {
                 KeyAction::Press
@@ -204,7 +208,13 @@ impl Game<'_> {
             }
             for mapped in self.settings.keys.translate_all(key) {
                 let result = match mapped {
-                    Ok(code) => self.mapped_key(code, down, false, key, horizon_client::held::Source::Keyboard),
+                    Ok(code) => self.mapped_key(
+                        code,
+                        down,
+                        false,
+                        key,
+                        horizon_client::held::Source::Keyboard,
+                    ),
                     Err(button) => self.android_custom_mouse(button, down),
                 };
                 if let Err(error) = result {
@@ -271,7 +281,8 @@ impl Game<'_> {
                     } else {
                         ElementState::Released
                     },
-                }, super::input_trace::InputOrigin::User,
+                },
+                super::input_trace::InputOrigin::User,
             );
             Ok(())
         }
@@ -411,7 +422,13 @@ impl Game<'_> {
                             self.pad.touch_ui.toggle_modifier(key)
                         };
                         if !self.pad_in_menu() {
-                            self.mapped_key(key, down, false, key, horizon_client::held::Source::Pad)?;
+                            self.mapped_key(
+                                key,
+                                down,
+                                false,
+                                key,
+                                horizon_client::held::Source::Pad,
+                            )?;
                         }
                     } else {
                         if !self.pad.touch_ui.key_down(t.id, key) {
@@ -652,7 +669,8 @@ impl Game<'_> {
             WindowEvent::CursorMoved {
                 device_id: t.device_id,
                 position: t.location,
-            }, super::input_trace::InputOrigin::User,
+            },
+            super::input_trace::InputOrigin::User,
         );
         if direct {
             if t.phase != TouchPhase::Moved {
@@ -667,7 +685,8 @@ impl Game<'_> {
                         } else {
                             ElementState::Released
                         },
-                    }, super::input_trace::InputOrigin::User,
+                    },
+                    super::input_trace::InputOrigin::User,
                 );
             }
             return;
@@ -687,7 +706,8 @@ impl Game<'_> {
                             device_id: t.device_id,
                             button: MouseButton::Left,
                             state,
-                        }, super::input_trace::InputOrigin::User,
+                        },
+                        super::input_trace::InputOrigin::User,
                     );
                 }
                 if field || self.sign_edit.is_some() {
@@ -706,7 +726,8 @@ impl Game<'_> {
                     device_id: t.device_id,
                     delta: MouseScrollDelta::LineDelta(0.0, y),
                     phase: TouchPhase::Moved,
-                }, super::input_trace::InputOrigin::User,
+                },
+                super::input_trace::InputOrigin::User,
             ),
             Gesture::None => {}
         }
@@ -738,7 +759,8 @@ impl Game<'_> {
                     f64::from(position[0] * b.scale),
                     f64::from(position[1] * b.scale),
                 ),
-            }, super::input_trace::InputOrigin::User,
+            },
+            super::input_trace::InputOrigin::User,
         );
     }
     pub(super) fn android_virtual_mouse_clicks(
@@ -780,7 +802,8 @@ impl Game<'_> {
                         device_id: DeviceId::dummy(),
                         state,
                         button,
-                    }, super::input_trace::InputOrigin::User,
+                    },
+                    super::input_trace::InputOrigin::User,
                 );
             }
         }

@@ -1296,7 +1296,7 @@ impl Launcher {
             k.segmented([lx + 6.0, ly + 4.0, seg_w, 40.0], &items, true);
             let hint = match (page, current) {
                 (Page::Mods, Origin::Modrinth) => t("Java mods: browse only, they cannot run here"),
-                (Page::Mods, _) => t("Sandboxed .hmod mods"),
+                (Page::Mods, _) => t("Content mods (.hmod)"),
                 (_, Origin::Modrinth) => t("Shader ZIPs: experimental"),
                 _ => t("Horizon .hshader packs"),
             };

@@ -143,16 +143,6 @@ impl Levels {
     pub(super) fn parked_world(&self, dim: Dim) -> Option<&World> {
         self.parked.get(&dim).map(|level| &level.world)
     }
-    /// The chunks of each level not in place (capability `world` lends
-    /// them to server mods for a call).
-    #[cfg_attr(not(feature = "mods"), allow(dead_code))]
-    pub(super) fn parked_chunks(
-        &mut self,
-    ) -> impl Iterator<Item = (Dim, &mut horizon_client::chunk_map::ChunkMap)> {
-        self.parked
-            .iter_mut()
-            .map(|(d, p)| (*d, &mut p.world.chunks))
-    }
 
     /// A parked level's world border.
     pub(super) fn parked_border(
@@ -543,7 +533,6 @@ impl Game<'_> {
             }
             self.update_dedicated_streaming();
             self.update_world();
-            self.apply_mod_block_writes();
             result = horizon_client::block_contact::in_level(
                 (self.serving.is_some() || self.options.dedicated.is_some()).then_some(dim.id()),
                 || {

@@ -22,8 +22,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// The tree the chat parses and completes with: a server's, once it has
-/// sent one (ClientPacketListener.commands), else the game's own.
+/// The tree the chat parses and completes with: `Remote::chat_tree`, which is
+/// a server's, once it has sent one (ClientPacketListener.commands), else the
+/// game's own, plus the commands native mods own (`chat_tree_for`).
 pub(super) fn chat_tree(
     remote: &Option<super::remote::Remote>,
 ) -> &horizon_client::command::Dispatcher {
@@ -966,7 +967,7 @@ impl Game<'_> {
         }
     }
     /// A line on the window's own chat when the Chat option lets `source`
-    /// through; running mods hear it.
+    /// through.
     fn local_chat_line(&mut self, text: Text, indicator: Option<u32>, source: ChatSource) {
         if !self.ui.chat.shows(source) {
             return;
@@ -1144,8 +1145,8 @@ impl Game<'_> {
             return;
         }
         if let Some(command) = message.strip_prefix('/') {
-            // A client mod's command first, then a server mod's, as on a server.
-            if !self.client_mod_command(command) && !self.local_server_mod_command(command) {
+            // A native mod's command first.
+            if !self.client_mod_command(command) {
                 self.run_command(command);
             }
         } else {
@@ -1154,7 +1155,7 @@ impl Game<'_> {
                 &[self.player_display_name(), Text::literal(message.as_str())],
             );
             let focused = self.screen == Screen::Chat;
-                self.ui.chat.add(
+            self.ui.chat.add(
                 &self.gui.atlas,
                 line,
                 None,
@@ -1162,7 +1163,6 @@ impl Game<'_> {
                 self.visual_ticks(),
                 focused,
             );
-            self.mod_player_chat(super::server_mods::Who::Local, &message);
         }
     }
     pub(super) fn chat_scroll(&mut self, amount: f32) {
@@ -1368,7 +1368,7 @@ impl Game<'_> {
         }
         if self.remote.is_some() {
             self.send_unattended_command(command);
-        } else if !self.local_server_mod_command(command) {
+        } else {
             self.run_command(command);
         }
     }

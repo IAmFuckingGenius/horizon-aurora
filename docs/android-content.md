@@ -43,12 +43,13 @@ Catalog searches run separately from installation jobs, so switching tabs does
 not wait for a network response. At most one search runs at once; rapid changes
 replace the pending request, and replies for an old tab cannot replace the current
 list. The last eight query pages are cached for 30 seconds; Search explicitly
-refreshes its query. Changing tabs does not unpack installed `.hmod` WASM files.
+refreshes its query. Changing tabs does not unpack installed `.hmod` files.
 
 Supported files:
 
-- Mods: sandboxed `.hmod` archives; Java `.jar` mods are not accepted. Executing
-  `.hmod` mods requires a 64-bit APK, but the files can be managed on 32-bit builds.
+- Mods: `.hmod` content mods (blocks, items, data and assets, no code), on every ABI.
+  WebAssembly code mods no longer run, as in Horizon. Native `.hnmod` mods need an
+  engine built with them ([engines](android-engines.md)). Java `.jar` mods are not accepted.
 - Resource packs: ZIPs with valid `pack.mcmeta` at the archive root.
 - Shaders: native `.hshader` packs, native shader ZIPs with `horizon-shaders.toml`
   (stored as `.hshader`), or classic ZIPs with shader sources under `shaders/`.

@@ -513,21 +513,46 @@ impl Catalog {
     pub fn import_native(&mut self, home: &Path) {
         let url = self.query.trim().to_owned();
         let game = self.config.game_home(home);
-        self.job("Downloading sandboxed .hmod over HTTPS...",move||{
+        self.job("Downloading .hmod over HTTPS...", move || {
             use std::io::Read;
-            let mut bytes=Vec::new();
-            ureq::AgentBuilder::new().https_only(true).timeout_connect(std::time::Duration::from_secs(20)).timeout_read(std::time::Duration::from_secs(90)).build().get(&url).call().map_err(|e|e.to_string())?.into_reader().take(32*1024*1024+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
-            if bytes.len()>32*1024*1024 {return Err("Horizon mod exceeds 32 MiB".into());}
-            let dir=game.join("horizon-mods");std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-            let stage=dir.join("import.partial");std::fs::write(&stage,bytes).map_err(|e|e.to_string())?;
-            let result=(||{
-                let package=horizon_mods::Package::read(&stage)?;
-                let destination=dir.join(format!("{}.hmod",package.manifest.id));
-                if destination.exists(){std::fs::copy(&destination,destination.with_extension("hmod.previous")).map_err(|e|e.to_string())?;}
-                std::fs::rename(&stage,destination).map_err(|e|e.to_string())?;
-                Ok(Reply::Done(format!("Installed {}. Enable it in Installed after reviewing its capabilities in game Mods.",package.manifest.name), horizon_client::content_files::Kind::Mods))
+            let mut bytes = Vec::new();
+            ureq::AgentBuilder::new()
+                .https_only(true)
+                .timeout_connect(std::time::Duration::from_secs(20))
+                .timeout_read(std::time::Duration::from_secs(90))
+                .build()
+                .get(&url)
+                .call()
+                .map_err(|e| e.to_string())?
+                .into_reader()
+                .take(32 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > 32 * 1024 * 1024 {
+                return Err("Horizon mod exceeds 32 MiB".into());
+            }
+            let dir = game.join("horizon-mods");
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let stage = dir.join("import.partial");
+            std::fs::write(&stage, bytes).map_err(|e| e.to_string())?;
+            let result = (|| {
+                let package = horizon_mods::Package::read(&stage)?;
+                let destination = dir.join(format!("{}.hmod", package.manifest.id));
+                if destination.exists() {
+                    std::fs::copy(&destination, destination.with_extension("hmod.previous"))
+                        .map_err(|e| e.to_string())?;
+                }
+                std::fs::rename(&stage, destination).map_err(|e| e.to_string())?;
+                Ok(Reply::Done(
+                    crate::launcher::text::tf(
+                        "Installed {}. Turn it on in Installed.",
+                        &[&package.manifest.name],
+                    ),
+                    horizon_client::content_files::Kind::Mods,
+                ))
             })();
-            let _=std::fs::remove_file(stage);result
+            let _ = std::fs::remove_file(stage);
+            result
         });
     }
     pub fn install(&mut self, home: &Path, index: usize) {
@@ -535,7 +560,7 @@ impl Catalog {
             return;
         };
         if source_only_mod(&project) {
-            self.status = "This .hnmod needs a separately compiled client. Android support is planned; sandboxed .hmod mods can be installed now.".into();
+            self.status = "This .hnmod is a native mod: build an engine with it on a computer and import it in Settings › Engines. .hmod content mods install here.".into();
             return;
         }
         if self.busy() || self.download_label(&project).is_some() {
@@ -602,10 +627,6 @@ impl Catalog {
         let mut settings = horizon_client::settings::Settings::load(&path);
         match item.kind {
             horizon_client::content_files::Kind::Mods => {
-                if !cfg!(target_pointer_width = "64") {
-                    self.status = "Sandboxed code mods require a 64-bit APK".into();
-                    return;
-                }
                 let mut on = horizon_client::mod_list::ModList::load(&game);
                 if let Some(id) = item.file.strip_suffix(".hmod") {
                     if item.enabled {
