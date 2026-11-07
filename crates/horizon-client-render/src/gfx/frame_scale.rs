@@ -56,6 +56,7 @@ impl FrameScale {
                 encoder,
                 &view,
                 group,
+                None,
                 Some(winit::platform::android::native_content_rect([
                     output.width(),
                     output.height(),

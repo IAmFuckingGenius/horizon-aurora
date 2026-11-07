@@ -55,11 +55,11 @@ impl FrameTiming {
     ) {
         self.timers[2].end(device, encoder, target);
     }
-    pub(super) fn submitted(&mut self, queue: &wgpu::Queue) {
+    pub(super) fn submitted(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         for (timer, history) in self.timers.iter_mut().zip(&mut self.history) {
             timer.submitted(queue);
             self.ready.clear();
-            timer.collect_ready(&mut self.ready);
+            timer.collect(device, &mut self.ready);
             for sample in self.ready.drain(..).filter(|s| s.is_finite() && *s >= 0.0) {
                 if history.len() == 120 {
                     history.pop_front();

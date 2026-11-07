@@ -100,22 +100,36 @@ pub fn enchant_offers(
         }
     }
     for i in 0..3 {
-        if offers.costs[i] > 0 {
-            // getEnchantmentList reseeds the menu random; the clue draws continue from it.
-            let mut list_random = LegacyRandom::new(i64::from(seed.wrapping_add(i as i32)));
-            let pool = e.tag("minecraft:in_enchanting_table").to_vec();
-            let mut list = e.select(items, &mut list_random, &stack.item, offers.costs[i], &pool);
-            if &*stack.item == "minecraft:book" && list.len() > 1 {
-                let r = list_random.next_int_bound(list.len() as i32).unwrap_or(0) as usize;
-                list.remove(r);
-            }
-            if !list.is_empty() {
-                let pick = list_random.next_int_bound(list.len() as i32).unwrap_or(0) as usize;
-                offers.clues[i] = Some(list[pick].clone());
-            }
-        }
+        offers.clues[i] = enchant_clue(e, items, seed, i, offers.costs[i], stack);
     }
     offers
+}
+/// `EnchantmentMenu.slotsChanged`'s clue for offer `slot` at `cost`: one
+/// enchantment of the list that cost would give, or None for no offer.
+pub fn enchant_clue(
+    e: &Enchantments,
+    items: &Items,
+    seed: i32,
+    slot: usize,
+    cost: i32,
+    stack: &ItemStack,
+) -> Option<(Arc<str>, u32)> {
+    if cost <= 0 {
+        return None;
+    }
+    // getEnchantmentList reseeds the menu random; the clue draws continue from it.
+    let mut list_random = LegacyRandom::new(i64::from(seed.wrapping_add(slot as i32)));
+    let pool = e.tag("minecraft:in_enchanting_table").to_vec();
+    let mut list = e.select(items, &mut list_random, &stack.item, cost, &pool);
+    if &*stack.item == "minecraft:book" && list.len() > 1 {
+        let r = list_random.next_int_bound(list.len() as i32).unwrap_or(0) as usize;
+        list.remove(r);
+    }
+    if list.is_empty() {
+        return None;
+    }
+    let pick = list_random.next_int_bound(list.len() as i32).unwrap_or(0) as usize;
+    Some(list[pick].clone())
 }
 /// `EnchantmentMenu.clickMenuButton` result: the enchanted item, or None.
 pub fn apply_enchantment(
@@ -333,6 +347,31 @@ pub fn anvil_result(
         only_renaming,
     }
 }
+impl AnvilResult {
+    /// NeoForge's `CommonHooks.onAnvilUpdate` once the mods answered
+    /// `AnvilUpdateEvent` about this result (vanilla's): a cancel leaves no
+    /// result and both costs at 0. Otherwise their output, their level cost
+    /// through `AnvilMenu.setCost` (a negative one is 0) and their material
+    /// cost, where 0 or less is vanilla's 0 (`onTake` takes the whole right
+    /// stack, unless the anvil only renames). `only_renaming` stays vanilla's.
+    pub fn answer_update(
+        &mut self,
+        canceled: bool,
+        output: Option<ItemStack>,
+        xp_cost: i32,
+        material_cost: i32,
+    ) {
+        if canceled {
+            self.result = None;
+            self.cost = 0;
+            self.repair_item_count_cost = 0;
+            return;
+        }
+        self.result = output;
+        self.cost = xp_cost.max(0);
+        self.repair_item_count_cost = u32::try_from(material_cost).unwrap_or(0);
+    }
+}
 
 // ---------------------------------------------------------------- grindstone
 
@@ -503,18 +542,16 @@ impl StationRecipes {
         };
         for namespace in namespaces {
             let dir = root.join(format!("data/{namespace}/recipe"));
-            let more = crate::crafting::recipe_files(&dir).unwrap_or_default();
-            files.extend(
-                more.into_iter()
-                    .map(|(name, p)| (namespace.clone(), name, p)),
-            );
+            if let Ok(folder) = crate::json_folder::read(&dir) {
+                files.push((namespace, folder));
+            }
         }
         let mut sources: Vec<(String, Value)> = files
             .iter()
-            .filter_map(|(namespace, name, p)| {
-                let bytes = fs::read(p).ok()?;
-                let v = serde_json::from_slice::<Value>(&bytes).ok()?;
-                Some((format!("{namespace}:{name}"), v))
+            .flat_map(|(namespace, folder)| folder.files.iter().map(move |f| (namespace, f)))
+            .filter_map(|(namespace, file)| {
+                let v = serde_json::from_slice::<Value>(file.bytes().ok()?).ok()?;
+                Some((format!("{namespace}:{}", file.name), v))
             })
             .collect();
         // The world's packs' recipes over the game's own: the top pack's
@@ -530,7 +567,12 @@ impl StationRecipes {
                 None => sources.push((id.to_owned(), v)),
             }
         }
-        sources.retain(|(_, v)| conditions_hold(v));
+        // The data's recipe filters, over the final set.
+        let filters = horizon_items::recipe_filters::RecipeFilters::load(root, overlay);
+        sources.retain_mut(|(id, v)| conditions_hold(v) && filters.apply(id, v));
+        // Registration order, not the game's files before the packs': the
+        // stonecutter lists its recipes in it and smithing takes the first match.
+        sources.sort_by_cached_key(|(id, _)| crate::crafting::registration_key(id));
         let mut smithing = Vec::new();
         let mut stonecutting = Vec::new();
         for (id, v) in sources {
@@ -694,7 +736,7 @@ impl StationRecipes {
                 addition,
                 pattern,
                 ..
-            } if i == id => Some((&base.1, &addition.1, pattern)),
+            } if i == id => Some((&base.order, &addition.order, pattern)),
             _ => None,
         })?;
         if base.is_empty() || addition.is_empty() {
@@ -797,6 +839,50 @@ mod tests {
             apply_enchantment(&e, &items, 99, 2, 30, &ItemStack::new("minecraft:book", 1)).unwrap();
         assert_eq!(&*books.item, "minecraft:enchanted_book");
         assert!(!books.stored_enchantments().is_empty());
+    }
+
+    /// The mods' answer to `AnvilUpdateEvent` replaces vanilla's result as
+    /// `CommonHooks.onAnvilUpdate` sets it: a cancel empties the result and
+    /// both costs, `AnvilMenu.setCost` keeps the level cost at 0 or more, and
+    /// a material cost below 1 is vanilla's 0. The rename flag stays vanilla's.
+    #[test]
+    fn an_anvil_update_answer_replaces_vanillas_result() {
+        let vanilla = AnvilResult {
+            result: Some(ItemStack::new("minecraft:diamond_sword", 1)),
+            cost: 3,
+            repair_item_count_cost: 2,
+            only_renaming: true,
+        };
+        let emerald = Some(ItemStack::new("minecraft:emerald", 1));
+        let mut r = vanilla.clone();
+        r.answer_update(false, emerald.clone(), 7, 4);
+        assert_eq!(
+            r,
+            AnvilResult {
+                result: emerald.clone(),
+                cost: 7,
+                repair_item_count_cost: 4,
+                only_renaming: true,
+            }
+        );
+        let mut r = vanilla.clone();
+        r.answer_update(false, emerald.clone(), -5, -1);
+        assert_eq!((r.cost, r.repair_item_count_cost), (0, 0));
+        // Unchanged values give vanilla's result back.
+        let mut r = vanilla.clone();
+        r.answer_update(false, vanilla.result.clone(), 3, 2);
+        assert_eq!(r, vanilla);
+        let mut r = vanilla.clone();
+        r.answer_update(true, emerald, 7, 4);
+        assert_eq!(
+            r,
+            AnvilResult {
+                result: None,
+                cost: 0,
+                repair_item_count_cost: 0,
+                only_renaming: true,
+            }
+        );
     }
 
     #[test]
@@ -1027,14 +1113,49 @@ mod tests {
     fn smithing_ingredient_parses_holders() {
         let items = sample_items();
         let a = ingredient(&serde_json::json!("minecraft:diamond_sword"), &items);
-        assert_eq!(a.1, vec!["minecraft:diamond_sword"]);
+        assert_eq!(a.order, vec!["minecraft:diamond_sword"]);
         let b = ingredient(
             &serde_json::json!(["minecraft:diamond_sword", "minecraft:diamond_axe"]),
             &items,
         );
         assert_eq!(
-            b.1,
+            b.order,
             vec!["minecraft:diamond_sword", "minecraft:diamond_axe"]
+        );
+    }
+    /// A world pack's stonecutting recipe takes its place in registration
+    /// order (path, then namespace), not a place after the game's own.
+    #[test]
+    fn stonecutter_lists_recipes_in_registration_order() {
+        let root =
+            std::env::temp_dir().join(format!("horizon-stonecutter-order-{}", std::process::id()));
+        let dir = root.join("data/minecraft/recipe");
+        fs::create_dir_all(&dir).unwrap();
+        let cut = |result: &str| {
+            format!(
+                r#"{{"type":"minecraft:stonecutting","ingredient":"minecraft:stone","result":{{"id":"{result}"}}}}"#
+            )
+        };
+        fs::write(dir.join("z_cut.json"), cut("minecraft:stone_slab")).unwrap();
+        fs::write(dir.join("b_cut.json"), cut("minecraft:stone_bricks")).unwrap();
+        let packs = [(
+            "recipe/pack:a_cut".to_owned(),
+            vec![cut("minecraft:stone_stairs").into_bytes()],
+        )];
+        let recipes = StationRecipes::load(&root, &sample_items(), &PackOverlay { files: &packs });
+        let _ = fs::remove_dir_all(&root);
+        let listed: Vec<_> = recipes
+            .stonecutter(&ItemStack::new("minecraft:stone", 1))
+            .iter()
+            .map(|r| (r.id.as_str(), &*r.result.item))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("pack:a_cut", "minecraft:stone_stairs"),
+                ("minecraft:b_cut", "minecraft:stone_bricks"),
+                ("minecraft:z_cut", "minecraft:stone_slab"),
+            ]
         );
     }
 }

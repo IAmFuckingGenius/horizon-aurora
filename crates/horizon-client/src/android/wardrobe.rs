@@ -5,14 +5,12 @@ use super::{
     pages::Action,
     text::{t, t_dyn, tf},
 };
-use crate::{
-    account::{Accounts, Provider},
-    skins::{
-        self, Model, cloud,
-        library::{Kind, Library},
-        preview,
-    },
+use crate::android_host::skins::{
+    self, Model, cloud,
+    library::{Kind, Library},
+    preview,
 };
+use crate::account::{Accounts, Provider};
 use horizon_client::{hud::rgba, ui_theme::Face};
 use std::{
     path::{Path, PathBuf},

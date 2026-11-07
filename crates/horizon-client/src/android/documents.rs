@@ -20,7 +20,7 @@ use std::{
 
 struct Request {
     kind: Kind,
-    appearance: Option<crate::skins::library::Kind>,
+    appearance: Option<super::skins::library::Kind>,
     home: PathBuf,
     cache: PathBuf,
 }
@@ -137,7 +137,7 @@ pub fn picker_failed(error: &str) {
 }
 pub fn begin_appearance(
     home: PathBuf,
-    kind: crate::skins::library::Kind,
+    kind: super::skins::library::Kind,
 ) -> std::result::Result<(), String> {
     if busy() {
         return Err("Finish or cancel the current import first".into());
@@ -240,12 +240,12 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
         }
         let mut bytes = Vec::new();
         input
-            .take(crate::skins::MAX_IMPORT_BYTES as u64 + 1)
+            .take(super::skins::MAX_IMPORT_BYTES as u64 + 1)
             .read_to_end(&mut bytes)?;
         if CANCEL.load(Ordering::Relaxed) {
             return Err("Import cancelled".into());
         }
-        let mut library = crate::skins::library::Library::load(&request.home)?;
+        let mut library = super::skins::library::Library::load(&request.home)?;
         library.import(&request.home, &name, kind, &bytes)?;
         notice(
             "PNG added to the local gallery. Select it to apply locally.",

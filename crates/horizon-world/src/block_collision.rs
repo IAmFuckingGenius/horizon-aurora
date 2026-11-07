@@ -118,12 +118,11 @@ impl<'r> BlockCollisionRegistry<'r> {
                     | (u8::from(empty) << 2)
                     | (u8::from(contextual.contains_key(&id)) << 3),
             );
-            if cached.cached_shape(id)?.is_none() {
-                if let Some(rule) =
+            if cached.cached_shape(id)?.is_none()
+                && let Some(rule) =
                     DynamicSupport::from_state(cached.registry().state(id).unwrap())?
-                {
-                    dynamic.insert(id, rule);
-                }
+            {
+                dynamic.insert(id, rule);
             }
         }
         let pistons = PistonBlockBindings::new(cached.registry()).ok();
@@ -157,6 +156,13 @@ impl<'r> BlockCollisionRegistry<'r> {
             moving_piston: flags & 2 != 0,
             empty_shape: flags & 4 != 0,
         })
+    }
+    /// Whether `state` can have a collision shape: false for states whose shape is always
+    /// empty, whatever the context. States outside the registry count.
+    pub fn may_collide(&self, state: BlockStateId) -> bool {
+        self.scan_flags
+            .get(state.0 as usize)
+            .is_none_or(|flags| flags & 4 == 0)
     }
     /// Whether a scan keeps `state` in the cells around its box: a large
     /// collision shape or a moving piston. States outside the registry count.

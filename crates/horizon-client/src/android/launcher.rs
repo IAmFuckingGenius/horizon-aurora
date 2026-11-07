@@ -40,7 +40,7 @@ use winit::{
 struct PreparedAccount {
     key: String,
     file: PathBuf,
-    appearance: crate::skins::cloud::Cache,
+    appearance: super::skins::cloud::Cache,
 }
 pub(super) struct Launcher {
     home: PathBuf,
@@ -387,16 +387,13 @@ impl Launcher {
         crate::display::prepare(&window)?;
         let gui = game::UiResources {
             atlas: HudAtlas::build(&self.home.join("installer"))?,
-            panorama: Arc::new(horizon_client::gfx::panorama::Faces {
-                size: 1,
-                pixels: [0u8; 4].repeat(6),
-            }),
+            panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
         };
         self.renderer = Some(game::loading_renderer(
             window.clone(),
             false,
             Some(&gui.atlas),
-            Some(gui.panorama.as_ref()),
+            Some(&gui.panorama),
             None,
             if self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl {
                 horizon_client::graphics::GraphicsApi::OpenGl
@@ -512,7 +509,7 @@ impl Launcher {
                         let (account, secrets) = login::Login::session(&id)?
                             .ok_or("The selected account changed. Choose Play again.")?;
                         let appearance =
-                            crate::skins::cloud::fetch(&account, &secrets, &wardrobe_home)
+                            super::skins::cloud::fetch(&account, &secrets, &wardrobe_home)
                                 .unwrap_or_default();
                         let file = crate::account::write_session_file(
                             &game_home.join("sessions"),
@@ -951,7 +948,7 @@ impl ApplicationHandler for Launcher {
                             )
                         });
                         let appearance =
-                            crate::skins::library::Library::load(&root).and_then(|library| {
+                            super::skins::library::Library::load(&root).and_then(|library| {
                                 library.prepare_game(
                                     &root,
                                     &prepared.key,

@@ -4,11 +4,16 @@ default-run = "horizon-client"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-rust-version = "1.90"
+rust-version.workspace = true
 description = "Horizon native development client"
+autobins = false
+autoexamples = false
+autotests = false
 
 [dependencies]
 self_cell = "1.3"
+horizon-cosmetics = { path = "../horizon-cosmetics" }
+horizon-client-lib = { path = "../horizon-client-lib", default-features = false }
 horizon-assets = { path = "../horizon-assets" }
 horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-input = { path = "../horizon-client-input" }
@@ -16,6 +21,8 @@ horizon-client-render = { path = "../horizon-client-render" }
 horizon-command = { path = "../horizon-command" }
 horizon-items = { path = "../horizon-items" }
 horizon-core = { path = "../horizon-core" }
+# OptiFine-format pack files: custom entity models, random entity textures.
+horizon-optifine = { path = "../horizon-optifine" }
 # The server thread ahead of the workers (MinecraftServer.spin's Thread.setPriority).
 horizon-threads = { path = "../horizon-threads" }
 horizon-hdr = { path = "../horizon-hdr" }
@@ -48,6 +55,8 @@ sha2 = "0.10.9"
 sha1 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
+# server.toml's [combat], which the dedicated server reads itself.
+toml = "1.1"
 # hlsl-out: the gfx.rs tests translate every shader as wgpu's DirectX 12 backend does. A normal feature,
 # not a dev-dependency's, so builds, tests and examples share one build of naga, wgpu and this crate.
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
@@ -61,6 +70,7 @@ horizon-theme = { path = "../horizon-theme" }
 # the anonymous "I'm playing" ping the game sends itself (`heartbeat.rs`).
 horizon-telemetry = { path = "../horizon-telemetry", default-features = false, features = ["live"] }
 horizon-bench = { path = "../horizon-bench" }
+crc32fast = "1"
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 # Controllers (evdev + libudev on Linux, IOKit on macOS, Windows.Gaming.Input); the `controllers` feature.
 gilrs = { version = "0.11", optional = true }
@@ -82,8 +92,24 @@ arboard = { version = "3.6.1", default-features = false, features = ["wayland-da
 
 [target.'cfg(target_os = "android")'.dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "fs"] }
+# The Android launcher, platform glue and the hooks the game calls (src/android_host.rs);
+# crates/horizon-android keeps only the entry points Android and the JVM look up.
+android_logger = "0.15"
+regex = "1"
+jni = "0.21"
+getrandom = "0.3"
+horizon-port-pack = { path = "../horizon-port-pack" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+horizon-boot = { path = "../horizon-boot" }
+symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis"] }
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+winit = { version = "0.30.13", features = ["android-native-activity"] }
+# The launcher's account file store (launcher/src/account.rs).
+chacha20poly1305 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
+# Resolve virtualized folders to shell-compatible physical paths.
+dunce = "1.0.5"
 # Use the registered URI handler without routing links through Explorer/cmd.
 open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
 # DirectX 12, where Vulkan has no adapter or device, or by choice (`graphicsApi`, graphics.rs).
@@ -103,31 +129,57 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 # DirectX 12 driver (`graphicsApi`, graphics.rs).
 wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 
-[target.'cfg(windows)'.build-dependencies]
-# The icon resource in the .exe (build.rs).
-winresource = "0.1"
-
 [features]
 default = ["audio", "controllers"]
 # Sound output. Without it (and `controllers`) the program links neither libasound nor libudev on
 # Linux: the server build (`--no-default-features`, released as horizon-engine; docs/server.md).
-audio = ["horizon-client-render/audio"]
+audio = ["horizon-client-render/audio", "horizon-client-lib/audio"]
 # Controllers: gilrs, and the DualSense's own output. Without it only `horizon-ctl pad`'s virtual pad.
-controllers = ["dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
+controllers = ["horizon-client-lib/controllers", "dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
 # Runs code mods (wasmtime and cranelift: a quarter of a clean build). On in every release build
 # (release.yml); the tests and probes don't need it. Content mods load without it.
 mods = ["horizon-mods/runtime"]
 # Records the call sites of mob random draws (`mob_ai_probe` traces).
-rng-trace = ["horizon-core/rng-trace"]
+rng-trace = ["horizon-core/rng-trace", "horizon-client-lib/rng-trace"]
+# Rust's allocations go to the system heap instead of mimalloc, where heap profilers that replace
+# malloc (heaptrack, valgrind's massif) see them. For profiling only: mimalloc is faster.
+system-allocator = []
+# mimalloc with a tag on each block: `horizon-ctl memory` lists the live heap by startup step and
+# thread (`heap_by_tag_mb`). For measuring only: each block costs 16 bytes more.
+alloc-census = ["horizon-threads/alloc-census"]
 # Compatibility with earlier experiment commands: main already uses mimalloc.
 windows-mimalloc = []
 # Opt-in Windows heap experiment; see docs/windows-allocators.md.
 windows-segment-heap = []
 
-# Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
+[[bin]]
+name = "horizon-client"
+path = "src/main.rs"
+
+[[test]]
+name = "datapack_biome_sync"
+path = "tests/datapack_biome_sync.rs"
+
+[[test]]
+name = "launch_api"
+path = "tests/launch_api.rs"
+
+[[test]]
+name = "mod_api_hooks"
+path = "tests/mod_api_hooks.rs"
+
 [[example]]
-name = "client_probe"
-path = "examples/probe/main.rs"
+name = "native_gui_overlay_probe"
+path = "examples/native_gui_overlay_probe.rs"
+
+[[example]]
+name = "wind_burst_hook_probe"
+path = "examples/wind_burst_hook_probe.rs"
+
+[build-dependencies]
+horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }
+# The build script runs on the host, but embeds resources based on the target OS.
+winresource = "0.1"
 
 [lints]
 workspace = true

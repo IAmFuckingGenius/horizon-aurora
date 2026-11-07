@@ -1,4 +1,4 @@
-//! HDR calibration (Graphics: HDR, Calibrate...): full screen, one step at a time, the way
+//! HDR calibration (the graphics screen's HDR page, Calibrate...): full screen, one step at a time, the way
 //! display calibration tools do it. HDR output draws each step's test picture straight in
 //! nits above a band of controls (`hdr.wgsl`, `Hdr::calibration`), past everything that
 //! shapes the game's picture, so what the player sees is the display alone:
@@ -49,7 +49,7 @@ pub struct Calibration {
     values: [f32; 3],
     /// Which values were Auto (peak, paper white): saved as Auto again unless the
     /// player moved them.
-    auto: [Option<f32>; 2],
+    auto: [Option<f32>; 3],
     dragging: bool,
 }
 
@@ -65,14 +65,19 @@ impl Step {
             Step::PaperWhite => (10.0, 480.0, 10.0),
         }
     }
-    fn name(self) -> &'static str {
+    /// The English name, which is also its key in the language table.
+    fn name_key(self) -> &'static str {
         match self {
             Step::Black => "Black Level",
             Step::Peak => "Peak Brightness",
             Step::PaperWhite => "Paper White",
         }
     }
-    fn hint(self) -> &'static str {
+    fn name(self) -> String {
+        lang::get(self.name_key())
+    }
+    /// The English hint, which is also its key in the language table.
+    fn hint_key(self) -> &'static str {
         match self {
             Step::Black => "Lower it until the logo just disappears into the black.",
             Step::Peak => "Raise it until the logo just disappears into the bright square.",
@@ -120,11 +125,12 @@ impl Calibration {
         Self {
             step: 0,
             values: [
-                g.hdr_black_level as f32 / 100.0,
+                g.black_level_nits(),
                 g.peak_nits() as f32,
                 g.paper_white_nits() as f32,
             ],
             auto: [
+                (g.hdr_black_level == 0).then_some(g.black_level_nits()),
                 (g.hdr_peak == 0).then_some(g.peak_nits() as f32),
                 (g.hdr_paper_white == 0).then_some(g.paper_white_nits() as f32),
             ],
@@ -140,15 +146,12 @@ impl Calibration {
     }
     fn label(&self) -> Text {
         let v = self.values[self.step];
-        let nits = match self.current() {
+        let step = self.current();
+        let value = match step {
             Step::Black => format!("{v:.2}"),
             _ => format!("{v:.0}"),
         };
-        Text::literal(format!(
-            "{}: {}",
-            lang::get(self.current().name()),
-            lang::tr("%s nits", &[&nits])
-        ))
+        Text::literal(format!("{}: {}", step.name(), value))
     }
     /// The step, its nits and where the controls start (a share of the height), for
     /// HDR output's test picture.
@@ -168,29 +171,19 @@ impl Calibration {
         let step = self.current();
         let title = Text::literal(lang::tr(
             "HDR Calibration %s/%s: %s",
-            &[&(self.step + 1), &STEPS.len(), &lang::get(step.name())],
+            &[&(self.step + 1), &STEPS.len(), &step.name()],
         ));
-        // The hint over the slider: a long one takes two lines, the title moving up for it
-        // (above the band the test picture covers everything).
-        let hint = Text::literal(lang::get(step.hint()));
-        let lines = atlas.font.split(&hint, (w - 20.0).max(1.0));
-        let (title_y, hint_y) = if lines.len() > 1 {
-            (l.top + 1.0, l.top + 11.0)
-        } else {
-            (l.top + 6.0, l.top + 18.0)
-        };
-        ui::centered_text(batch, atlas, &title, 0.0, title_y, w, u32::MAX);
-        for (i, line) in lines.iter().enumerate() {
-            ui::centered_text(
-                batch,
-                atlas,
-                line,
-                0.0,
-                hint_y + i as f32 * 10.0,
-                w,
-                rgba(160, 160, 160, 255),
-            );
-        }
+        ui::centered_text(batch, atlas, &title, 0.0, l.top + 6.0, w, u32::MAX);
+        let hint = Text::literal(lang::get(step.hint_key()));
+        ui::centered_text(
+            batch,
+            atlas,
+            &hint,
+            0.0,
+            l.top + 18.0,
+            w,
+            rgba(160, 160, 160, 255),
+        );
         let (min, max, _) = step.range();
         let (x, y, sw) = l.slider;
         ui::slider(
@@ -206,17 +199,24 @@ impl Calibration {
             self.dragging,
         );
         let last = self.step + 1 == STEPS.len();
-        let next = if last {
-            lang::get_or("selectWorld.edit.save", "Save")
-        } else {
-            lang::get("Next")
-        };
+        let save = lang::get_or("selectWorld.edit.save", "Save");
+        let next = lang::get("Next");
         for (rect, label, active) in [
             (l.cancel, lang::get_or("gui.cancel", "Cancel"), true),
             (l.back, lang::get_or("gui.back", "Back"), self.step > 0),
-            (l.next, next, true),
+            (l.next, if last { save } else { next }, true),
         ] {
             let hover = over(cursor, rect) && active;
+            let action = if rect == l.cancel {
+                Some(crate::widgets::Action::Cancel)
+            } else if rect == l.back {
+                Some(crate::widgets::Action::Back)
+            } else {
+                None
+            };
+            if let Some(action) = action {
+                crate::widgets::declare_action(action, [rect.0, rect.1, rect.2, 20.0], active);
+            }
             ui::button(
                 batch,
                 atlas,
@@ -291,11 +291,12 @@ impl Calibration {
     /// Writes what the player landed on into Horizon's settings.
     pub fn save(&self, s: &mut Settings) {
         let g = &mut s.horizon;
-        g.hdr_black_level = (self.values[0] * 100.0).round() as u32;
-        let [peak, paper_white] = [1, 2].map(|i| match self.auto[i - 1] {
+        let scale = [100.0, 1.0, 1.0];
+        let [black, peak, paper_white] = [0, 1, 2].map(|i| match self.auto[i] {
             Some(auto) if auto == self.values[i] => 0,
-            _ => self.values[i].round() as u32,
+            _ => (self.values[i] * scale[i]).round() as u32,
         });
+        g.hdr_black_level = black;
         g.hdr_peak = peak;
         g.hdr_paper_white = paper_white;
     }

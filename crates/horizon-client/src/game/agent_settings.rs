@@ -4,7 +4,7 @@
 //! when the player turned Agent Control on, and never under No AI (`horizon_core::no_ai`).
 //! Turning either switch in the game opens or closes it at once.
 use super::Game;
-use horizon_client::{Result, control, lang};
+use horizon_client::{Result, control};
 use std::path::PathBuf;
 
 impl Game<'_> {
@@ -86,35 +86,24 @@ impl Game<'_> {
         let server = self
             .control
             .as_ref()
-            .filter(|c| !c.path().as_os_str().is_empty());
-        let mut lines = vec![match server {
-            Some(s) if s.clients() > 0 => {
-                let key = if s.clients() == 1 {
-                    "horizon.agent.status.connected_one"
-                } else {
-                    "horizon.agent.status.connected"
-                };
-                let mut line = lang::tr(key, &[&s.clients()]);
-                if let Some(t) = self.agent_last {
-                    line.push_str(&lang::tr(
-                        "horizon.agent.status.last_command",
-                        &[&t.elapsed().as_secs()],
-                    ));
-                }
-                line
-            }
-            Some(_) => lang::get("horizon.agent.status.waiting"),
-            None => lang::get("horizon.agent.status.off"),
-        }];
-        if let Some(s) = server {
-            if self.options.control.is_some() && !self.agent_control_on {
-                lines.push(lang::get("horizon.agent.status.session"));
-            }
-            // The full path is too wide for the page: Copy Connection Details has it.
-            let name = s.path().file_name().unwrap_or_default().to_string_lossy();
-            lines.push(lang::tr("horizon.agent.status.socket", &[&name]));
+            .filter(|c| !c.path().as_os_str().is_empty())
+            .map(|s| Socket {
+                clients: s.clients(),
+                name: s
+                    .path()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            });
+        let mut lines = status_lines(
+            server,
+            self.agent_last.map(|t| t.elapsed().as_secs()),
+            self.options.control.is_some() && !self.agent_control_on,
+        );
+        if let Some(line) = self.repro.agent_line(self.input_trace.events()) {
+            lines.push(line);
         }
-        lines.push(lang::get("horizon.agent.status.local"));
         lines
     }
 
@@ -138,5 +127,129 @@ impl Game<'_> {
             socket.display(),
             serde_json::to_string_pretty(&config).unwrap_or_default()
         )
+    }
+}
+
+/// The control socket as the AI Agent page tells of it.
+struct Socket {
+    /// Agents connected now.
+    clients: usize,
+    /// The socket's file name; the full path is too wide for the page (Copy Connection Details
+    /// has it).
+    name: String,
+}
+
+/// The AI Agent page's lines in the selected language: the state, then where agents connect.
+/// `last_command` is the seconds since an agent's last command, `session_only` whether the
+/// program that started the game opened the socket and the player's switch did not.
+fn status_lines(
+    server: Option<Socket>,
+    last_command: Option<u64>,
+    session_only: bool,
+) -> Vec<String> {
+    use horizon_client::lang::{get, tr};
+    let mut lines = vec![match &server {
+        Some(s) if s.clients > 0 => {
+            let (one, many) = match last_command {
+                Some(_) => ("one_ago", "many_ago"),
+                None => ("one", "many"),
+            };
+            let key = format!(
+                "horizon.agent.connected.{}",
+                if s.clients == 1 { one } else { many }
+            );
+            let mut args: Vec<&dyn std::fmt::Display> = Vec::new();
+            if s.clients != 1 {
+                args.push(&s.clients);
+            }
+            if let Some(ago) = &last_command {
+                args.push(ago);
+            }
+            tr(&key, &args)
+        }
+        Some(_) => get("horizon.agent.waiting"),
+        None => get("horizon.agent.off"),
+    }];
+    if let Some(s) = &server {
+        if session_only {
+            lines.push(get("horizon.agent.session_opened"));
+        }
+        lines.push(tr("horizon.agent.socket", &[&s.name]));
+    }
+    lines.push(get("horizon.agent.local_only"));
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Socket, status_lines};
+    use horizon_client::lang::{Language, scoped};
+
+    fn lines(code: &str, clients: usize, ago: Option<u64>, session_only: bool) -> Vec<String> {
+        let socket = Socket {
+            clients,
+            name: "ctl.sock".into(),
+        };
+        let (lines, missed) = scoped(Language::load(&[], code), || {
+            status_lines(Some(socket), ago, session_only)
+        });
+        assert!(missed.is_empty(), "{code}: {missed:?}");
+        lines
+    }
+
+    /// The AI Agent page told its state in English in every language (#1927).
+    #[test]
+    fn agent_page_lines_follow_the_language() {
+        assert_eq!(
+            lines("de_de", 2, Some(5), false),
+            [
+                "Verbunden: 2 Agentenverbindungen, letzter Befehl vor 5 s",
+                "Socket: ctl.sock (Verbindungsdaten kopieren für den vollständigen Pfad)",
+                "Nur lokal: Agenten auf diesem Computer, nie über das Netzwerk.",
+            ]
+        );
+        assert_eq!(
+            lines("pl_pl", 1, None, true),
+            [
+                "Połączono: 1 połączenie agenta",
+                "Otwarte na tę sesję przez program, który uruchomił grę.",
+                "Gniazdo: ctl.sock (skopiuj dane, aby poznać pełną ścieżkę)",
+                "Tylko lokalnie: agenci na tym komputerze, nigdy przez sieć.",
+            ]
+        );
+        let (off, missed) = scoped(Language::load(&[], "fr_fr"), || {
+            status_lines(None, None, false)
+        });
+        assert!(missed.is_empty(), "{missed:?}");
+        assert_eq!(
+            off,
+            [
+                "Désactivé : les agents ne peuvent pas joindre ce jeu.",
+                "Local uniquement : agents sur cet ordinateur, jamais via le réseau.",
+            ]
+        );
+    }
+
+    /// English keeps the sentences it always had: the count, its plural, the time since the last
+    /// command, and the wait for a first agent.
+    #[test]
+    fn agent_page_lines_in_english() {
+        assert_eq!(
+            lines("en_us", 2, Some(5), false)[0],
+            "Connected: 2 agent connections, last command 5 s ago"
+        );
+        assert_eq!(
+            lines("en_us", 1, None, false)[0],
+            "Connected: 1 agent connection"
+        );
+        assert_eq!(
+            lines("en_us", 1, Some(0), false)[0],
+            "Connected: 1 agent connection, last command 0 s ago"
+        );
+        assert_eq!(
+            lines("en_us", 3, None, false)[0],
+            "Connected: 3 agent connections"
+        );
+        assert_eq!(lines("en_us", 0, None, true)[0], "Waiting for an agent.");
     }
 }

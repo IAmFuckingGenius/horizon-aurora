@@ -122,7 +122,10 @@ impl Game<'_> {
         if sharing.opened_lan {
             self.lan_close(true);
         } else {
-            self.system_message(Text::translate("horizon.friends.stopped", &[]));
+            self.system_message(Text::literal(lang::get_or(
+                "horizon.friends.stopped",
+                "Stopped sharing the invite code.",
+            )));
         }
     }
 
@@ -139,11 +142,15 @@ impl Game<'_> {
             return;
         };
         let mut announce = false;
+        let mut stopped = None;
         for event in sharing.host.poll() {
             match event {
                 HostEvent::Code(code) => {
                     if sharing.code.is_some() && sharing.wrong >= horizon_friends::host::MAX_WRONG {
-                        sharing.notice = Some(lang::get("horizon.friends.code_changed"));
+                        sharing.notice = Some(lang::get_or(
+                            "horizon.friends.short_code_changed",
+                            "Someone kept trying a wrong short code, so it changed.",
+                        ));
                         sharing.wrong = 0;
                     }
                     announce = sharing.code.is_none();
@@ -151,15 +158,32 @@ impl Game<'_> {
                 }
                 HostEvent::WrongCode { count } => {
                     sharing.wrong = count;
-                    sharing.notice = Some(lang::get("horizon.friends.wrong_code"));
+                    sharing.notice = Some(lang::get_or(
+                        "horizon.friends.wrong_code",
+                        "Someone tried a wrong code.",
+                    ));
                 }
                 HostEvent::Connected { direct: true, .. } => sharing.paths.0 += 1,
                 HostEvent::Connected { direct: false, .. } => sharing.paths.1 += 1,
                 HostEvent::Disconnected { .. } => {}
+                HostEvent::RelayStopped => {
+                    let text = lang::get_or(
+                        "horizon.friends.relay_stopped",
+                        "Too many wrong short codes, so the relay is off until you share again. Friends can still join with the full code.",
+                    );
+                    sharing.notice = Some(text.clone());
+                    stopped = Some(text);
+                }
             }
         }
+        if let Some(text) = stopped {
+            self.system_message(Text::literal(text));
+        }
         if announce {
-            self.system_message(Text::translate("horizon.friends.ready", &[]));
+            self.system_message(Text::literal(lang::get_or(
+                "horizon.friends.code_ready",
+                "Your invite code is ready: Game Menu, Play with Friends. Copy it and send it to your friends.",
+            )));
         }
     }
 
@@ -195,9 +219,12 @@ impl Game<'_> {
         match action {
             Action::Share => {
                 if let Err(e) = self.friends_start() {
-                    self.system_message(Text::translate(
-                        "horizon.friends.share_failed",
-                        &[Text::literal(e.to_string())],
+                    self.system_message(Text::literal(
+                        lang::get_or(
+                            "horizon.friends.share_failed",
+                            "Couldn't share the world: %s",
+                        )
+                        .replacen("%s", &e.to_string(), 1),
                     ));
                 }
             }
@@ -206,7 +233,7 @@ impl Game<'_> {
             // The system browser, as the folder buttons open their folders.
             Action::Help => {
                 if let Some(url) = &view.help {
-                    super::packs::open_folder(std::path::Path::new(url));
+                    super::packs::open_uri(url);
                 }
             }
             Action::Done => self.screen = super::Screen::Paused,
@@ -234,7 +261,10 @@ impl Game<'_> {
         };
         let state = s.host.state();
         let mut status = if s.code.is_none() {
-            lang::get("horizon.friends.finding")
+            lang::get_or(
+                "horizon.friends.finding_route",
+                "Finding how friends can reach you…",
+            )
         } else {
             friends_screen::say(&state.summary)
         };

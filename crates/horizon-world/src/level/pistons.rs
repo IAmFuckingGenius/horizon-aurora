@@ -202,7 +202,8 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             };
             self.set_block_and_update(pos, new);
             let block = b.block(new);
-            self.neighbor_changed_at(pos, block);
+            let orientation = self.initial_orientation(Some(piston.movement_direction()), None);
+            self.neighbor_changed_at_oriented(pos, block, orientation);
         }
     }
     /// `PistonMovingBlockEntity.tick`. A piston that is still moving reports
@@ -248,7 +249,9 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
                     }
                     self.set_block(pos, new, 67);
                     let block = b.block(new);
-                    self.neighbor_changed_at(pos, block);
+                    let orientation =
+                        self.initial_orientation(Some(piston.movement_direction()), None);
+                    self.neighbor_changed_at_oriented(pos, block, orientation);
                 }
             }
         } else {
@@ -308,16 +311,15 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             let pushed_pos = rel_n(pos, direction, 2);
             let pushed = self.state(pushed_pos);
             let mut event = 1;
-            if b.is_block(pushed, b.named.moving_piston) && b.facing(pushed) == direction {
-                if let Some(piston) = self.moving_piston(pushed_pos) {
-                    if piston.extending
-                        && (piston.progress_o < 0.5
-                            || self.level.game_time() == piston.last_ticked
-                            || self.ticks.handling_tick)
-                    {
-                        event = 2;
-                    }
-                }
+            if b.is_block(pushed, b.named.moving_piston)
+                && b.facing(pushed) == direction
+                && let Some(piston) = self.moving_piston(pushed_pos)
+                && piston.extending
+                && (piston.progress_o < 0.5
+                    || self.level.game_time() == piston.last_ticked
+                    || self.ticks.handling_tick)
+            {
+                event = 2;
             }
             self.block_event(pos, block, event, direction as i32);
         }
@@ -361,6 +363,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             return false;
         }
         !b.has_flag(state, super::data::state_flags::BLOCK_ENTITY)
+            && !self.level.has_mod_block_entity(pos)
     }
     fn is_slime_or_honey(&self, state: BlockStateId) -> bool {
         self.b.is_block(state, self.b.named.slime_block)
@@ -658,6 +661,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             self.update_neighbour_shapes(air, *pos, 2, super::flags::UPDATE_LIMIT);
             self.update_indirect_neighbour_shapes(air, *pos, 2, super::flags::UPDATE_LIMIT);
         }
+        let orientation = self.initial_orientation(Some(push_direction), None);
         let mut index = 0;
         for pos in to_destroy.iter().rev() {
             let state = to_update[index];
@@ -665,17 +669,16 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             self.affect_neighbors_after_removal(state, *pos, false);
             self.update_indirect_neighbour_shapes(state, *pos, 2, super::flags::UPDATE_LIMIT);
             let block = b.block(state);
-            self.update_neighbors_at(*pos, block);
+            self.update_neighbors_at_oriented(*pos, block, orientation);
         }
         for pos in to_push.iter().rev() {
             let block = b.block(to_update[index]);
             index += 1;
-            self.update_neighbors_at(*pos, block);
+            self.update_neighbors_at_oriented(*pos, block, orientation);
         }
         if extending {
-            self.update_neighbors_at(arm, b.named.piston_head);
+            self.update_neighbors_at_oriented(arm, b.named.piston_head, orientation);
         }
-        let _ = push_direction;
         Some(true)
     }
     /// `PistonBaseBlock.triggerEvent`.
@@ -748,13 +751,13 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
                 let two = rel_n(pos, direction, 2);
                 let moving_state = self.state(two);
                 let mut piston_piece = false;
-                if b.is_block(moving_state, b.named.moving_piston) {
-                    if let Some(entity) = self.moving_piston(two) {
-                        if entity.direction == direction && entity.extending {
-                            self.moving_piston_final_tick(two);
-                            piston_piece = true;
-                        }
-                    }
+                if b.is_block(moving_state, b.named.moving_piston)
+                    && let Some(entity) = self.moving_piston(two)
+                    && entity.direction == direction
+                    && entity.extending
+                {
+                    self.moving_piston_final_tick(two);
+                    piston_piece = true;
                 }
                 if !piston_piece {
                     let is_piston = b.is_block(moving_state, b.named.piston)

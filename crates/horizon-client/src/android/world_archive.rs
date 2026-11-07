@@ -292,7 +292,7 @@ pub fn inspect<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Result<Plan, Err
     let mut entries = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let entry = zip.by_index_raw(i)?;
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         if !safe_name(&name) || entry.enclosed_name().is_none() {
             return Err(Error::UnsafePath);
         }
@@ -378,7 +378,7 @@ pub fn extract<R: Read + Seek>(
             return Err(Error::Cancelled);
         }
         let mut entry = zip.by_index(i)?;
-        let name = entry.name().to_owned();
+        let name = entry.name()?.into_owned();
         // `inspect` checked these; check again where the path is built.
         if !safe_name(&name) || entry.is_symlink() {
             return Err(Error::UnsafePath);

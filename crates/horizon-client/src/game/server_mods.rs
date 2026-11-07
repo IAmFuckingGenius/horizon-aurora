@@ -5,6 +5,9 @@
 //! the last one, then ticks them; a player's command reaches them at once.
 //! Their lines go to the players they name. With no server mod on, each hook
 //! here is one check.
+// Aurora: the WebAssembly mod runtime (`mods`) is off, as in Horizon; without it what is left here
+// is unused.
+#![cfg_attr(not(feature = "mods"), allow(dead_code))]
 use super::{Game, lan::LanHost};
 #[cfg(not(feature = "mods"))]
 use horizon_world::registry::BlockStateId;

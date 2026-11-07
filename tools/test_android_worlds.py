@@ -13,9 +13,9 @@ def main():
     harness = ROOT / '.local/android/world-archive-tests'
     (harness / 'src').mkdir(parents=True, exist_ok=True)
     lock = tomllib.loads((ROOT / 'Cargo.lock').read_text(encoding='utf-8'))
-    # The zip the Android library itself links (crates/horizon-android/Cargo.toml).
+    # The zip the Android library itself links (crates/horizon-client/Cargo.toml).
     version = next(p['version'] for p in lock['package']
-                   if p['name'] == 'zip' and p['version'].startswith('2.'))
+                   if p['name'] == 'zip' and p['version'].startswith('9.'))
     (harness / 'Cargo.toml').write_text(f'''[package]
 name = "android-world-archive-tests"
 version = "0.0.0"

@@ -3,7 +3,7 @@
 use super::{
     Game,
     commands::{
-        R, err,
+        R, Target, err,
         execute::{ExecState, Source},
     },
 };
@@ -23,6 +23,16 @@ pub(super) struct Scheduled {
     pub id: String,
     pub time: i64,
     pub seq: u64,
+}
+impl FnState {
+    /// The file `path` of the highest enabled pack that has it.
+    pub(super) fn pack_file(&self, path: &str) -> Option<Vec<u8>> {
+        self.enabled
+            .iter()
+            .rev()
+            .filter_map(|id| self.packs.iter().find(|p| &p.id == id))
+            .find_map(|pack| pack.read(path))
+    }
 }
 #[derive(Default)]
 pub(super) struct FnState {
@@ -57,7 +67,7 @@ pub(super) struct PackStack {
 impl PackStack {
     /// The enabled packs in `enabled` (the selected) order, later overriding
     /// earlier: `PackRepository.openAllSelected` keeps the selected order.
-    fn enabled_packs(&self) -> impl Iterator<Item = &DataPack> {
+    pub(super) fn enabled_packs(&self) -> impl Iterator<Item = &DataPack> {
         self.enabled
             .iter()
             .filter_map(|id| self.packs.iter().find(|p| &p.id == id))
@@ -94,6 +104,48 @@ pub(super) fn content_overlay(
         return Vec::new();
     }
     DataStore::load(&packs).files.into_iter().collect()
+}
+
+/// The files the content tables load from: the world's enabled packs'
+/// (`content_overlay`) with what native mods contribute for this load
+/// (`native_data_pack_files`) below them. `PackOverlay::top` is a path's last
+/// file, so a pack's file still overrides a mod's for the same path, and a
+/// later contribution overrides an earlier one, as packs do. `Game` builds
+/// its tables through here on a world's first open and on `/reload`, so the
+/// mods are asked once per load.
+pub(super) fn overlay_files(
+    world_root: &std::path::Path,
+    resources: &std::path::Path,
+    vanilla_disabled: bool,
+    enabled_features: &[String],
+    contributed: Vec<(String, Vec<u8>)>,
+) -> Vec<(String, Vec<Vec<u8>>)> {
+    let mut files = content_overlay(world_root, resources, vanilla_disabled, enabled_features);
+    if contributed.is_empty() {
+        return files;
+    }
+    // A path's mod files in contribution order, under the pack files.
+    let mut mods: std::collections::BTreeMap<String, Vec<Vec<u8>>> = Default::default();
+    for (path, bytes) in contributed {
+        // One bad file would fail its whole table and drop the world's pack
+        // content with it, so it is skipped alone: every kind is JSON.
+        if let Err(e) = serde_json::from_slice::<Box<serde_json::value::RawValue>>(&bytes) {
+            log::warn!("Horizon: a native mod's data pack file {path} is not JSON, skipped: {e}");
+            continue;
+        }
+        mods.entry(path).or_default().push(bytes);
+    }
+    for (path, versions) in files.iter_mut() {
+        let Some(under) = mods.remove(path.as_str()) else {
+            continue;
+        };
+        let mut merged = under;
+        merged.append(versions);
+        *versions = merged;
+    }
+    // The paths only a mod has.
+    files.extend(mods);
+    files
 }
 
 impl FnState {
@@ -170,6 +222,7 @@ impl Game<'_> {
         let _ = std::fs::write(self.datapack_settings_path(), json.to_string());
     }
     pub(super) fn sync_function_registries(&mut self) {
+        self.sync_enchantment_registries();
         let reg = &mut self.ui.registries;
         reg.functions = self.fns.store.functions.keys().cloned().collect();
         reg.function_tags = self.fns.store.function_tags.keys().cloned().collect();
@@ -361,6 +414,41 @@ impl Game<'_> {
         }
     }
 
+    /// The function branch of advancement rewards: resolve the optional function
+    /// and execute it as the rewarded player, with suppressed output and GAMEMASTER permission.
+    pub(super) fn run_advancement_reward_function(&mut self, id: &str) {
+        self.ensure_datapacks();
+        let Some(function) = self.fns.store.functions.get(id).cloned() else {
+            return;
+        };
+        let Some(pos) = self.target_position(Target::Player) else {
+            return;
+        };
+        // createCommandSourceStack belongs to the player, not an enclosing
+        // execute's position, rotation, output sink or store callback.
+        let source = Source {
+            pos,
+            rot: self.target_rotation(Target::Player),
+            silent: true,
+            ..self.player_source()
+        };
+        // The existing runner applies this level to nested function calls too.
+        let permission = self
+            .fns
+            .permission
+            .replace(horizon_client::command::vanilla::GAMEMASTERS);
+        let callback = self.exec.callback.take();
+        let result = self.run_function(&function, None, source);
+        self.exec.callback = callback;
+        self.fns.permission = permission;
+        if let Err(error) = result {
+            log::warn!(
+                "Horizon: failed to run advancement reward function {id}: {}",
+                error.message.plain()
+            );
+        }
+    }
+
     // ---- running -----------------------------------------------------------------
 
     /// Run one function with `source`: its commands in order, until a `return`.
@@ -455,6 +543,7 @@ impl Game<'_> {
 
     // ---- commands ------------------------------------------------------------------
 
+    /// `FunctionCommand.decorateOutputIfNeeded`: report returned values even for failure.
     pub(super) fn cmd_function(&mut self, ctx: &Context) -> R<i32> {
         let Some(Arg::Resource(name)) = ctx.get("name").cloned() else {
             return Ok(0);
@@ -476,9 +565,14 @@ impl Game<'_> {
                 _ => data,
             };
             if !matches!(tag, Tag::Compound(_)) {
+                // FunctionCommand.getArgumentTag uses TagType.getName, not the tag's value.
+                let names = [
+                    "END", "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "BYTE[]", "STRING",
+                    "LIST", "COMPOUND", "INT[]", "LONG[]",
+                ];
                 return Err(err(
                     "commands.function.error.argument_not_compound",
-                    &[&"tag"],
+                    &[&names[usize::from(tag.id())]],
                 ));
             }
             Some(tag)
@@ -527,6 +621,10 @@ impl Game<'_> {
                 Outcome::Fail => {
                     any = true;
                     failed = true;
+                    self.feedback(Text::translate(
+                        "commands.function.result",
+                        &[Text::literal(f.id.clone()), Text::literal("0")],
+                    ));
                 }
             }
         }
@@ -886,23 +984,50 @@ impl Game<'_> {
             }
         }
     }
-    /// `ReloadCommand.reloadPacks`: no message of its own.
+    /// `ReloadCommand.reloadPacks`: no message of its own. It reloads the
+    /// server's data as `/reload` does (`reload_datapacks`), the content
+    /// tables with the functions.
     fn apply_pack_change(&mut self) {
         self.save_datapack_settings();
         self.rebuild_store();
         self.fns.load_pending = true;
+        self.reload_world_tables();
     }
 
     // ---- predicates -------------------------------------------------------------------
 
-    /// `if predicate`: a datapack predicate tested for the source entity.
+    /// `ResourceOrIdArgument.getLootPredicate`: accept the inline or named
+    /// predicate, then test it with the existing source entity and origin.
     pub(in crate::game) fn check_predicate(&mut self, id: &str) -> R<bool> {
         self.ensure_datapacks();
-        let Some(json) = self.fns.store.predicates.get(id).cloned() else {
-            return Err(err("argument.predicate.unknown", &[&id]));
+        // ResourceOrIdArgument retains either an inline value or a named id.
+        // Both use the same evaluator and command-source context below.
+        let json = if id.starts_with('{') {
+            let (tag, _) = horizon_world::nbt::parse_snbt(id)
+                .map_err(|e| err("argument.nbt.invalid", &[&e]))?;
+            horizon_client::scoreboard::tag_to_json(&tag)
+        } else {
+            self.fns
+                .store
+                .predicates
+                .get(id)
+                .cloned()
+                .ok_or_else(|| err("argument.predicate.unknown", &[&id]))?
         };
         let source = self.command_source.unwrap_or_else(|| self.player_source());
-        let view = source.entity.map(|t| self.entity_view_of(t));
+        let view = source.entity.map(|t| {
+            let scores = self.holder_name(t).map(|holder| {
+                self.score
+                    .board
+                    .holder_scores(&holder)
+                    .into_iter()
+                    .map(|(objective, value)| (objective.name.clone(), value))
+                    .collect()
+            });
+            let mut view = self.entity_view_asked(t, &json);
+            view.scores = scores;
+            view
+        });
         Ok(self.conditions_hold(&json, view.as_ref(), source.pos))
     }
 }
@@ -918,6 +1043,95 @@ const FEATURE_PACKS: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn unless_function_keeps_a_fallthrough_after_running_it_once() {
+        use crate::game::{Audio, Options, Settings, load_resources};
+        use horizon_client::datapack::FunctionLine;
+        use std::time::Instant;
+        let root = std::path::PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
+        let settings = Settings::default();
+        let loaded = load_resources(
+            root.clone(),
+            None,
+            &root,
+            &settings,
+            Instant::now(),
+            false,
+            true,
+            &crate::game::Progress::new(),
+            &mut |_, _| unreachable!(),
+        )
+        .unwrap();
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.execution_role = crate::game::execution_role::ExecutionRole::IntegratedServer;
+        let mut game = Game::new(
+            &loaded.resources,
+            loaded.pack,
+            loaded.gui.unwrap(),
+            options,
+            settings,
+            Audio::silent(&root),
+            None,
+        )
+        .unwrap();
+        game.build_registries();
+        game.set_allow_commands(true);
+        game.fns.loaded = true;
+        let run = |game: &mut Game<'_>, line: &str| {
+            game.exec = ExecState::default();
+            let source = game.player_source();
+            game.execute_line(line, source).unwrap();
+        };
+        run(&mut game, "scoreboard objectives add h154 dummy");
+        let clock = game.world.game_time;
+        for (name, tail) in [
+            ("counter", None),
+            ("zero", Some("return 0")),
+            ("five", Some("return 5")),
+            ("fail", Some("return fail")),
+        ] {
+            let id = format!("h154:{name}");
+            let mut lines = vec![FunctionLine::Command(
+                "scoreboard players add #calls h154 1".into(),
+            )];
+            if let Some(tail) = tail {
+                lines.push(FunctionLine::Command(tail.into()));
+            }
+            game.fns.store.functions.insert(
+                id.clone(),
+                Function {
+                    id,
+                    lines,
+                    parameters: Vec::new(),
+                },
+            );
+        }
+        // Explicit returns establish both signs before the old fallthrough
+        // failure. The commands run through the actual function/execute route.
+        for name in ["zero", "five", "fail", "counter"] {
+            for sign in ["if", "unless"] {
+                run(&mut game, "scoreboard players set #calls h154 0");
+                run(&mut game, "scoreboard players set #out h154 99");
+                run(
+                    &mut game,
+                    &format!(
+                        "execute {sign} function h154:{name} run scoreboard players set #out h154 7"
+                    ),
+                );
+                assert_eq!(game.score.board.score("#calls", "h154").unwrap().value, 1);
+                let keep = (name == "five") == (sign == "if");
+                assert_eq!(
+                    game.score.board.score("#out", "h154").unwrap().value,
+                    if keep { 7 } else { 99 },
+                    "{sign} {name}"
+                );
+            }
+        }
+        assert_eq!(game.world.game_time, clock);
+    }
 
     /// Two packs override the same recipe: the later one in the selected
     /// (`datapacks.json`) order wins, not the later one alphabetically.
@@ -947,5 +1161,194 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    /// What a native mod contributes (`native_data_pack_files`) joins the load
+    /// the tables are built from, a world's first open and `/reload` alike
+    /// (`Game::build_world_tables` is both), and sits below the world's own
+    /// packs. Each load asks again, so it is the current contribution that
+    /// counts.
+    #[test]
+    fn contributed_files_join_the_load_below_the_worlds_packs() {
+        let dir = std::env::temp_dir().join(format!("horizon-contributed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let pack = dir.join("datapacks").join("pack");
+        std::fs::create_dir_all(pack.join("data/pkg/tags/item")).unwrap();
+        std::fs::write(pack.join("pack.mcmeta"), "{}").unwrap();
+        std::fs::write(
+            pack.join("data/pkg/tags/item/both.json"),
+            r#"{"replace": true, "values": ["pkg:from_pack"]}"#,
+        )
+        .unwrap();
+        let settings = serde_json::json!({"enabled": ["file/pack"], "disabled": []});
+        std::fs::write(dir.join("datapacks.json"), settings.to_string()).unwrap();
+        let tag = |entry: &str| format!(r#"{{"values": ["{entry}"]}}"#).into_bytes();
+        let files = overlay_files(
+            &dir,
+            std::path::Path::new(""),
+            true,
+            &[],
+            vec![
+                ("tags/pkg:item/both".to_owned(), tag("pkg:from_mod")),
+                ("tags/pkg:item/mod_only".to_owned(), tag("pkg:only_mod")),
+            ],
+        );
+        // The pack's file is the path's last (`PackOverlay::top`), and its
+        // `replace` drops what the mod put below it.
+        let (_, versions) = files
+            .iter()
+            .find(|(id, _)| id == "tags/pkg:item/both")
+            .unwrap();
+        assert!(horizon_world::loot::PackOverlay::top(versions).starts_with(b"{\"replace\""));
+        let overlay = horizon_world::loot::PackOverlay { files: &files };
+        let tags = horizon_items::items::load_tags(&dir, "item", &overlay).unwrap();
+        assert!(tags["pkg:both"].contains("pkg:from_pack"));
+        assert!(!tags["pkg:both"].contains("pkg:from_mod"));
+        // A path only the mod has reaches the tables too.
+        assert_eq!(
+            tags["pkg:mod_only"].iter().collect::<Vec<_>>(),
+            ["pkg:only_mod"]
+        );
+        // The next load asks again: the new contribution, not the first's.
+        let files = overlay_files(
+            &dir,
+            std::path::Path::new(""),
+            true,
+            &[],
+            vec![("tags/pkg:item/mod_only".to_owned(), tag("pkg:second_load"))],
+        );
+        let overlay = horizon_world::loot::PackOverlay { files: &files };
+        let tags = horizon_items::items::load_tags(&dir, "item", &overlay).unwrap();
+        assert_eq!(
+            tags["pkg:mod_only"].iter().collect::<Vec<_>>(),
+            ["pkg:second_load"]
+        );
+        // A file that isn't JSON is skipped alone, not the whole load.
+        let files = overlay_files(
+            &dir,
+            std::path::Path::new(""),
+            true,
+            &[],
+            vec![
+                ("tags/pkg:item/mod_only".to_owned(), b"{not json".to_vec()),
+                ("tags/pkg:item/good".to_owned(), tag("pkg:good")),
+            ],
+        );
+        let overlay = horizon_world::loot::PackOverlay { files: &files };
+        let tags = horizon_items::items::load_tags(&dir, "item", &overlay).unwrap();
+        assert!(!tags.contains_key("pkg:mod_only"));
+        assert!(tags["pkg:good"].contains("pkg:good"));
+        // With nothing contributed the overlay is the packs' own.
+        assert_eq!(
+            overlay_files(&dir, std::path::Path::new(""), true, &[], Vec::new()),
+            content_overlay(&dir, std::path::Path::new(""), true, &[])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod entity_score_tests {
+    use super::*;
+    use crate::game::{Audio, Options, Progress, Settings, commands::Target, load_resources};
+    use horizon_world::nbt::Tag;
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn named_scores_follow_the_registered_target_holder_and_mutations() {
+        let root = std::path::PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
+        let settings = Settings::default();
+        let loaded = load_resources(
+            root.clone(),
+            None,
+            &root,
+            &settings,
+            std::time::Instant::now(),
+            false,
+            true,
+            &Progress::new(),
+            &mut |_, _| unreachable!(),
+        )
+        .unwrap();
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.execution_role = crate::game::execution_role::ExecutionRole::IntegratedServer;
+        let mut game = Game::new(
+            &loaded.resources,
+            loaded.pack,
+            loaded.gui.unwrap(),
+            options,
+            settings,
+            Audio::silent(&root),
+            None,
+        )
+        .unwrap();
+        game.build_registries();
+
+        game.set_allow_commands(true);
+        game.ensure_datapacks();
+        game.fns.store.predicates.insert(
+            "h270:min2".into(),
+            serde_json::json!({
+                "type": "minecraft:entity_scores", "entity": "this", "scores": {"pts": {"min": 2}}
+            }),
+        );
+        assert!(game.run_command("scoreboard objectives add pts dummy"));
+        let mut actors = Vec::new();
+        for (index, score) in [Some(0), Some(2), None].into_iter().enumerate() {
+            let uuid = [270, 1, 0, index as i32 + 1];
+            let tag = Tag::compound([
+                ("id", Tag::String("minecraft:pig".into())),
+                ("UUID", Tag::IntArray(uuid.to_vec())),
+                (
+                    "Pos",
+                    Tag::List(vec![
+                        Tag::Double((3.5 + index as f64).to_bits()),
+                        Tag::Double(200.0_f64.to_bits()),
+                        Tag::Double(4.5_f64.to_bits()),
+                    ]),
+                ),
+                ("Health", Tag::Float(10.0_f32.to_bits())),
+                ("NoAI", Tag::Byte(1)),
+                ("NoGravity", Tag::Byte(1)),
+            ]);
+            let id = game.load_mob(tag, None).unwrap();
+            assert_eq!(game.persist.uuids.get(&id), Some(&uuid));
+            let holder = game.holder_name(Target::Mob(id)).unwrap();
+            assert_eq!(holder, horizon_client::save::uuid_text(uuid));
+            if let Some(score) = score {
+                assert!(game.run_command(&format!("scoreboard players set {holder} pts {score}")));
+            }
+            assert_eq!(
+                game.score.board.score(&holder, "pts").map(|s| s.value),
+                score
+            );
+            actors.push((id, holder));
+        }
+        let time = game.world.game_time;
+        let matches = |game: &mut Game<'_>, id| {
+            let mut source = game.player_source();
+            source.entity = Some(Target::Mob(id));
+            source.pos = game.target_position(Target::Mob(id)).unwrap();
+            game.command_source = Some(source);
+            let result = game.check_predicate("h270:min2").unwrap();
+            game.command_source = None;
+            result
+        };
+        assert!(!matches(&mut game, actors[0].0));
+        assert!(matches(&mut game, actors[1].0));
+        assert!(!matches(&mut game, actors[2].0));
+        for (index, score, expected) in [(0, 3, true), (1, 1, false)] {
+            let (id, holder) = &actors[index];
+            assert!(game.run_command(&format!("scoreboard players set {holder} pts {score}")));
+            assert_eq!(
+                game.score.board.score(holder, "pts").map(|s| s.value),
+                Some(score)
+            );
+            assert_eq!(matches(&mut game, *id), expected);
+        }
+        assert!(!matches(&mut game, actors[2].0));
+        assert!(game.score.board.score(&actors[2].1, "pts").is_none());
+        assert_eq!(game.world.game_time, time);
     }
 }

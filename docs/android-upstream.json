@@ -1,32 +1,25 @@
 {
-  "upstream": "https://github.com/ludovic111/horizon",
-  "fork": "https://github.com/Vasysik/horizon-android",
+  "upstream": "https://github.com/horizon-rust/horizon",
+  "fork": "https://github.com/IAmFuckingGenius/horizon-aurora",
   "base_commit": "d65282fb0f0fd7ba57876aef87dc4c6c2b5fa04b",
   "base_selection": "Best matching first-parent revision; 309 revisions compared",
   "matching_source_files": 3106,
   "compared_source_files": 3147,
   "modified_existing_files": 41,
-  "branch": "android",
-  "merged_upstream_commit": "8c02c0b8534e11b7bb8be14238b140a8534280a0",
-  "merged_upstream_commits": 8887,
-  "last_reviewed_date": "2026-11-02",
-  "last_update_commits": 1846,
-  "latest_fetched_commit": "549d6b9cd53e4ea0c9eb388f4e99fad8175deda1",
-  "review": "Integrated the published 2026-11-01 nightly, not the moving main branch. Reconciled 26 conflict files across rendering, EventLoopCtl/splitscreen wrappers, keyboard focus, native content hooks, sandboxed hmod runtime and account session recovery. Preserved Android system DNS, IME/SAF/DocumentsProvider, launcher-selected graphics, lifecycle return, optional worker/cache limits and fixed opt-in mod bundle. GLES terrain packs all current varying fields and lowers colored-light nested arrays without changing uniform bytes; Vulkan now additionally adapts the reviewed opaque/cutout terrain optimization, with ordering guards and shader/LOD/culling fallbacks; the merged upstream baseline is unchanged. Kept deployment workflows disabled. ARM64 Clippy, optimized ARM64/ARMv7 builds and targeted input/content/account/GPU tests passed. Tablet Vulkan Compatibility world, inventory, Home/resume, launcher return and provider root were exercised. Final F-03L GLES retest is recorded in docs/android-0.7.7-testing.md; other ABIs and final release APKs still need validation. No blanket resolution of low-end crashes or performance reports is claimed.",
-  "pending_review_commits": 3680,
-  "selected_upstream_release": "nightly-2026-11-01",
+  "branch": "main",
+  "merged_upstream_commit": "6560641ba51a452f6bc2407baa4eb1b3be517ca8",
+  "merged_upstream_commits": 22785,
+  "last_reviewed_date": "2026-11-08",
+  "last_update_commits": 10184,
+  "latest_fetched_commit": "d17e8fa343b1ae9c6185fe425efc79a7c17bca72",
+  "review": "Aurora merged the 2026-11-07 Horizon nightly (6560641), not the moving main branch. Followed upstream's restructure: the game is the horizon-client library with horizon-client-lib below it, the Android host lives in horizon-client (android_host) and crates/horizon-android keeps only the native entry points and the DocumentsProvider exports. WebAssembly code mods are dropped as upstream did; content mods and the bundled native mods remain. Taken from upstream: terrain passes, GPU timing, panorama, audio probing, extras and graphics screens, zip 9. Kept for Android: compatibility mode, GLES entity shader and base-vertex fallback, surface suspension, the startup renderer worker, per-session ownership, HUD insets, keypad and touch input, Horizon Boost thermal limits. Newly arrived upstream workflows are stored disabled under .github/upstream-workflows. ARM64 cargo check and Clippy (-D warnings) and the Android source checks passed; device testing of this merge, other ABIs and GLES devices is still pending.",
+  "pending_review_commits": 113,
+  "selected_upstream_release": "nightly-2026-11-07",
   "reviewed_render_optimizations": [
     "aa4622805",
     "de59ab97c568168d14718a1b27880cead8134997"
   ],
   "render_review_document": "docs/android-upstream-render-review.md",
-  "candidate_upstream_release": {
-    "source_tag": "nightly-source/2026-11-01-c9d474d",
-    "commit": "c9d474dd9116e84c243f8992d75c11314df56f06",
-    "commits_beyond_merged_baseline": 482,
-    "merge_preview_conflicting_files": 12,
-    "status": "Reviewed candidate only; not merged or Android-validated"
-  },
   "accounts_appearance_review": {
     "date": "2026-11-02",
     "fetched_main": "f696adc8996d7d4b11e7d50a863f2735a21c8000",
@@ -42,5 +35,17 @@
     "fetched_main": "2266c4de14561146044c422e6c525b3ce52b0f79",
     "moving_main_merged": false,
     "notes": "Reviewed the current upstream loading handoff: it still leaks its resource owner for the process lifetime and has no Android lifecycle or GLES preparation path to transplant. Retained the Android baseline; this change owns resources per session, publishes background pause without redraws, and keeps native events flowing during exclusive GLES world preparation. No upstream deployment workflows were enabled."
+  },
+  "aurora_upstream_merge": {
+    "date": "2026-11-08",
+    "source": "nightly-2026-11-07",
+    "commit": "6560641ba51a452f6bc2407baa4eb1b3be517ca8",
+    "commit_counts": "Reachable commits (git rev-list --count); earlier entries used another count",
+    "not_carried_over": [
+      "Android tiler split-solid terrain on Vulkan",
+      "GLES panorama reduction",
+      "Nether fog culling"
+    ],
+    "device_validated": false
   }
 }

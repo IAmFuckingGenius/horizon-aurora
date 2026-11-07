@@ -85,10 +85,12 @@
 //! behaviours.falling_block_landed(&mut level, &mut ticks, landing_pos, carried_state, false);
 //! ```
 use crate::{
+    dimension_type::DimensionFacts,
     fluid::{FluidBlockBindings, FluidKind, FluidState},
     registry::{BlockRegistry, BlockStateId},
 };
 use horizon_core::{
+    LevelKey,
     geometry::{Aabb, Direction, VoxelShape},
     position::{BlockPos, ChunkPos},
     random::LegacyRandom,
@@ -115,6 +117,7 @@ mod portal;
 pub mod portal_travel;
 mod query;
 pub(crate) use query::data_2d;
+pub mod orientation;
 mod rails;
 mod redstone;
 pub mod removal;
@@ -171,6 +174,35 @@ pub enum Dimension {
     Overworld,
     Nether,
     End,
+}
+
+impl Dimension {
+    /// The level key of this dimension.
+    pub fn key(self) -> LevelKey {
+        match self {
+            Self::Overworld => LevelKey::OVERWORLD,
+            Self::Nether => LevelKey::NETHER,
+            Self::End => LevelKey::END,
+        }
+    }
+
+    /// The dimension of a level key; custom levels map to the Overworld.
+    pub fn of_level(key: LevelKey) -> Self {
+        match key {
+            LevelKey::NETHER => Self::Nether,
+            LevelKey::END => Self::End,
+            _ => Self::Overworld,
+        }
+    }
+}
+
+/// The sea level of a built-in level (a custom level gets the Overworld's).
+pub fn vanilla_sea_level(level: LevelKey) -> i32 {
+    match level {
+        LevelKey::NETHER => 32,
+        LevelKey::END => 0,
+        _ => 63,
+    }
 }
 
 /// Game rules consulted by block behaviour (vanilla defaults).
@@ -234,6 +266,10 @@ pub enum LevelEvent {
         volume: f32,
         pitch: f32,
     },
+    /// A placed template's container whose data has a `LootTable`
+    /// (`RandomizableContainer.tryLoadLootTable`): the caller keeps the table
+    /// and rolls it, as for a container a command gives one.
+    ContainerLootTable { pos: BlockPos, tag: crate::nbt::Tag },
     /// `Block.dropResources(state, level, pos)`: the caller evaluates the
     /// block's loot table (no tool, no breaker) and pops the items.
     DropResources { pos: BlockPos, state: BlockStateId },
@@ -317,10 +353,67 @@ pub enum Spread {
 
 /// The world as seen by block behaviour. Implemented by the game and tests.
 pub trait LevelAccess {
+    /// Whether a hopper may pick up this dropped item stack. The default allows.
+    fn allow_hopper_pickup_item(&self, _pos: BlockPos, _item: &str, _count: u32) -> bool {
+        true
+    }
     /// Whether `kind` may spread from `from` to `to`: a native mod may refuse
     /// (land claims), and the block at `to` stays as it is. Fire asks after
     /// its random draws, which a refusal doesn't change. The default allows.
     fn allow_spread(&self, _kind: Spread, _from: BlockPos, _to: BlockPos) -> bool {
+        true
+    }
+    fn allow_fluid_level_change(
+        &self,
+        _pos: BlockPos,
+        _fluid: &'static str,
+        _from: i32,
+        _to: i32,
+    ) -> bool {
+        true
+    }
+    fn allow_block_ignite(&self, _pos: BlockPos, _cause: &'static str) -> bool {
+        true
+    }
+    fn allow_block_burn(&self, _pos: BlockPos) -> bool {
+        true
+    }
+    fn allow_leaves_decay(&self, _pos: BlockPos) -> bool {
+        true
+    }
+    fn allow_moisture_change(&self, _pos: BlockPos, _from: i32, _to: i32) -> bool {
+        true
+    }
+    fn observe_sponge_absorb(&self, _pos: BlockPos) {}
+    fn allow_block_fade(&self, _pos: BlockPos, _from: BlockStateId, _to: BlockStateId) -> bool {
+        true
+    }
+    fn allow_block_form(&self, _pos: BlockPos, _from: BlockStateId, _to: BlockStateId) -> bool {
+        true
+    }
+    /// Returns the new note, or None to cancel tuning.
+    fn note_block_change(
+        &self,
+        _pos: BlockPos,
+        _instrument: &str,
+        _old: i32,
+        new: i32,
+    ) -> Option<i32> {
+        Some(new)
+    }
+    fn allow_note_play(&self, _pos: BlockPos, _instrument: &str, _note: i32) -> bool {
+        true
+    }
+    fn allow_bell_ring(&self, _pos: BlockPos) -> bool {
+        true
+    }
+    fn allow_cauldron_level_change(
+        &self,
+        _pos: BlockPos,
+        _from: i32,
+        _to: i32,
+        _reason: &'static str,
+    ) -> bool {
         true
     }
     /// Whether the piston at `piston` may push the blocks `push` one step
@@ -348,6 +441,11 @@ pub trait LevelAccess {
         _moved: bool,
     ) {
     }
+    /// Bukkit's `BlockRedstoneEvent`: the button, lever or pressure plate at `pos` is about
+    /// to change its signal from `old` to `new` (0 to 15). The level may change `new`; the
+    /// component then takes that signal (one equal to `old` keeps it as it is). The
+    /// default leaves it.
+    fn redstone_change(&self, _pos: BlockPos, _old: i32, _new: &mut i32) {}
     /// `BlockState.randomTick` from `ServerLevel.tickChunk`, before the block
     /// handles it. The level may change the block (`Behaviours::set_block`
     /// with `ticks`); setting `handled` skips the block's own random tick. A
@@ -468,6 +566,17 @@ pub trait LevelAccess {
     fn is_client_side(&self) -> bool {
         false
     }
+    /// `FireBlock`'s flammability table for `state`'s block, before the
+    /// table answers it: `(igniteOdds, burnOdds)`, as `FireBlock.setFlammable`
+    /// sets them. Fire spread, burning out and where fire can stand read it;
+    /// a waterlogged state never burns and isn't asked. An answer put in
+    /// `odds` is the result. The default does nothing.
+    fn before_fire_odds(&self, _state: BlockStateId, _odds: &mut Option<(i32, i32)>) {}
+    /// `CampfireBlock.isSmokeSource(state)` for the block under a campfire,
+    /// before vanilla's rule (a hay bale) answers it: true makes the campfire
+    /// a signal fire. An answer put in `smoke` is the result. The default
+    /// does nothing.
+    fn before_smoke_source(&self, _state: BlockStateId, _smoke: &mut Option<bool>) {}
     /// `getBlockState`. Unloaded or out-of-bounds positions read as air.
     fn block_state(&self, pos: BlockPos) -> BlockStateId;
     /// Storage write (`LevelChunkSection.setBlockState`). Returns the previous
@@ -486,6 +595,10 @@ pub trait LevelAccess {
     /// heightmaps start there. The default, `max_y`, scans the whole column.
     fn world_surface(&self, _x: i32, _z: i32) -> i32 {
         self.max_y()
+    }
+    /// Whether the world's enabled features contain `minecraft:redstone_experiments`.
+    fn redstone_experiments(&self) -> bool {
+        false
     }
     /// Vanilla `level.random` (a `LegacyRandomSource`).
     fn random(&mut self) -> &mut LegacyRandom;
@@ -515,6 +628,14 @@ pub trait LevelAccess {
     }
     fn dimension(&self) -> Dimension {
         Dimension::Overworld
+    }
+    /// The level's key.
+    fn level_key(&self) -> LevelKey {
+        self.dimension().key()
+    }
+    /// The level's dimension type.
+    fn dimension_type(&self) -> &DimensionFacts {
+        DimensionFacts::of_builtin_level(self.level_key())
     }
     fn game_rules(&self) -> GameRules {
         GameRules::default()
@@ -558,6 +679,12 @@ pub trait LevelAccess {
     /// block entity at `pos`: recounts its openers and returns the previous
     /// and new counts (the caller plays open/close effects when they change),
     /// or None when there is no such block entity.
+    /// `ContainerOpenersCounter.getEntitiesWithContainerOpen` is not empty for
+    /// the container at `pos`: someone has it open (a double chest's menu
+    /// counts for both halves).
+    fn container_open(&self, _pos: BlockPos) -> bool {
+        false
+    }
     fn recheck_container_openers(&mut self, _pos: BlockPos) -> Option<(i32, i32)> {
         None
     }
@@ -648,6 +775,18 @@ pub trait LevelAccess {
     ) -> u8 {
         0
     }
+    /// Whether a block entity a mod made lives at `pos` (`native_block_entity`),
+    /// whatever its block's template: it is removed with its block and no piston
+    /// moves it, as for a template that has one.
+    fn has_mod_block_entity(&self, _pos: BlockPos) -> bool {
+        false
+    }
+    /// `ShulkerBoxBlockEntity.isClosed` at `pos`: whether the box's lid is
+    /// still shut. None when no shulker box block entity lives there, or the
+    /// level keeps none: vanilla then reads the box as closed, a full cube.
+    fn shulker_is_closed(&self, _pos: BlockPos) -> Option<bool> {
+        None
+    }
     /// Load saved block-entity data into the block entity of the block just
     /// placed at `pos` (`BlockEntity.loadWithComponents`): a bee nest a grown
     /// tree placed gets its bees. Levels without block entities drop it.
@@ -728,9 +867,10 @@ impl Behaviours {
         data::load_with_behaviour_json(registry, resources_dir, behaviour)
     }
 
-    /// Keep a snapshot of the resolved tables in `dir` (a game folder's
-    /// `.horizon-cache`), so later launches of the same build restore it instead
-    /// of resolving the resources again. Without it, [`Self::load`] never caches.
+    /// Keep snapshots of the resolved tables and the block-state registry in
+    /// `dir` (a game folder's `.horizon-cache`), so later launches of the same
+    /// build restore them instead of resolving the resources again. Without
+    /// it, [`Self::load`] and `data::load_registry` never cache.
     pub fn set_cache_dir(dir: std::path::PathBuf) {
         data::set_cache_dir(dir);
     }
@@ -967,6 +1107,38 @@ impl Behaviours {
     ) {
         self.sim(level, ticks).update_neighbors_at(pos, block);
     }
+    /// `LecternBlock.updateBelow` after a page or book changes.
+    pub fn lectern_update_below<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+        state: BlockStateId,
+    ) {
+        self.sim(level, ticks).lectern_update_below(pos, state);
+    }
+    /// `TrappedChestBlockEntity.signalOpenCount` after its opener count changes.
+    pub fn trapped_chest_update_neighbors<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+        state: BlockStateId,
+    ) {
+        self.sim(level, ticks)
+            .trapped_chest_update_neighbors(pos, state);
+    }
+    /// `LightningRodBlock.updateNeighbours` after a strike.
+    pub fn lightning_rod_update_neighbors<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+        state: BlockStateId,
+    ) {
+        self.sim(level, ticks)
+            .lightning_rod_update_neighbors(pos, state);
+    }
     /// `Level.updateNeighbourForOutputSignal(pos, block)` for the block at
     /// `pos`: comparators beside it (or behind a conductor there) read their
     /// input again.
@@ -1016,6 +1188,16 @@ impl Behaviours {
     ) {
         self.sim(level, ticks).entity_inside(pos);
     }
+    /// Whether [`Self::entity_inside`] may do anything at a block of `state`:
+    /// the entity-sensing blocks' classes it looks for. At any other block it
+    /// only reads the state.
+    pub fn senses_entities(&self, state: BlockStateId) -> bool {
+        let data = self.data(state);
+        data.is(classes::Class::BasePressurePlate)
+            || data.is(classes::Class::DetectorRail)
+            || data.is(classes::Class::Button)
+            || data.is(classes::Class::TripWire)
+    }
     /// `LilyPadBlock.entityInside` for a boat whose box is inside `pos`.
     pub fn boat_inside<L: LevelAccess + ?Sized>(
         &self,
@@ -1034,7 +1216,7 @@ impl Behaviours {
         ticks: &mut Ticks,
         pos: BlockPos,
     ) {
-        if level.dimension() == Dimension::Nether || level.game_time() % 20 != 0 {
+        if !level.dimension_type().height.has_skylight || level.game_time() % 20 != 0 {
             return;
         }
         let mut sim = self.sim(level, ticks);
@@ -1055,6 +1237,16 @@ impl Behaviours {
     ) {
         self.sim(level, ticks)
             .big_dripleaf_entity_inside(pos, on_ground, feet_y);
+    }
+    /// `BigDripleafBlock.onProjectileHit`: true when a projectile hit a leaf.
+    /// Unlike entityInside, this tilts powered leaves too.
+    pub fn big_dripleaf_projectile_hit<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+    ) -> bool {
+        self.sim(level, ticks).big_dripleaf_projectile_hit(pos)
     }
     /// `BellBlock.onProjectileHit` for a projectile that hit `face` of the
     /// block at `pos` at height `hit_y`. False when the block is not a bell
@@ -1145,5 +1337,26 @@ impl Behaviours {
             ticks,
             wire_signal_off: std::cell::Cell::new(false),
         }
+    }
+}
+
+#[cfg(test)]
+mod dimension_key_tests {
+    use super::*;
+
+    #[test]
+    fn dimension_and_key_round_trip_and_sea_levels() {
+        for (dim, key, sea) in [
+            (Dimension::Overworld, LevelKey::OVERWORLD, 63),
+            (Dimension::Nether, LevelKey::NETHER, 32),
+            (Dimension::End, LevelKey::END, 0),
+        ] {
+            assert_eq!(dim.key(), key);
+            assert_eq!(Dimension::of_level(key), dim);
+            assert_eq!(vanilla_sea_level(key), sea);
+        }
+        let custom = LevelKey::parse("example:sky").unwrap();
+        assert_eq!(Dimension::of_level(custom), Dimension::Overworld);
+        assert_eq!(vanilla_sea_level(custom), 63);
     }
 }

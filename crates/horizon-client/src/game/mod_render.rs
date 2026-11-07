@@ -2,6 +2,9 @@
 //! drawn by the game's own HUD renderer, and their camera shakes. Mods
 //! never supply shader code. With no mod drawing, each hook here returns
 //! after one check.
+// Aurora: the WebAssembly mod runtime (`mods`) is off, as in Horizon; without it what is left here
+// is unused.
+#![cfg_attr(not(feature = "mods"), allow(dead_code))]
 use super::Game;
 use horizon_client::hud::HudBatch;
 #[cfg(feature = "mods")]

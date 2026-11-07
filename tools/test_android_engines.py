@@ -67,7 +67,7 @@ edition = "2024"
 [workspace]
 [dependencies]
 horizon-boot = {{ path = "{boot}" }}
-zip = {{ version = "={locked(lock, 'zip', '2.')}", default-features = false, features = ["deflate"] }}
+zip = {{ version = "={locked(lock, 'zip', '9.')}", default-features = false, features = ["deflate"] }}
 sha2 = "={locked(lock, 'sha2', '0.10')}"
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"

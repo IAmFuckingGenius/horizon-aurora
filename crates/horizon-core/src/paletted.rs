@@ -248,7 +248,17 @@ impl PalettedContainer {
     pub fn bits(&self) -> u8 {
         self.bits
     }
+    /// What the stored ids stand for — the values of the list palette, `None`
+    /// for a single value (`uniform()`) and for the global palette, whose
+    /// stored ids are the values.
+    pub fn palette(&self) -> Option<&[u32]> {
+        match &self.palette {
+            Palette::List(list) => Some(list),
+            _ => None,
+        }
+    }
     /// Entries in the palette (the global palette reports its bit capacity).
+    #[inline]
     pub fn palette_len(&self) -> usize {
         match &self.palette {
             Palette::Single(_) => 1,
@@ -256,6 +266,7 @@ impl PalettedContainer {
             Palette::Global => 1 << self.bits.min(31),
         }
     }
+    #[inline]
     pub fn is_global(&self) -> bool {
         matches!(self.palette, Palette::Global)
     }
@@ -272,6 +283,46 @@ impl PalettedContainer {
             Palette::Global => self.raw(i) as u32,
         }
     }
+    /// `get` of the entries `start..start + out.len()`, the palette matched once.
+    #[inline]
+    pub fn get_run(&self, start: usize, out: &mut [u32]) {
+        if out.len() == 2 && !matches!(self.palette, Palette::Single(_)) {
+            let bits = usize::from(self.bits);
+            let per = 64 / bits;
+            let slot = start % per;
+            if slot + 1 < per {
+                let word = self.words[start / per] >> (slot * bits);
+                let mask = mask(self.bits);
+                let a = (word & mask) as usize;
+                let b = ((word >> bits) & mask) as usize;
+                match &self.palette {
+                    Palette::List(list) => {
+                        out[0] = list[a];
+                        out[1] = list[b];
+                    }
+                    Palette::Global => {
+                        out[0] = a as u32;
+                        out[1] = b as u32;
+                    }
+                    Palette::Single(_) => unreachable!(),
+                }
+                return;
+            }
+        }
+        match &self.palette {
+            Palette::Single(value) => out.fill(*value),
+            Palette::List(list) => {
+                for (k, cell) in out.iter_mut().enumerate() {
+                    *cell = list[self.raw(start + k)];
+                }
+            }
+            Palette::Global => {
+                for (k, cell) in out.iter_mut().enumerate() {
+                    *cell = self.raw(start + k) as u32;
+                }
+            }
+        }
+    }
     /// The value when every entry is equal, without the palette having to be
     /// minimal.
     pub fn uniform(&self) -> Option<u32> {
@@ -284,6 +335,12 @@ impl PalettedContainer {
                 self.all_equal(first).then_some(first)
             }
         }
+    }
+    /// Whether `other` is stored the same way (bits, palette and words): then
+    /// it holds the same values, found without unpacking either. (Containers
+    /// stored differently can still hold the same values.)
+    pub fn same_storage(&self, other: &Self) -> bool {
+        self.bits == other.bits && self.palette == other.palette && self.words == other.words
     }
     /// Whether all entries equal `value`.
     pub fn is_uniform(&self, value: u32) -> bool {
@@ -436,6 +493,36 @@ impl PalettedContainer {
                         *cell = ((word >> (slot * bits)) & m) as u32;
                     }
                 }
+            }
+        }
+    }
+    /// The stored ids through `map`: `out[i] = map[id of entry i]`, in index
+    /// order, the id being a palette id for a list palette and the value
+    /// itself for the global one (see `palette`). A single-value palette
+    /// stores no ids: `out` is left as it is.
+    pub fn unpack_ids_mapped<T: Copy>(&self, out: &mut [T], map: &[T]) {
+        assert_eq!(out.len(), self.strategy.entries());
+        // Four bits a linear palette's usual width: a whole word of them is a
+        // row of 16, and immediate shifts for the compiler to unroll.
+        if self.bits == 4 {
+            for (row, &word) in out.as_chunks_mut::<16>().0.iter_mut().zip(&self.words) {
+                for (x, cell) in row.iter_mut().enumerate() {
+                    *cell = map[((word >> (x * 4)) & 0xF) as usize];
+                }
+            }
+            return;
+        }
+        if self.bits == 0 {
+            return;
+        }
+        let bits = usize::from(self.bits);
+        let per = 64 / bits;
+        let m = mask(self.bits);
+        for (chunk, &word) in out.chunks_mut(per).zip(&self.words) {
+            let mut shift = 0;
+            for cell in chunk {
+                *cell = map[((word >> shift) & m) as usize];
+                shift += bits;
             }
         }
     }
@@ -700,10 +787,23 @@ impl PalettedContainer {
     }
 }
 impl PartialEq for PalettedContainer {
-    /// Equal when every entry is.
+    /// Equal when every entry is. The same width, palette and words are the
+    /// same entries, whatever they are: compared without reading each.
     fn eq(&self, other: &Self) -> bool {
         let entries = self.strategy.entries();
-        entries == other.strategy.entries() && (0..entries).all(|i| self.get(i) == other.get(i))
+        if entries != other.strategy.entries() {
+            return false;
+        }
+        let same_palette = match (&self.palette, &other.palette) {
+            (Palette::Single(a), Palette::Single(b)) => a == b,
+            (Palette::List(a), Palette::List(b)) => a == b,
+            (Palette::Global, Palette::Global) => true,
+            _ => false,
+        };
+        if same_palette && self.bits == other.bits && self.words == other.words {
+            return true;
+        }
+        (0..entries).all(|i| self.get(i) == other.get(i))
     }
 }
 
@@ -728,6 +828,55 @@ mod tests {
         *state ^= *state >> 7;
         *state ^= *state << 17;
         *state
+    }
+    #[test]
+    fn runs_read_the_stored_values() {
+        let mut state = 0x9E37_79B9_7F4A_7C15;
+        // One value, a list palette, and the global palette.
+        for distinct in [1u64, 5, 3000] {
+            let values: Vec<u32> = (0..4096)
+                .map(|_| (rng(&mut state) % distinct) as u32)
+                .collect();
+            let container = PalettedContainer::from_values(BLOCKS, &values);
+            for start in 0..4095 {
+                let mut pair = [u32::MAX; 2];
+                container.get_run(start, &mut pair);
+                assert_eq!(pair, values[start..start + 2]);
+            }
+            for _ in 0..200 {
+                let start = (rng(&mut state) % 4096) as usize;
+                let len = (rng(&mut state) % 20) as usize;
+                let len = len.min(4096 - start);
+                let mut run = vec![u32::MAX; len];
+                container.get_run(start, &mut run);
+                assert_eq!(
+                    run,
+                    values[start..start + len],
+                    "{distinct} values, {start}+{len}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn containers_stored_alike_are_the_same() {
+        let values: Vec<u32> = (0..4096).map(|i| (i % 7) as u32).collect();
+        let a = PalettedContainer::from_values(BLOCKS, &values);
+        assert!(a.same_storage(&a.clone()));
+        let mut b = a.clone();
+        b.set(100, 3);
+        assert!(!a.same_storage(&b));
+        // the same values stored another way are not found alike (the caller unpacks those)
+        let mut c = PalettedContainer::new(BLOCKS, 0);
+        for (i, &v) in values.iter().enumerate() {
+            c.set(i, v);
+        }
+        assert!(PalettedContainer::new(BLOCKS, 5).same_storage(&PalettedContainer::new(BLOCKS, 5)));
+        assert!(
+            !PalettedContainer::new(BLOCKS, 5).same_storage(&PalettedContainer::new(BLOCKS, 6))
+        );
+        let mut out = vec![0; 4096];
+        c.unpack(&mut out);
+        assert_eq!(out, values);
     }
     #[test]
     fn grows_through_vanilla_widths() {
@@ -1124,8 +1273,8 @@ mod tests {
             let y = i >> 8;
             let r = rng(&mut state);
             terrain.push(match y {
-                0..=8 if r % 40 == 0 => 2000 + (r >> 8) as u32 % 6,
-                0..=8 if r % 13 == 0 => 0,
+                0..=8 if r.is_multiple_of(40) => 2000 + (r >> 8) as u32 % 6,
+                0..=8 if r.is_multiple_of(13) => 0,
                 0..=8 => 1,
                 9..=10 => 10,
                 11 => 9,

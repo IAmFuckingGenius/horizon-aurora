@@ -146,10 +146,9 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
                     .link
                     .is_some_and(|fruit| b.is_block(nstate, fruit))
                     && dir == b.facing(state)
+                    && let Some(stem) = b.data(state).link2
                 {
-                    if let Some(stem) = b.data(state).link2 {
-                        return Some(table.set_int(b.default_of(stem), p.age, 7));
-                    }
+                    return Some(table.set_int(b.default_of(stem), p.age, 7));
                 }
                 sup!()
             }
@@ -283,12 +282,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             Class::Campfire => {
                 self.waterlogged_tick(state, pos);
                 if dir == Direction::Down {
-                    let hay = table.block_by_name("minecraft:hay_block");
-                    table.set_bool(
-                        state,
-                        p.signal_fire,
-                        hay.is_some_and(|hay| b.is_block(nstate, hay)),
-                    )
+                    table.set_bool(state, p.signal_fire, self.is_smoke_source(nstate))
                 } else {
                     sup!()
                 }

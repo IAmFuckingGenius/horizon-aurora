@@ -25,6 +25,7 @@ serde_json = "1"
 png = "0.18"
 sha2 = "0.10"
 getrandom = "0.3"
+chacha20poly1305 = "0.10"
 ureq = { version = "2", features = ["json"] }
 url = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -45,6 +46,9 @@ mod backend {
     pub fn data_dir() -> std::path::PathBuf {
         std::env::temp_dir().join("horizon-appearance-harness")
     }
+}
+mod i18n {
+    pub fn tr(en: &str) -> &str { en }
 }
 mod proxy {
     pub fn agent(builder: ureq::AgentBuilder, _: &str) -> ureq::AgentBuilder { builder }

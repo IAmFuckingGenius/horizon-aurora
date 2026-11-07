@@ -28,8 +28,9 @@ fn failure(env: &mut JNIEnv<'_>, message: &str) {
     let _ = env.throw_new("java/io/FileNotFoundException", message);
 }
 
-#[unsafe(no_mangle)]
-extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeCall(
+/// The provider's `nativeCall`; `crates/horizon-android` exports it under the JNI name.
+#[allow(non_snake_case)]
+pub extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeCall(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     home: JString<'_>,
@@ -61,8 +62,9 @@ extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeCall(
     }
 }
 
-#[unsafe(no_mangle)]
-extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeOpen(
+/// The provider's `nativeOpen`; `crates/horizon-android` exports it under the JNI name.
+#[allow(non_snake_case)]
+pub extern "system" fn Java_dev_horizon_android_HorizonDocumentsProvider_nativeOpen(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     home: JString<'_>,

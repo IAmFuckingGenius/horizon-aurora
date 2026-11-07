@@ -47,6 +47,10 @@ const CHUNK: usize = 4096;
 const LOGIN_WITHIN: Duration = Duration::from_secs(30);
 /// The connections open at once.
 const MAX_CLIENTS: usize = 16;
+/// How long a refused login waits before its connection closes: one guess per connection, and a
+/// connection's place stays taken meanwhile, so the most connections at once also bound how fast
+/// passwords can be tried.
+const REFUSED_PAUSE: Duration = Duration::from_secs(1);
 
 struct Settings {
     host: String,
@@ -126,6 +130,7 @@ pub fn start(shared: Arc<Shared>) -> Result<Option<SocketAddr>, String> {
         Limits {
             clients: MAX_CLIENTS,
             login: LOGIN_WITHIN,
+            refused: REFUSED_PAUSE,
         },
         move |line| run_on_game(&game, line),
         move |message| note(&log, "WARN", message),
@@ -133,6 +138,12 @@ pub fn start(shared: Arc<Shared>) -> Result<Option<SocketAddr>, String> {
     .map_err(|e| format!("RCON: {e}"))?;
     note(&shared, "INFO", &format!("RCON running on {host}:{port}"));
     Ok(Some(address))
+}
+
+/// The control request that runs `line` as an RCON command: the console's, with the `Rcon` source
+/// (`RconConsoleSource`), so the operators hear of it when `broadcast-rcon-to-ops` is on.
+fn control_request(line: &str) -> String {
+    format!("rcon {}", line.trim_start_matches('/'))
 }
 
 /// What the game's console printed for `line`, or why it couldn't run it. The lines are joined as they are in
@@ -148,7 +159,7 @@ fn run_on_game(shared: &Shared, line: &str) -> Result<String, String> {
         return Err("the game isn't running right now".into());
     }
     let reply = engine::Control::connect(&shared.dir)
-        .and_then(|mut game| game.ask(&format!("console {}", line.trim_start_matches('/'))))
+        .and_then(|mut game| game.ask(&control_request(line)))
         .map_err(|e| format!("the game didn't answer: {e}"))?;
     if let Some(error) = reply["error"].as_str() {
         return Err(error.to_owned());
@@ -166,6 +177,8 @@ struct Limits {
     clients: usize,
     /// How long a connection may take to log in.
     login: Duration,
+    /// How long a refused login waits before its connection closes.
+    refused: Duration,
 }
 
 /// Frees a connection's place when its thread ends.
@@ -195,7 +208,7 @@ fn serve(
             }
             let place = Place(open.clone());
             let (password, run, warn) = (password.clone(), run.clone(), warn.clone());
-            let login = limits.login;
+            let (login, refused) = (limits.login, limits.refused);
             let _ = thread::Builder::new()
                 .name("rcon-client".into())
                 .spawn(move || {
@@ -206,7 +219,7 @@ fn serve(
                         .peer_addr()
                         .map_or_else(|_| "?".into(), |a| a.ip().to_string());
                     // The client going away, or sending what isn't RCON, ends its connection.
-                    let _ = client(&mut stream, &password, login, &*run, &|why| {
+                    let _ = client(&mut stream, &password, login, refused, &*run, &|why| {
                         warn(&format!("RCON {why} from {from}"));
                     });
                 });
@@ -216,10 +229,14 @@ fn serve(
 }
 
 /// One connection: login and commands until the client leaves, or sends what vanilla would close on.
+/// A refused login ends it (after `refused`): vanilla keeps the connection open for another guess,
+/// which made thousands of guesses a second possible with a few connections; standard RCON clients
+/// connect again after a refusal.
 fn client(
     stream: &mut TcpStream,
     password: &str,
     login: Duration,
+    refused: Duration,
     run: &dyn Fn(&str) -> Result<String, String>,
     warn: &dyn Fn(&str),
 ) -> io::Result<()> {
@@ -239,6 +256,9 @@ fn client(
                 } else {
                     warn("login refused");
                     send(stream, AUTH_FAILURE, AUTH_RESPONSE, "")?;
+                    // One guess per connection: another costs a new connection and its place.
+                    thread::sleep(refused);
+                    return Ok(());
                 }
             }
             EXEC if authed => {
@@ -348,6 +368,12 @@ fn send_output(stream: &mut TcpStream, id: i32, output: &str) -> io::Result<()> 
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_command_goes_to_the_game_as_an_rcon_one_without_its_slash() {
+        assert_eq!(control_request("/say hi"), "rcon say hi");
+        assert_eq!(control_request("time set day"), "rcon time set day");
+    }
+
     /// A reply: its request id, type and payload.
     fn reply(stream: &mut TcpStream) -> (i32, i32, String) {
         let mut length = [0; 4];
@@ -382,11 +408,23 @@ mod tests {
         (address, warned)
     }
 
+    /// The test pause after a refused login.
+    const PAUSE: Duration = Duration::from_millis(200);
+
     fn limits() -> Limits {
         Limits {
             clients: MAX_CLIENTS,
             login: LOGIN_WITHIN,
+            refused: PAUSE,
         }
+    }
+
+    /// Whether the server closed `stream` (reads end), and how long that took.
+    fn closed(stream: &mut TcpStream) -> (bool, Duration) {
+        let start = Instant::now();
+        let mut byte = [0; 1];
+        let ended = matches!(stream.read(&mut byte), Ok(0));
+        (ended, start.elapsed())
     }
 
     fn connect(address: SocketAddr) -> TcpStream {
@@ -415,22 +453,27 @@ mod tests {
     fn a_session_logs_in_and_runs_commands() {
         let (address, warned) = server(limits());
         let mut rcon = connect(address);
-        // A command before the login, and a wrong password: refused, and the connection stays open.
+        // A command before the login: refused, and the connection stays open.
         rcon.write_all(&encode(1, EXEC, "list")).unwrap();
         assert_eq!(
             reply(&mut rcon),
             (AUTH_FAILURE, AUTH_RESPONSE, String::new())
         );
-        rcon.write_all(&encode(2, AUTH, "hunter3")).unwrap();
-        assert_eq!(
-            reply(&mut rcon),
-            (AUTH_FAILURE, AUTH_RESPONSE, String::new())
-        );
-        rcon.write_all(&encode(3, AUTH, "")).unwrap();
-        assert_eq!(
-            reply(&mut rcon),
-            (AUTH_FAILURE, AUTH_RESPONSE, String::new())
-        );
+        // A wrong password, or an empty one: refused, and that connection closes after the pause.
+        for password in ["hunter3", ""] {
+            rcon.write_all(&encode(2, AUTH, password)).unwrap();
+            assert_eq!(
+                reply(&mut rcon),
+                (AUTH_FAILURE, AUTH_RESPONSE, String::new())
+            );
+            let (ended, after) = closed(&mut rcon);
+            assert!(ended, "a refused login ends its connection");
+            assert!(
+                after >= PAUSE / 2,
+                "closed after the pause, not at once: {after:?}"
+            );
+            rcon = connect(address);
+        }
         rcon.write_all(&encode(4, AUTH, "hunter2")).unwrap();
         assert_eq!(reply(&mut rcon), (4, AUTH_RESPONSE, String::new()));
         rcon.write_all(&encode(5, EXEC, "say hi")).unwrap();
@@ -448,11 +491,10 @@ mod tests {
             reply(&mut rcon),
             (8, RESPONSE, "Unknown request fffffffe".into())
         );
-        // A login that fails takes the login back.
+        // A login that fails takes the login back, and ends the connection.
         rcon.write_all(&encode(9, AUTH, "nope")).unwrap();
         assert_eq!(reply(&mut rcon).0, AUTH_FAILURE);
-        rcon.write_all(&encode(10, EXEC, "list")).unwrap();
-        assert_eq!(reply(&mut rcon).0, AUTH_FAILURE);
+        assert!(closed(&mut rcon).0);
         assert_eq!(
             warned.lock().unwrap().len(),
             3,
@@ -524,6 +566,7 @@ mod tests {
         let (address, _) = server(Limits {
             clients: 1,
             login: Duration::from_secs(1),
+            refused: PAUSE,
         });
         let mut idle = connect(address);
         // The only place is taken: the next connection is closed at once.
@@ -593,7 +636,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The game's control endpoint, as far as `console` goes: it answers `say hi` and fails on `fail`.
+    /// The game's control endpoint, as far as `rcon` goes: it answers `say hi` and fails on `fail`.
     fn game(dir: &Path) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -609,7 +652,7 @@ mod tests {
                 while let Some(Ok(line)) = lines.next() {
                     let answer = match line.as_str() {
                         "auth t" => "{\"ok\":true}",
-                        "console say hi" => "{\"output\":[\"[Server] \",\"hi\"]}",
+                        "rcon say hi" => "{\"output\":[\"[Server] \",\"hi\"]}",
                         _ => "{\"error\":\"unknown request\"}",
                     };
                     let _ = writeln!(stream, "{answer}");
@@ -619,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn a_command_goes_to_the_game_as_cmd_sends_it() {
+    fn a_command_goes_to_the_game_as_an_rcon_request_that_says_what_the_console_says() {
         let dir = scratch("game");
         game(&dir);
         let shared = Shared::with_install(&dir, None);
