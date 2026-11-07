@@ -19,7 +19,14 @@ use std::{
     },
 };
 
-/// Activity request codes; `HorizonActivity` forwards 4101 to 4103.
+#[path = "horizon_folders.rs"]
+mod horizon_folders;
+#[path = "horizon_import.rs"]
+mod horizon_import;
+
+/// Activity request codes; `HorizonActivity` forwards 4101 to 4103. The engine and
+/// Horizon Android imports reuse IMPORT_WORLD (the pending transfer says which), so
+/// the APK's Java side, and with it its shell level, stays as it is.
 pub const IMPORT_WORLD: i32 = 4102;
 pub const EXPORT: i32 = 4103;
 /// What file managers call a ZIP. A world ZIP from a browser or a PC can carry
@@ -70,6 +77,8 @@ pub enum Job {
     ImportWorld,
     SaveFile,
     ImportEngine,
+    /// Worlds, packs, mods and settings from Horizon Android or Starling.
+    ImportHorizon,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
@@ -111,6 +120,11 @@ enum Pending {
     },
     File {
         path: PathBuf,
+    },
+    /// Horizon Android's folder, into a new instance with the settings of `from`.
+    Horizon {
+        home: PathBuf,
+        from: u32,
     },
 }
 struct State {
@@ -180,6 +194,7 @@ pub fn export_world(dir: PathBuf, name: &str) -> Result<(), String> {
         },
         crate::native_ime::Picker {
             request: EXPORT,
+            tree: false,
             create: true,
             mimes: vec!["application/zip"],
             title,
@@ -192,8 +207,23 @@ pub fn import_world(saves: PathBuf) -> Result<(), String> {
         Pending::Import { saves },
         crate::native_ime::Picker {
             request: IMPORT_WORLD,
+            tree: false,
             create: false,
             mimes: ZIP_TYPES.to_vec(),
+            title: String::new(),
+        },
+    )
+}
+/// Asks for Horizon Android's folder (or Starling's: the same app), then copies its
+/// worlds, packs, mods and settings into a new instance (`horizon_import.rs`).
+pub fn import_horizon(home: PathBuf, from: u32) -> Result<(), String> {
+    begin(
+        Pending::Horizon { home, from },
+        crate::native_ime::Picker {
+            request: IMPORT_WORLD,
+            create: false,
+            tree: true,
+            mimes: Vec::new(),
             title: String::new(),
         },
     )
@@ -204,6 +234,7 @@ pub fn import_engine(home: PathBuf) -> Result<(), String> {
         Pending::Engine { home },
         crate::native_ime::Picker {
             request: IMPORT_WORLD,
+            tree: false,
             create: false,
             mimes: ZIP_TYPES.to_vec(),
             title: String::new(),
@@ -221,6 +252,7 @@ pub fn save_report(path: PathBuf, report: Report) -> Result<(), String> {
         Pending::File { path },
         crate::native_ime::Picker {
             request: EXPORT,
+            tree: false,
             create: true,
             mimes: vec![report.mime()],
             title,
@@ -343,7 +375,9 @@ pub fn document_result(
     let _ = env.exception_clear();
     let pending = state().pending.take();
     let matches = match &pending {
-        Some(Pending::Import { .. } | Pending::Engine { .. }) => request == IMPORT_WORLD,
+        Some(Pending::Import { .. } | Pending::Engine { .. } | Pending::Horizon { .. }) => {
+            request == IMPORT_WORLD
+        }
         Some(Pending::World { .. } | Pending::File { .. }) => request == EXPORT,
         None => false,
     };
@@ -395,6 +429,7 @@ pub fn document_result(
     let (job, name) = match &pending {
         Pending::Import { .. } => (Job::ImportWorld, String::new()),
         Pending::Engine { .. } => (Job::ImportEngine, String::new()),
+        Pending::Horizon { .. } => (Job::ImportHorizon, String::new()),
         Pending::World { name, .. } => (Job::ExportWorld, name.clone()),
         Pending::File { path } => (
             Job::SaveFile,
@@ -408,7 +443,10 @@ pub fn document_result(
     state().running = Some(Running {
         job,
         name,
-        stage: if matches!(job, Job::ImportWorld | Job::ImportEngine) {
+        stage: if matches!(
+            job,
+            Job::ImportWorld | Job::ImportEngine | Job::ImportHorizon
+        ) {
             Stage::Checking
         } else {
             Stage::Writing
@@ -491,6 +529,11 @@ fn finished(job: Job, outcome: Result<String, Failure>) {
             "Engine import cancelled",
             "Could not install the engine",
         ),
+        Job::ImportHorizon => (
+            "Moved from Horizon Android",
+            "Move cancelled",
+            "Could not move from Horizon Android",
+        ),
     };
     match outcome {
         Ok(name) => notify(
@@ -501,14 +544,19 @@ fn finished(job: Job, outcome: Result<String, Failure>) {
                     "«{}» is in Settings › Engines. Start it from there.",
                     &[&name],
                 ),
+                // The summary, already in the launcher's language.
+                Job::ImportHorizon => name,
                 _ => tf("Saved as «{}».", &[&name]),
             },
             false,
-            job == Job::ImportWorld,
+            matches!(job, Job::ImportWorld | Job::ImportHorizon),
         ),
         Err(Failure::Cancelled) => notify(
             cancelled,
-            if matches!(job, Job::ImportWorld | Job::ImportEngine) {
+            if matches!(
+                job,
+                Job::ImportWorld | Job::ImportEngine | Job::ImportHorizon
+            ) {
                 t("Nothing was added.").into()
             } else {
                 t("The unfinished file was removed.").into()
@@ -620,6 +668,10 @@ fn run(
             result
         }
         Pending::Engine { home } => import_engine_file(env, activity, uri, &home),
+        Pending::Horizon { home, from } => {
+            let (name, worlds) = horizon_import::run(env, activity, uri, &home, from)?;
+            Ok(horizon_import::summary(&name, worlds))
+        }
         Pending::World { dir, .. } => {
             let (mut output, name) = open_created(env, activity, uri, "world.zip")?;
             let result = export(&dir, &mut output);

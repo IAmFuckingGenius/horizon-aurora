@@ -2950,6 +2950,18 @@ impl Launcher {
                         ),
                         Control::Dropdown(self.profile_name(), Action::Profile),
                     ),
+                    Row::new(
+                        t("Move from Horizon Android"),
+                        t(
+                            "Copies worlds, packs, shaders, mods, settings and touch controls from Horizon Android or Starling into a new instance. In the list of places choose «Horizon Android», then Use this folder. Accounts stay there: sign in again.",
+                        ),
+                        Control::Button(
+                            Style::Secondary,
+                            "download",
+                            t("Move"),
+                            Action::ImportHorizon,
+                        ),
+                    ),
                 ],
             ),
             ("box", "Engines", self.engine_rows()),
@@ -3368,6 +3380,7 @@ impl Launcher {
                     Job::ImportWorld => t("Importing a world"),
                     Job::SaveFile => t("Saving the file"),
                     Job::ImportEngine => t("Installing an engine"),
+                    Job::ImportHorizon => t("Moving from Horizon Android"),
                 }
                 .to_owned(),
                 r.name.clone(),
@@ -3404,6 +3417,8 @@ impl Launcher {
                 (true, ..) => t("Stopping and cleaning up"),
                 (_, Stage::Receiving, Job::ImportEngine) => t("Copying the engine into Horizon"),
                 (_, _, Job::ImportEngine) => t("Checking and installing the engine"),
+                (_, Stage::Checking, Job::ImportHorizon) => t("Reading Horizon Android's folders"),
+                (_, _, Job::ImportHorizon) => t("Copying worlds, packs and settings"),
                 (_, Stage::Receiving, _) => t("Copying the ZIP into Horizon"),
                 (_, Stage::Checking, _) => t("Checking the ZIP"),
                 (_, Stage::Writing, Job::ExportWorld) => t("Packing the world into a ZIP"),

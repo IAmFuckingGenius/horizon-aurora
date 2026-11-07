@@ -39,11 +39,14 @@ enum Command {
     Screen(bool, bool, bool),
 }
 /// One Storage Access Framework request: ACTION_CREATE_DOCUMENT with a suggested
-/// `title`, or ACTION_OPEN_DOCUMENT for any of `mimes`. Its result comes back
-/// through `HorizonActivity.onActivityResult` with `request`.
+/// `title`, ACTION_OPEN_DOCUMENT for any of `mimes`, or ACTION_OPEN_DOCUMENT_TREE
+/// for a folder (`tree`). Its result comes back through
+/// `HorizonActivity.onActivityResult` with `request`.
 pub struct Picker {
     pub request: i32,
     pub create: bool,
+    /// A folder rather than a file: `mimes` and `title` are not used.
+    pub tree: bool,
     /// The created document's type, or the types an open accepts.
     pub mimes: Vec<&'static str>,
     pub title: String,
@@ -656,6 +659,28 @@ impl Ui {
         activity: &GlobalRef,
         picker: Picker,
     ) -> jni::errors::Result<()> {
+        if picker.tree {
+            let action = JObject::from(env.new_string("android.intent.action.OPEN_DOCUMENT_TREE")?);
+            let intent = env.new_object(
+                "android/content/Intent",
+                "(Ljava/lang/String;)V",
+                &[JValue::Object(&action)],
+            )?;
+            // FLAG_GRANT_READ_URI_PERMISSION: the folder is only read.
+            env.call_method(
+                &intent,
+                "addFlags",
+                "(I)Landroid/content/Intent;",
+                &[JValue::Int(1)],
+            )?;
+            env.call_method(
+                activity,
+                "startActivityForResult",
+                "(Landroid/content/Intent;I)V",
+                &[JValue::Object(&intent), JValue::Int(picker.request)],
+            )?;
+            return Ok(());
+        }
         let action = JObject::from(env.new_string(if picker.create {
             "android.intent.action.CREATE_DOCUMENT"
         } else {

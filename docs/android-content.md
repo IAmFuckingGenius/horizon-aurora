@@ -113,6 +113,24 @@ Free space for the unpacked size is checked first. Cancel or a failure leaves no
 partial world. `python tools/test_android_worlds.py` runs the archive rules on the
 host.
 
+## Moving from Horizon Android or Starling
+
+**Settings › Account › Move from Horizon Android** brings everything over in one step
+from Horizon Android or Starling (the same app, `dev.horizon.android`, and its `.dev`
+build), which must still be installed. Android's folder picker opens; the player chooses
+**Horizon Android** in its list of places (the old app's documents provider) and **Use
+this folder**. Its worlds, resource packs, shader packs, mods and configuration files
+(`options.txt`, graphics, touch controls and keypad) are copied into a new instance named
+"Horizon Android", with the current instance's settings beneath them. One of its folders
+(Worlds, for example) can be chosen instead of the whole app.
+
+The old app is only read and nothing in Aurora is overwritten. The files to copy are
+listed and the free space checked before the instance is made; Cancel or a failure
+removes it again. The old provider refuses worlds while its game runs: close it first.
+Accounts are not shared by the old app (Android keeps them to it): sign in again.
+`horizon_folders.rs` holds which folders count, tested on the host by
+`tools/test_android_worlds.py`.
+
 For a native shader smoke test, package Horizon's included Golden Hour example:
 
 ```sh

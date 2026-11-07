@@ -39,7 +39,9 @@
 
 **[Latest release](https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest)**: one APK per architecture;
 most phones need **arm64-v8a**. On first start the app downloads Minecraft's original resources from Mojang.
-Aurora installs as its own app beside Horizon Android and Starling: move worlds over with world export and import.
+Aurora installs as its own app beside Horizon Android and Starling: **Settings › Account › Move from Horizon Android**
+copies its worlds, packs, mods and settings into a new instance (in dev builds now; in 0.7.7-aurora.1, move worlds with
+world export and import).
 Experimental builds of every change are in the [`dev` pre-release](https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev)
 ("Aurora Dev", installs beside the release). How releases are made: [docs/android-releases.md](docs/android-releases.md).
 

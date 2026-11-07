@@ -528,6 +528,53 @@ static RU: &[(&str, &str)] = &[
         "При запуске лаунчер читает список последнего релиза Aurora на GitHub.",
     ),
     ("A new dev build is out", "Вышла новая dev-сборка"),
+    ("Move from Horizon Android", "Перенос из Horizon Android"),
+    (
+        "Copies worlds, packs, shaders, mods, settings and touch controls from Horizon Android or Starling into a new instance. In the list of places choose «Horizon Android», then Use this folder. Accounts stay there: sign in again.",
+        "Копирует миры, ресурспаки, шейдеры, моды, настройки и сенсорное управление из Horizon Android или Starling в новый инстанс. В списке мест выберите «Horizon Android», затем «Использовать эту папку». Аккаунты туда не переносятся: войдите снова.",
+    ),
+    ("Move", "Перенести"),
+    (
+        "Moving from Horizon Android",
+        "Переносим из Horizon Android",
+    ),
+    (
+        "Reading Horizon Android's folders",
+        "Читаем папки Horizon Android",
+    ),
+    (
+        "Copying worlds, packs and settings",
+        "Копируем миры, паки и настройки",
+    ),
+    (
+        "Moved from Horizon Android",
+        "Перенесено из Horizon Android",
+    ),
+    ("Move cancelled", "Перенос отменён"),
+    (
+        "Horizon Android could not share its files: {}. Close its game and try again.",
+        "Horizon Android не смог отдать файлы: {}. Закройте его игру и попробуйте снова.",
+    ),
+    (
+        "Too many files to move at once",
+        "Слишком много файлов для одного переноса",
+    ),
+    (
+        "Could not move from Horizon Android",
+        "Не удалось перенести из Horizon Android",
+    ),
+    (
+        "This folder is not Horizon Android's. Choose «Horizon Android» in the list of places.",
+        "Это не папка Horizon Android. Выберите «Horizon Android» в списке мест.",
+    ),
+    (
+        "Choose Horizon Android's own folder, or one of Worlds, Resource Packs, Shader Packs, Mods and Configuration in it.",
+        "Выберите саму папку Horizon Android или одну из папок в ней: Worlds, Resource Packs, Shader Packs, Mods, Configuration.",
+    ),
+    (
+        "Instance «{}»: {} world(s). Choose it on Home or under Instances, and sign in to your accounts again.",
+        "Инстанс «{}», миров: {}. Выберите его на главной или в «Инстансах» и снова войдите в аккаунты.",
+    ),
     ("Horizon Aurora {} is out", "Вышла Horizon Aurora {}"),
     (
         "Settings › Engines: open its page to update.",

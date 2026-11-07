@@ -76,6 +76,8 @@ pub(super) enum Action {
     DownloadEngine(usize),
     /// Open the release page of the newer build of the app.
     OpenAppUpdate,
+    /// Copy Horizon Android's worlds, packs and settings into a new instance.
+    ImportHorizon,
     /// Read the release lists when the launcher opens, or not.
     UpdateCheck,
     SignOut,
@@ -1109,6 +1111,16 @@ impl Launcher {
                     if let Err(error) = crate::transfers::export_world(dir, &world.name) {
                         self.toast(super::text::t("Could not export the world"), error, true);
                     }
+                }
+            }
+            Some(Action::ImportHorizon) => {
+                let from = self.catalog.config.profile;
+                if let Err(error) = crate::transfers::import_horizon(self.home.clone(), from) {
+                    self.toast(
+                        super::text::t("Could not move from Horizon Android"),
+                        error,
+                        true,
+                    );
                 }
             }
             Some(Action::ImportWorld) => {

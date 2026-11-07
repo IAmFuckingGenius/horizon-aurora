@@ -889,6 +889,7 @@ impl ApplicationHandler for Launcher {
         while let Some(notice) = crate::transfers::poll() {
             if notice.worlds {
                 self.refresh_worlds();
+                self.refresh_instances();
             }
             if notice.error {
                 self.view.toast = None;
