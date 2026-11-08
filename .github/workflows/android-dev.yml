@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       all_abis:
-        description: Also build ARMv7, x86 and x86_64
+        description: Also build x86 and x86_64 (ARM64 and 32-bit ARMv7 always build)
         type: boolean
         default: false
 
@@ -35,14 +35,11 @@ jobs:
     # Never expose a signing secret to pull requests or arbitrary dispatch refs.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    # Publishing the rolling `dev` pre-release needs to write releases.
-    permissions:
-      contents: write
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a"]') }}
+        abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a","armeabi-v7a"]') }}
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -137,7 +134,7 @@ jobs:
               'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'}, indent=2) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write(f'### Horizon Aurora dev APK: {abi}\n\nCommit: `{sha}`. Optimized release profile; experimental build.\n\n'
-                  'Download the APK artifact below, or from the `dev` pre-release (arm64-v8a). '
+                  'Download it from the `dev` pre-release, or the APK artifact below. '
                   'It installs beside the Aurora release as Horizon Aurora dev and updates an installed dev build in place.\n')
           PY
       - name: Pack the engine for the launcher's engine list
@@ -154,15 +151,37 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+      - name: Remove signing key
+        if: always()
+        run: rm -f .local/android/debug.keystore
+
+  publish:
+    # One release, replaced by every build of main: each ABI's newest APK and engine,
+    # downloadable from a phone without signing in. An ABI whose build failed is left out.
+    needs: build
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: horizon-dev-${{ github.run_number }}-*
+          path: parts
       - name: Publish the rolling dev pre-release
-        # One release, replaced by every build of main: the newest arm64 APK, downloadable
-        # from a phone without signing in. Other ABIs stay workflow artifacts.
-        if: matrix.abi == 'arm64-v8a'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
         run: |
-          notes="Automatic build of ${SHA:0:12} from main (run ${GITHUB_RUN_NUMBER}). Experimental. Installs beside the Aurora release (package io.github.iamfuckinggenius.aurora.dev) and updates the previous dev build in place. What the fork adds: see the README."
+          mkdir dist
+          cp parts/*/*.apk parts/*/*.hengine dist/
+          ls dist/*-arm64-v8a.apk > /dev/null
+          cat parts/*/SHA256SUMS.txt | sort -k2 > dist/SHA256SUMS.txt
+          notes="Automatic build of ${SHA:0:12} from main (run ${GITHUB_RUN_NUMBER}). Experimental. Most phones need arm64-v8a; old 32-bit phones armeabi-v7a. Installs beside the Aurora release (package io.github.iamfuckinggenius.aurora.dev) and updates the previous dev build in place. What the fork adds: see the README."
           # The engine list the launcher reads (Settings › Engines › Engines from Aurora).
           python3 tools/android_engine_index.py --output dist/engines.json \
             --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/dev/" dist/*.hengine
@@ -170,6 +189,3 @@ jobs:
           gh release create dev --repo "$GITHUB_REPOSITORY" --prerelease --target "$SHA" \
             --title "Dev build ${GITHUB_RUN_NUMBER} (${SHA:0:12})" --notes "$notes" \
             dist/*.apk dist/SHA256SUMS.txt dist/*.hengine dist/engines.json
-      - name: Remove signing key
-        if: always()
-        run: rm -f .local/android/debug.keystore
