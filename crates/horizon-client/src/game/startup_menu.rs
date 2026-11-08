@@ -1319,7 +1319,7 @@ impl Loading {
         if let WindowEvent::Touch(touch) = &event {
             self.menu.keyboard_navigation = false;
             self.menu.keyboard_focus = None;
-            use horizon_client::touch_ui::{Action, Gesture};
+            use horizon_client::touch_ui::{Action, Direct, Gesture};
             use winit::event::TouchPhase;
             let b = HudBatch::new(self.menu_size());
             let p = [
@@ -1432,27 +1432,36 @@ impl Loading {
                     position: touch.location,
                 },
             )?;
-            if self.menu.touch.direct_pointer(touch.id, p, touch.phase) {
-                if touch.phase != TouchPhase::Moved {
+            match self.menu.touch.direct_pointer(touch.id, p, touch.phase) {
+                direct @ (Direct::Press | Direct::Release) => {
                     self.menu_event(
                         event_loop,
                         WindowEvent::MouseInput {
                             device_id: touch.device_id,
                             button: MouseButton::Left,
-                            state: if touch.phase == TouchPhase::Started {
+                            state: if direct == Direct::Press {
                                 ElementState::Pressed
                             } else {
                                 ElementState::Released
                             },
                         },
                     )?;
+                    return Ok(());
                 }
-                return Ok(());
+                Direct::Drag => return Ok(()),
+                Direct::No => {}
             }
+            // The settings list scrolls under a pointer kept off it (android_input.rs's
+            // android_menu_touch says why).
+            let pointer_off = WindowEvent::CursorMoved {
+                device_id: touch.device_id,
+                position: winit::dpi::PhysicalPosition::new(-1.0e4, -1.0e4),
+            };
             match self.menu.touch.gesture(
                 touch.id,
                 [touch.location.x as f32, touch.location.y as f32],
                 touch.phase,
+                b.scale,
             ) {
                 Gesture::Tap => {
                     let field = crate::platform::field_at(p);
@@ -1480,6 +1489,7 @@ impl Loading {
                     }
                 }
                 Gesture::Scroll(y) if self.menu.options_open => {
+                    self.menu_event(event_loop, pointer_off)?;
                     self.menu.options.touch_scroll(
                         &self.settings,
                         (b.width, b.height),
@@ -1495,6 +1505,9 @@ impl Loading {
                         phase: TouchPhase::Moved,
                     },
                 )?,
+                Gesture::None if touch.phase == TouchPhase::Ended && self.menu.options_open => {
+                    self.menu_event(event_loop, pointer_off)?;
+                }
                 Gesture::None => {}
             }
             return Ok(());

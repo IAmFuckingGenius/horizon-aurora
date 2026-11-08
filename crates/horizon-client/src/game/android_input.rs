@@ -3,7 +3,7 @@ use super::*;
 use horizon_client::{
     debug_keys::KeyAction,
     osk::Output,
-    touch_ui::{Action, Gesture},
+    touch_ui::{Action, Direct, Gesture},
 };
 use winit::event::{Touch, TouchPhase};
 
@@ -672,15 +672,15 @@ impl Game<'_> {
             },
             super::input_trace::InputOrigin::User,
         );
-        if direct {
-            if t.phase != TouchPhase::Moved {
+        match direct {
+            Direct::Press | Direct::Release => {
                 self.handle_window_event(
                     events,
                     id,
                     WindowEvent::MouseInput {
                         device_id: t.device_id,
                         button: MouseButton::Left,
-                        state: if t.phase == TouchPhase::Started {
+                        state: if direct == Direct::Press {
                             ElementState::Pressed
                         } else {
                             ElementState::Released
@@ -688,14 +688,31 @@ impl Game<'_> {
                     },
                     super::input_trace::InputOrigin::User,
                 );
+                return;
             }
-            return;
+            Direct::Drag => return,
+            Direct::No => {}
         }
-        match self
-            .pad
-            .touch_ui
-            .gesture(t.id, [t.location.x as f32, t.location.y as f32], t.phase)
-        {
+        // A settings list scrolls under a pointer kept off it: no row lights up under the
+        // passing finger or keeps its highlight once it lifts (touch_scroll scrolls the
+        // list at the finger, whatever the pointer).
+        let pointer_off = |game: &mut Self| {
+            game.handle_window_event(
+                events,
+                id,
+                WindowEvent::CursorMoved {
+                    device_id: t.device_id,
+                    position: winit::dpi::PhysicalPosition::new(-1.0e4, -1.0e4),
+                },
+                super::input_trace::InputOrigin::User,
+            );
+        };
+        match self.pad.touch_ui.gesture(
+            t.id,
+            [t.location.x as f32, t.location.y as f32],
+            t.phase,
+            b.scale,
+        ) {
             Gesture::Tap => {
                 let field = crate::platform::field_at(p);
                 for state in [ElementState::Pressed, ElementState::Released] {
@@ -715,6 +732,7 @@ impl Game<'_> {
                 }
             }
             Gesture::Scroll(y) if self.screen == Screen::Options => {
+                pointer_off(self);
                 self.ui
                     .options
                     .touch_scroll(&self.settings, (b.width, b.height), (p[0], p[1]), y);
@@ -729,6 +747,10 @@ impl Game<'_> {
                 },
                 super::input_trace::InputOrigin::User,
             ),
+            // A scroll ended: its finger lifts off the list, not onto a row.
+            Gesture::None if t.phase == TouchPhase::Ended && self.screen == Screen::Options => {
+                pointer_off(self);
+            }
             Gesture::None => {}
         }
     }

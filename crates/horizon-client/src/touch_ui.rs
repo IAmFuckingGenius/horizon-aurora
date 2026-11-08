@@ -19,6 +19,9 @@ pub struct TouchUi {
     relative_click: Option<bool>,
     pub keyboard: Option<Keyboard>,
     gesture: Option<(u64, [f32; 2], [f32; 2], bool)>,
+    /// A finger that went down on a slider's track, and where (GUI pixels), until its
+    /// first move says whether it drags the slider or scrolls the list.
+    slider_touch: Option<(u64, [f32; 2])>,
     pointer_drag: Option<u64>,
     held_keys: BTreeMap<u64, KeyCode>,
     pub f3_latched: bool,
@@ -44,6 +47,24 @@ pub enum Gesture {
     Tap,
     Scroll(f32),
 }
+/// What a menu finger does to the pointer itself, beside `gesture`'s taps and scrolls: a
+/// slider's drag, pressed only once the finger has gone sideways.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direct {
+    /// Not a slider's drag: `gesture` reads the finger.
+    No,
+    /// A slider's drag starts: press at the finger.
+    Press,
+    /// The drag goes on: the pointer follows the finger.
+    Drag,
+    /// The finger lifted: release.
+    Release,
+}
+/// How far a finger on a slider's track goes, in GUI pixels, before its way decides
+/// between dragging the slider (sideways) and scrolling the list (up or down).
+const SLIDER_SLOP: f32 = 6.0;
+/// How far past a slider track's ends a finger still takes it, in GUI pixels.
+const TRACK_MARGIN: f32 = 8.0;
 pub enum Action {
     LatchF3,
     Pick,
@@ -245,6 +266,7 @@ impl TouchUi {
     }
     pub fn cancel(&mut self) {
         self.gesture = None;
+        self.slider_touch = None;
         self.pointer_drag = None;
         self.relative = None;
         self.relative_click = None;
@@ -353,27 +375,84 @@ impl TouchUi {
         None
     }
     /// Sliders retain mouse dragging; list rows use scroll-or-tap gestures.
-    pub fn direct_pointer(&mut self, id: u64, p: [f32; 2], phase: TouchPhase) -> bool {
-        if phase == TouchPhase::Started
-            && crate::widgets::last_targets().iter().any(|t| {
-                let [x, y, w, h] = t.rect;
-                matches!(t.kind, crate::widgets::Kind::Slider { .. })
-                    && (x..x + w).contains(&p[0])
-                    && (y..y + h).contains(&p[1])
-            })
-        {
-            self.pointer_drag = Some(id);
-        }
-        if self.pointer_drag == Some(id) {
-            if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
-                self.pointer_drag = None;
+    /// A finger in a menu at `p` (GUI pixels), for a slider's drag. Only a finger that goes
+    /// down on a slider's track (not anywhere on its row) and then moves sideways drags it;
+    /// one that moves up or down scrolls the list, and one that lifts first is a tap
+    /// (`gesture`). Nothing is pressed when the finger goes down.
+    pub fn direct_pointer(&mut self, id: u64, p: [f32; 2], phase: TouchPhase) -> Direct {
+        let tracks: Vec<[f32; 4]> = if phase == TouchPhase::Started {
+            crate::widgets::last_targets()
+                .iter()
+                .filter_map(|t| match t.kind {
+                    crate::widgets::Kind::Slider { track: [x, w], .. } => {
+                        Some([x, t.rect[1], w, t.rect[3]])
+                    }
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.direct_on(id, p, phase, &tracks)
+    }
+    /// `direct_pointer` over these slider tracks (`[x, y, w, h]`).
+    fn direct_on(
+        &mut self,
+        id: u64,
+        p: [f32; 2],
+        phase: TouchPhase,
+        tracks: &[[f32; 4]],
+    ) -> Direct {
+        match phase {
+            TouchPhase::Started => {
+                let on_track = tracks.iter().any(|&[x, y, w, h]| {
+                    (x - TRACK_MARGIN..x + w + TRACK_MARGIN).contains(&p[0])
+                        && (y..y + h).contains(&p[1])
+                });
+                if on_track && self.slider_touch.is_none() && self.pointer_drag.is_none() {
+                    self.slider_touch = Some((id, p));
+                }
+                Direct::No
             }
-            return true;
+            TouchPhase::Moved => {
+                if self.pointer_drag == Some(id) {
+                    return Direct::Drag;
+                }
+                let Some((owner, start)) = self.slider_touch else {
+                    return Direct::No;
+                };
+                let (dx, dy) = (p[0] - start[0], p[1] - start[1]);
+                if owner != id || dx.hypot(dy) <= SLIDER_SLOP {
+                    return Direct::No;
+                }
+                self.slider_touch = None;
+                if dx.abs() <= dy.abs() {
+                    return Direct::No;
+                }
+                // Sideways: the slider's. The tap or scroll the finger was becoming ends.
+                self.pointer_drag = Some(id);
+                if self.gesture.is_some_and(|g| g.0 == id) {
+                    self.gesture = None;
+                }
+                Direct::Press
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                if self.slider_touch.is_some_and(|(owner, _)| owner == id) {
+                    self.slider_touch = None;
+                }
+                if self.pointer_drag == Some(id) {
+                    self.pointer_drag = None;
+                    Direct::Release
+                } else {
+                    Direct::No
+                }
+            }
         }
-        false
     }
     /// A drag scrolls; a tap clicks only on release. Never activate a row while scrolling it.
-    pub fn gesture(&mut self, id: u64, p: [f32; 2], phase: TouchPhase) -> Gesture {
+    /// `p` is in screen pixels; `scale` is the GUI scale, so a tap allows the same finger
+    /// wobble on every screen density (Android's touch slop is 8 dp).
+    pub fn gesture(&mut self, id: u64, p: [f32; 2], phase: TouchPhase, scale: f32) -> Gesture {
         if phase == TouchPhase::Cancelled {
             self.cancel();
             return Gesture::None;
@@ -390,7 +469,8 @@ impl TouchUi {
         if *owner != id {
             return Gesture::None;
         }
-        *dragged |= (p[0] - start[0]).hypot(p[1] - start[1]) > 12.0;
+        let slop = (6.0 * scale).max(12.0);
+        *dragged |= (p[0] - start[0]).hypot(p[1] - start[1]) > slop;
         let dy = p[1] - previous[1];
         *previous = p;
         if phase == TouchPhase::Ended {
@@ -731,33 +811,126 @@ mod tests {
     fn scrolling_never_clicks() {
         let mut u = TouchUi::default();
         assert!(matches!(
-            u.gesture(1, [20.0, 200.0], TouchPhase::Started),
+            u.gesture(1, [20.0, 200.0], TouchPhase::Started, 1.0),
             Gesture::None
         ));
         assert!(
-            matches!(u.gesture(1,[20.0,140.0],TouchPhase::Moved),Gesture::Scroll(v) if v == -2.0)
+            matches!(u.gesture(1,[20.0,140.0],TouchPhase::Moved,1.0),Gesture::Scroll(v) if v == -2.0)
         );
         assert!(matches!(
-            u.gesture(1, [20.0, 140.0], TouchPhase::Ended),
+            u.gesture(1, [20.0, 140.0], TouchPhase::Ended, 1.0),
+            Gesture::None
+        ));
+    }
+    /// A slider row: its track from x 200 to 300, the row from y 40 to 60.
+    const TRACK: [[f32; 4]; 1] = [[200.0, 40.0, 100.0, 20.0]];
+    #[test]
+    fn a_sideways_drag_on_the_track_drags_the_slider_and_never_taps() {
+        let mut u = TouchUi::default();
+        assert_eq!(
+            u.direct_on(1, [250.0, 50.0], TouchPhase::Started, &TRACK),
+            Direct::No
+        );
+        u.gesture(1, [500.0, 100.0], TouchPhase::Started, 2.0);
+        // Nothing is pressed while the finger has barely moved.
+        assert_eq!(
+            u.direct_on(1, [253.0, 51.0], TouchPhase::Moved, &TRACK),
+            Direct::No
+        );
+        assert_eq!(
+            u.direct_on(1, [262.0, 52.0], TouchPhase::Moved, &TRACK),
+            Direct::Press
+        );
+        assert_eq!(
+            u.direct_on(1, [280.0, 70.0], TouchPhase::Moved, &TRACK),
+            Direct::Drag
+        );
+        assert_eq!(
+            u.direct_on(1, [280.0, 70.0], TouchPhase::Ended, &TRACK),
+            Direct::Release
+        );
+        // The tap the finger was becoming is gone.
+        assert!(matches!(
+            u.gesture(1, [500.0, 100.0], TouchPhase::Ended, 2.0),
+            Gesture::None
+        ));
+    }
+    #[test]
+    fn a_vertical_swipe_over_a_slider_scrolls_the_list() {
+        let mut u = TouchUi::default();
+        u.direct_on(1, [250.0, 50.0], TouchPhase::Started, &TRACK);
+        u.gesture(1, [500.0, 100.0], TouchPhase::Started, 2.0);
+        assert_eq!(
+            u.direct_on(1, [252.0, 30.0], TouchPhase::Moved, &TRACK),
+            Direct::No
+        );
+        assert!(matches!(
+            u.gesture(1, [504.0, 40.0], TouchPhase::Moved, 2.0),
+            Gesture::Scroll(v) if v == -2.0
+        ));
+        // Going sideways afterwards does not take the slider.
+        assert_eq!(
+            u.direct_on(1, [300.0, 30.0], TouchPhase::Moved, &TRACK),
+            Direct::No
+        );
+        assert_eq!(
+            u.direct_on(1, [300.0, 30.0], TouchPhase::Ended, &TRACK),
+            Direct::No
+        );
+    }
+    #[test]
+    fn a_slider_rows_name_and_a_short_touch_on_its_track_are_taps() {
+        let mut u = TouchUi::default();
+        // Down on the row's name, left of the track: never the slider's drag.
+        u.direct_on(1, [60.0, 50.0], TouchPhase::Started, &TRACK);
+        assert_eq!(
+            u.direct_on(1, [120.0, 50.0], TouchPhase::Moved, &TRACK),
+            Direct::No
+        );
+        u.direct_on(1, [120.0, 50.0], TouchPhase::Ended, &TRACK);
+        // A touch on the track that lifts where it went down: a tap.
+        u.direct_on(2, [250.0, 50.0], TouchPhase::Started, &TRACK);
+        u.gesture(2, [500.0, 100.0], TouchPhase::Started, 2.0);
+        assert_eq!(
+            u.direct_on(2, [251.0, 50.0], TouchPhase::Ended, &TRACK),
+            Direct::No
+        );
+        assert!(matches!(
+            u.gesture(2, [502.0, 101.0], TouchPhase::Ended, 2.0),
+            Gesture::Tap
+        ));
+    }
+    #[test]
+    fn a_tap_allows_more_wobble_on_a_denser_screen() {
+        let mut u = TouchUi::default();
+        u.gesture(1, [100.0, 100.0], TouchPhase::Started, 4.0);
+        // 20 screen pixels at GUI scale 4 are 5 GUI pixels: still a tap.
+        assert!(matches!(
+            u.gesture(1, [100.0, 120.0], TouchPhase::Ended, 4.0),
+            Gesture::Tap
+        ));
+        u.gesture(1, [100.0, 100.0], TouchPhase::Started, 1.0);
+        assert!(matches!(
+            u.gesture(1, [100.0, 120.0], TouchPhase::Ended, 1.0),
             Gesture::None
         ));
     }
     #[test]
     fn tap_release_cancel_and_second_finger() {
         let mut u = TouchUi::default();
-        u.gesture(1, [20.0, 20.0], TouchPhase::Started);
+        u.gesture(1, [20.0, 20.0], TouchPhase::Started, 1.0);
         assert!(matches!(
-            u.gesture(2, [20.0, 20.0], TouchPhase::Ended),
+            u.gesture(2, [20.0, 20.0], TouchPhase::Ended, 1.0),
             Gesture::None
         ));
         assert!(matches!(
-            u.gesture(1, [21.0, 21.0], TouchPhase::Ended),
+            u.gesture(1, [21.0, 21.0], TouchPhase::Ended, 1.0),
             Gesture::Tap
         ));
-        u.gesture(1, [20.0, 20.0], TouchPhase::Started);
-        u.gesture(1, [20.0, 20.0], TouchPhase::Cancelled);
+        u.gesture(1, [20.0, 20.0], TouchPhase::Started, 1.0);
+        u.gesture(1, [20.0, 20.0], TouchPhase::Cancelled, 1.0);
         assert!(matches!(
-            u.gesture(1, [20.0, 20.0], TouchPhase::Ended),
+            u.gesture(1, [20.0, 20.0], TouchPhase::Ended, 1.0),
             Gesture::None
         ));
     }
