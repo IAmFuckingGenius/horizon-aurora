@@ -36,7 +36,7 @@ fn gles_source(source: &str) -> String {
         .expect("terrain level function");
     let end = level + source[level..].find("\n}\n").expect("terrain level end") + 3;
     let rgss = source
-        .find("fn sample_rgss(")
+        .find("fn rotated_grid(")
         .expect("terrain RGSS function");
     let rgss_end = rgss + source[rgss..].find("\n}\n").expect("terrain RGSS end") + 3;
     let mut output = String::with_capacity(source.len());
@@ -51,15 +51,22 @@ fn gles_source(source: &str) -> String {
     let start = output
         .find("struct TerrainOut {")
         .expect("terrain interface");
-    let end = output[start..]
-        .find("struct SkyOut {")
-        .expect("sky interface")
-        + start;
     let fields_end = output[start..]
         .find("\n}\n")
         .expect("terrain interface end")
         + start
         + 3;
+    // The terrain functions run up to the next stage interface (the native fluids',
+    // then the sky's), whose own fields of the same names stay.
+    let end = output[fields_end..]
+        .match_indices("\nstruct ")
+        .map(|(i, _)| fields_end + i + 1)
+        .find(|&i| {
+            output[i..]
+                .split_once('{')
+                .is_some_and(|(head, _)| head.trim_end().ends_with("Out"))
+        })
+        .expect("the next stage interface");
     let mut body = output[fields_end..end].to_owned();
     for (member, packed) in [
         ("emissive_layer", "codes.w"),
@@ -83,11 +90,13 @@ fn gles_source(source: &str) -> String {
 }
 
 // Adreno 710's compiler fails to link this dynamic uniform-array search in a
-// robust EGL context. Preserve the first match, every entry and the no-match
-// sentinel; constant-index branches also keep robust access enabled.
+// robust EGL context. The pairs are sorted by base layer and the search stops
+// at the first one at or past the sprite's: the branches do the same, each with
+// a constant index, in groups of 32 so a short list skips the rest at once.
+// Robust access stays on.
 fn unroll_emissive_lookup(mut source: String) -> String {
     let start = source
-        .find("    for (var i = 0u; i < min(globals.emissive_count.x, 32u); i++) {")
+        .find("    for (var i = 0u; i < min(globals.emissive_count.x, 128u); i++) {")
         .expect("terrain emissive lookup");
     let body = source[start..].find('{').unwrap() + start;
     let mut depth = 1;
@@ -100,15 +109,32 @@ fn unroll_emissive_lookup(mut source: String) -> String {
         }
         end += 1;
     }
-    let mut branches = String::new();
-    for i in 0..32 {
-        let branch = if i == 0 { "if" } else { "else if" };
-        branches.push_str(&format!(
-            "    {branch} globals.emissive_count.x > {i}u && globals.emissive_layers[{i}].x == (layer & 0x7fffu) {{\n        out.emissive_layer = globals.emissive_layers[{i}].y;\n    }}\n"
+    source.replace_range(start..end, &emissive_branches(0, 1));
+    source
+}
+/// The search from pair `first` on, `depth` levels in; a group ends by handing the
+/// next one on when the list is longer.
+fn emissive_branches(first: u32, depth: usize) -> String {
+    let pad = "    ".repeat(depth);
+    let mut code = String::new();
+    for i in first..first + 32 {
+        let keyword = if i == first { "if" } else { "} else if" };
+        code.push_str(&format!(
+            "{pad}{keyword} min(globals.emissive_count.x, 128u) > {i}u && globals.emissive_layers[{i}].x >= sprite_layer {{\n\
+             {pad}    if globals.emissive_layers[{i}].x == sprite_layer {{\n\
+             {pad}        out.emissive_layer = globals.emissive_layers[{i}].y;\n\
+             {pad}    }}\n"
         ));
     }
-    source.replace_range(start..end, &branches);
-    source
+    if first + 32 < 128 {
+        code.push_str(&format!(
+            "{pad}}} else if min(globals.emissive_count.x, 128u) > {}u {{\n",
+            first + 32
+        ));
+        code.push_str(&emissive_branches(first + 32, depth + 1));
+    }
+    code.push_str(&format!("{pad}}}\n"));
+    code
 }
 
 const PACKED_INTERFACE: &str = "struct TerrainOut {
@@ -118,6 +144,7 @@ const PACKED_INTERFACE: &str = "struct TerrainOut {
     @location(2) color: vec4<f32>,
     @location(3) distances: vec4<f32>,
     @location(4) local: vec3<f32>,
+    @location(5) scene: vec2<f32>,
 }
 ";
 
@@ -172,7 +199,8 @@ mod tests {
                 .iter()
                 .filter(|m| matches!(m.binding, Some(naga::Binding::Location { .. })))
                 .count(),
-            5
+            // uv, codes, color, distances, local, and HDR lighting's scene.
+            6
         );
     }
 

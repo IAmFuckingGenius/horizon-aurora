@@ -611,7 +611,7 @@ struct WeatherOut {
     out.uv = v.uv;
     out.color = v.color;
     out.light_color = v.light_color;
-    out.fog = vec2(v.spherical, v.cylindrical);
+    out.fog = v.fog_distance;
     let size = vec2<f32>(textureDimensions(atlas));
     out.texels = vec4(vec2<i32>(round(rect.xy * size)),
         max(vec2<i32>(round(rect.zw * size)), vec2(1)));
