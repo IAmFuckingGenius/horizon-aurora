@@ -1,6 +1,6 @@
 //! The multiplayer server list, stored like vanilla's ServerList in an
 //! uncompressed `servers.dat`: `{servers: [{name, ip, icon?, acceptTextures?,
-//! acceptedCodeOfConduct?, hidden}]}`. Hidden entries (servers joined by
+//! acceptedCodeOfConduct?, horizonProtocol?, hidden}]}`. Hidden entries (servers joined by
 //! Direct Connection or quick play) are not shown but keep their settings.
 use horizon_world::nbt::{self, JavaString, NamedTag, Tag};
 use std::path::Path;
@@ -16,6 +16,9 @@ pub struct ServerEntry {
     /// `String.hashCode` of the Code of Conduct accepted for good (ServerData's
     /// `acceptedCodeOfConduct`); 0 for none.
     pub accepted_code_of_conduct: i32,
+    /// The protocol the player chose to join it with (Horizon's Version in Edit Server Info,
+    /// `horizonProtocol`); None for the one its status ping settles.
+    pub protocol: Option<i32>,
 }
 impl ServerEntry {
     pub fn new(name: &str, ip: &str) -> Self {
@@ -25,6 +28,7 @@ impl ServerEntry {
             icon: None,
             accept_textures: None,
             accepted_code_of_conduct: 0,
+            protocol: None,
         }
     }
     fn to_tag(&self) -> Tag {
@@ -44,6 +48,9 @@ impl ServerEntry {
                 Tag::Int(self.accepted_code_of_conduct),
             ));
         }
+        if let Some(protocol) = self.protocol {
+            entries.push(("horizonProtocol", Tag::Int(protocol)));
+        }
         Tag::compound(entries)
     }
     fn from_tag(tag: &Tag) -> Option<Self> {
@@ -62,6 +69,10 @@ impl ServerEntry {
             accepted_code_of_conduct: match tag.get("acceptedCodeOfConduct") {
                 Some(Tag::Int(hash)) => *hash,
                 _ => 0,
+            },
+            protocol: match tag.get("horizonProtocol") {
+                Some(Tag::Int(protocol)) => Some(*protocol),
+                _ => None,
             },
         })
     }
@@ -270,6 +281,7 @@ mod tests {
             ServerEntry::new("Minecraft Server", "localhost:25565"),
             ServerEntry {
                 accept_textures: Some(false),
+                protocol: Some(769),
                 ..ServerEntry::new("Other", "example.org")
             },
         ];

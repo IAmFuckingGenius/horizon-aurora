@@ -745,16 +745,101 @@ pub fn older_servers_enabled() -> bool {
     }
 }
 
-/// The older release a server speaks, by its status ping, when Horizon can translate it; `None` for the
-/// pinned version, an unknown one, a failed ping, or with the feature off.
+/// The protocols the player chose for saved servers (Edit Server Info's Version), by address.
+static CHOSEN: Mutex<Option<HashMap<String, i32>>> = Mutex::new(None);
+/// The version each server's last status ping settled ([`settle_version`]), by address, so joining
+/// from the server list does not ask the server again.
+static SETTLED: Mutex<Option<HashMap<String, horizon_protocol::adapter::ServerVersion>>> =
+    Mutex::new(None);
+
+/// The saved servers' chosen protocols, `(address, protocol)`, replacing the ones known before.
+pub fn set_chosen_versions(chosen: impl IntoIterator<Item = (String, i32)>) {
+    *CHOSEN.lock().unwrap() = Some(chosen.into_iter().collect());
+}
+
+/// The version the player chose for the server at `address`, when joining older servers is on.
+fn chosen_version(address: &str) -> Option<horizon_protocol::adapter::ServerVersion> {
+    if !older_servers_enabled() {
+        return None;
+    }
+    let protocol = *CHOSEN.lock().unwrap().as_ref()?.get(address)?;
+    horizon_protocol::adapter::ServerVersion::from_protocol(protocol)
+}
+
+/// The protocol a status reply states.
+fn status_protocol(json: &serde_json::Value) -> Option<i32> {
+    i32::try_from(json["version"]["protocol"].as_i64()?).ok()
+}
+
+/// The version to speak to the server at `address`, given its status `json` (asked with this game's
+/// protocol): the one the player chose for it; this game's own when the server takes it; else, with
+/// joining older servers on, the older one Horizon translates that it takes. `None`: it can't be
+/// joined. The answer is kept for joining it ([`older_server`]).
+///
+/// A server that answered with this game's protocol may be a proxy that answers every client so,
+/// and its version name says how far it goes (`adapter::negotiate::ceiling`). One that answered
+/// with a protocol Horizon doesn't translate is asked again with older ones, newest first: behind
+/// ViaVersion it echoes the newest it takes (`adapter::negotiate::newest_echoed`).
+pub fn settle_version(
+    address: &str,
+    json: &serde_json::Value,
+) -> Option<horizon_protocol::adapter::ServerVersion> {
+    use horizon_protocol::adapter::{ServerVersion, negotiate};
+    let answered = status_protocol(json);
+    let settled = chosen_version(address).or_else(|| {
+        let answered = answered?;
+        if !older_servers_enabled() {
+            return (answered == PROTOCOL_VERSION).then_some(ServerVersion::Current);
+        }
+        if answered == PROTOCOL_VERSION {
+            let name = json["version"]["name"].as_str().unwrap_or_default();
+            return Some(
+                negotiate::ceiling(name)
+                    .and_then(ServerVersion::within)
+                    .unwrap_or(ServerVersion::Current),
+            );
+        }
+        if let Some(version) = ServerVersion::from_protocol(answered) {
+            return Some(version);
+        }
+        let older = &ServerVersion::ALL[1..];
+        let found = negotiate::newest_echoed(older.len(), |i| {
+            let protocol = older[i].protocol();
+            let json = status_as(address, protocol, Duration::from_secs(5)).ok()?;
+            Some(status_protocol(&json) == Some(protocol))
+        })?;
+        Some(older[found])
+    });
+    let mut known = SETTLED.lock().unwrap();
+    let known = known.get_or_insert_with(HashMap::new);
+    match settled {
+        Some(version) => known.insert(address.to_owned(), version),
+        None => known.remove(address),
+    };
+    settled
+}
+
+/// The older release to speak to the server at `address`, when Horizon translates it: the player's
+/// choice, else what its last status ping settled, else a ping now. `None` for this game's own
+/// release, a server it can't join, a failed ping, or with the feature off.
 fn older_server(address: &str) -> Option<horizon_protocol::adapter::ServerVersion> {
     use horizon_protocol::adapter::ServerVersion;
     if !older_servers_enabled() {
         return None;
     }
-    let (json, _) = ping(address, Duration::from_secs(5)).ok()?;
-    let protocol = i32::try_from(json["version"]["protocol"].as_i64()?).ok()?;
-    ServerVersion::from_protocol(protocol).filter(|v| *v != ServerVersion::Current)
+    let known = SETTLED
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|known| known.get(address).copied());
+    let version = match chosen_version(address).or(known) {
+        Some(version) => version,
+        None => {
+            let (json, _) = ping(address, Duration::from_secs(5)).ok()?;
+            settle_version(address, &json)?
+        }
+    };
+    (version != ServerVersion::Current).then_some(version)
 }
 
 /// `Connection.exceptionCaught`: a read that timed out ends with
@@ -1423,6 +1508,28 @@ pub fn load_language(resources: &std::path::Path) -> Language {
 /// round trip time in milliseconds.
 pub fn ping(address: &str, timeout: Duration) -> Result<(serde_json::Value, u128), String> {
     use horizon_protocol::packets::status;
+    let (mut c, json) = status_request(address, PROTOCOL_VERSION, timeout)?;
+    let e = |e: horizon_protocol::Error| e.to_string();
+    let start = std::time::Instant::now();
+    c.send(&status::Serverbound::PingRequest(status::Ping { time: 1 }).encode())
+        .map_err(e)?;
+    let _ = c.recv().map_err(e)?;
+    Ok((json, start.elapsed().as_millis()))
+}
+
+/// A server's status as a client on `protocol` asks for it: proxies and ViaVersion answer with that
+/// protocol when they take it.
+fn status_as(address: &str, protocol: i32, timeout: Duration) -> Result<serde_json::Value, String> {
+    status_request(address, protocol, timeout).map(|(_, json)| json)
+}
+
+/// The status handshake and request as a client on `protocol`: the connection, and the reply.
+fn status_request(
+    address: &str,
+    protocol: i32,
+    timeout: Duration,
+) -> Result<(Connection, serde_json::Value), String> {
+    use horizon_protocol::packets::status;
     let (host, port) = parse_address(address).ok_or("Invalid address")?;
     let mut c = Connection::connect_server(&host, port, timeout).map_err(|e| e.to_string())?;
     c.reader
@@ -1431,7 +1538,7 @@ pub fn ping(address: &str, timeout: Duration) -> Result<(serde_json::Value, u128
     let e = |e: horizon_protocol::Error| e.to_string();
     c.send(
         &handshake::Serverbound::Intention(handshake::Intention {
-            protocol: PROTOCOL_VERSION,
+            protocol,
             host: host.clone(),
             port,
             intent: handshake::STATUS,
@@ -1448,11 +1555,7 @@ pub fn ping(address: &str, timeout: Duration) -> Result<(serde_json::Value, u128
         }
         _ => return Err("unexpected status reply".into()),
     };
-    let start = std::time::Instant::now();
-    c.send(&status::Serverbound::PingRequest(status::Ping { time: 1 }).encode())
-        .map_err(e)?;
-    let _ = c.recv().map_err(e)?;
-    Ok((json, start.elapsed().as_millis()))
+    Ok((c, json))
 }
 
 /// What a server that answers only the legacy ping reports

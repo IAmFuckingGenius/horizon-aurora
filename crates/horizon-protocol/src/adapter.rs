@@ -10,6 +10,7 @@ pub mod client_session;
 pub mod ids;
 pub mod layout_26_2;
 mod legacy;
+pub mod negotiate;
 mod pinned_ids;
 pub mod session;
 mod translate;
@@ -140,6 +141,57 @@ impl ServerVersion {
             Self::V1_20_3 => v1_20_3::NAME,
             Self::V1_20_2 => v1_20_2::NAME,
         }
+    }
+
+    /// The oldest release that speaks this protocol (1.20.3 for 1.20.3 and 1.20.4).
+    pub fn oldest(self) -> negotiate::Release {
+        use negotiate::Release;
+        match self {
+            Self::Current => {
+                negotiate::Release::parse(crate::GAME_VERSION).unwrap_or(Release(26, 3, 0))
+            }
+            Self::V26_2 => Release(26, 2, 0),
+            Self::V26_1 => Release(26, 1, 0),
+            Self::V1_21_11 => Release(1, 21, 11),
+            Self::V1_21_10 => Release(1, 21, 9),
+            Self::V1_21_8 => Release(1, 21, 7),
+            Self::V1_21_6 => Release(1, 21, 6),
+            Self::V1_21_5 => Release(1, 21, 5),
+            Self::V1_21_4 => Release(1, 21, 4),
+            Self::V1_21_3 => Release(1, 21, 2),
+            Self::V1_21_1 => Release(1, 21, 0),
+            Self::V1_20_6 => Release(1, 20, 5),
+            Self::V1_20_3 => Release(1, 20, 3),
+            Self::V1_20_2 => Release(1, 20, 2),
+        }
+    }
+
+    /// Every release that speaks this protocol, as a version choice names them.
+    pub fn releases(self) -> &'static str {
+        match self {
+            Self::Current => crate::GAME_VERSION,
+            Self::V26_2 => "26.2",
+            Self::V26_1 => "26.1-26.1.2",
+            Self::V1_21_11 => "1.21.11",
+            Self::V1_21_10 => "1.21.9-1.21.10",
+            Self::V1_21_8 => "1.21.7-1.21.8",
+            Self::V1_21_6 => "1.21.6",
+            Self::V1_21_5 => "1.21.5",
+            Self::V1_21_4 => "1.21.4",
+            Self::V1_21_3 => "1.21.2-1.21.3",
+            Self::V1_21_1 => "1.21-1.21.1",
+            Self::V1_20_6 => "1.20.5-1.20.6",
+            Self::V1_20_3 => "1.20.3-1.20.4",
+            Self::V1_20_2 => "1.20.2",
+        }
+    }
+
+    /// The newest version for a server whose version name says it takes releases up to `ceiling`
+    /// ([`negotiate::ceiling`]): the pinned one when it reaches that far, else the newest older one
+    /// within it; `None` when even the oldest is past it.
+    pub fn within(ceiling: negotiate::Release) -> Option<Self> {
+        let oldest: Vec<negotiate::Release> = Self::ALL.iter().map(|v| v.oldest()).collect();
+        negotiate::newest_within(&oldest, ceiling).map(|i| Self::ALL[i])
     }
 
     /// The version a server's status reports by its protocol number.

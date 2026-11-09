@@ -168,6 +168,7 @@ mod multiplayer_parent_navigation {
                 address: String::new(),
                 focus: 0,
                 packs: None,
+                version: None,
             },
             Screen::Edit {
                 index: Some(0),
@@ -175,6 +176,7 @@ mod multiplayer_parent_navigation {
                 address: String::new(),
                 focus: 0,
                 packs: None,
+                version: None,
             },
         ] {
             for escape in [false, true] {
@@ -1583,6 +1585,7 @@ fn tab_walks_the_edit_server_screen_through_its_buttons() {
         address: "localhost".into(),
         focus: 0,
         packs: None,
+        version: None,
     });
     let focus = |f: &Fixture| match &f.title.mode {
         Mode::Multiplayer(Screen::Edit { focus, .. }) => (*focus, f.title.focused_button),
@@ -1627,6 +1630,7 @@ fn server_fields_edit_at_their_cursor() {
         address: String::new(),
         focus: 1,
         packs: None,
+        version: None,
     });
     f.title.type_text("localhost");
     for _ in 0..4 {
@@ -2686,6 +2690,7 @@ fn the_multiplayer_screens_have_their_own_ids() {
             address: String::new(),
             focus: 0,
             packs: None,
+            version: None,
         }
         .id(),
         "add_server"
@@ -2697,6 +2702,7 @@ fn the_multiplayer_screens_have_their_own_ids() {
             address: String::new(),
             focus: 0,
             packs: None,
+            version: None,
         }
         .id(),
         "edit_server"

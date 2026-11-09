@@ -162,6 +162,7 @@ Minecraft скачиваются с серверов Mojang на устройс�
 python3 tools/test_android_engines.py   # движки, загрузочная библиотека и инстансы
 python3 tools/test_android_worlds.py    # импорт и экспорт миров в ZIP
 python3 tools/test_android_wgsl.py      # шейдеры рендера собираются, включая формы для GLES
+python3 tools/test_android_servers.py   # с какой версией заходить на сервер
 ```
 
 ## Языки

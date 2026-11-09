@@ -33,6 +33,8 @@ pub enum Ping {
         player_list: Vec<Text>,
         ms: u128,
         version: String,
+        /// The older releases Horizon speaks to it as (roadmap `older-servers`), when not 26.3.
+        via: Option<&'static str>,
     },
     /// `ServerData.State.INCOMPATIBLE`: the server answered, but not with this
     /// game's protocol (or only to the legacy ping).
@@ -117,6 +119,9 @@ pub enum Screen {
         /// Server Resource Packs (`acceptTextures`): Enabled, Disabled, or
         /// none for Prompt.
         packs: Option<bool>,
+        /// Horizon's Version: the protocol to join with, none for the one
+        /// the status ping settles (roadmap `older-servers`).
+        version: Option<i32>,
     },
     Direct {
         address: String,
@@ -260,9 +265,8 @@ fn ping_all(servers: &[ServerEntry], pings: &Pings, icons: &Icons, file: &Path) 
                             .map(|(online, _)| player_list(&json["players"], online))
                             .unwrap_or_default();
                         let version = json["version"]["name"].as_str().unwrap_or("?").to_owned();
-                        // ServerStatus.version absent: `multiplayer.status.old`
-                        // and protocol 0.
-                        let protocol = json["version"]["protocol"].as_i64().unwrap_or(0);
+                        // ServerStatus.version absent: `multiplayer.status.old`,
+                        // and no protocol to join with (`net::settle_version`).
                         let version_text = if json["version"].is_object() {
                             Text::literal(version.clone())
                         } else {
@@ -282,22 +286,19 @@ fn ping_all(servers: &[ServerEntry], pings: &Pings, icons: &Icons, file: &Path) 
                                 save_icon(&file, &address, icon);
                             }
                         }
-                        // OnlineServerEntry: SUCCESSFUL only for this game's protocol.
-                        let joinable = protocol == i64::from(horizon_protocol::PROTOCOL_VERSION)
-                            || (crate::net::older_servers_enabled()
-                                && i32::try_from(protocol)
-                                    .ok()
-                                    .and_then(
-                                        horizon_protocol::adapter::ServerVersion::from_protocol,
-                                    )
-                                    .is_some());
-                        if joinable {
+                        // OnlineServerEntry: SUCCESSFUL only for this game's protocol;
+                        // Horizon's also for an older release it translates
+                        // (`net::settle_version`).
+                        let settled = crate::net::settle_version(&address, &json);
+                        if let Some(settled) = settled {
+                            let current = horizon_protocol::adapter::ServerVersion::Current;
                             Ping::Ok {
                                 motd,
                                 players,
                                 player_list,
                                 ms,
                                 version,
+                                via: (settled != current).then(|| settled.releases()),
                             }
                         } else {
                             Ping::Incompatible {
@@ -483,6 +484,33 @@ fn entry_address(servers: &[ServerEntry], lan: &Scanner, index: usize) -> Option
     }
 }
 
+/// Horizon's Version choices after `version`: Auto (none), then each
+/// protocol Horizon speaks from the newest, and round again.
+fn next_version(version: Option<i32>) -> Option<i32> {
+    use horizon_protocol::adapter::ServerVersion;
+    let all = ServerVersion::ALL;
+    match version.and_then(|p| all.iter().position(|v| v.protocol() == p)) {
+        None => Some(all[0].protocol()),
+        Some(i) => all.get(i + 1).map(|v| v.protocol()),
+    }
+}
+/// The value Horizon's Version shows: Auto, or the releases of the chosen
+/// protocol.
+fn version_value(version: Option<i32>) -> String {
+    version
+        .and_then(horizon_protocol::adapter::ServerVersion::from_protocol)
+        .map_or_else(
+            || crate::lang::get_or("horizon.multiplayer.version.auto", "Auto"),
+            |v| v.releases().to_owned(),
+        )
+}
+/// Horizon's Version button: `Version: Auto`.
+fn version_label(version: Option<i32>) -> String {
+    let name = crate::lang::get_or("horizon.multiplayer.version", "Version");
+    crate::lang::get_or("options.generic_value", "%s: %s")
+        .replacen("%s", &name, 1)
+        .replacen("%s", &version_value(version), 1)
+}
 /// The Server Resource Packs button's label: `CommonComponents.optionNameValue`.
 fn pack_setting_label(packs: Option<bool>) -> String {
     let (key, fallback) = match packs {
@@ -609,9 +637,15 @@ fn ping_tooltip(
         return None;
     }
     Some(match pings.get(&servers[i].ip) {
-        Some(Ping::Ok { ms, .. }) => format_translation(
+        Some(Ping::Ok { ms, via: None, .. }) => format_translation(
             &crate::lang::get_or("multiplayer.status.ping", "%s ms"),
             &[Text::literal(ms.to_string())],
+        ),
+        Some(Ping::Ok {
+            ms, via: Some(via), ..
+        }) => format_translation(
+            &crate::lang::get_or("horizon.multiplayer.ping_as", "%s ms, as %s"),
+            &[Text::literal(ms.to_string()), Text::literal(*via)],
         ),
         Some(Ping::Incompatible { .. }) => Text::literal(crate::lang::get_or(
             "multiplayer.status.incompatible",
@@ -698,6 +732,11 @@ impl Screen {
 
     pub fn list(saves: &Path) -> Self {
         let servers = servers::load(&servers_file(saves));
+        crate::net::set_chosen_versions(
+            servers
+                .iter()
+                .filter_map(|s| Some((s.ip.clone(), s.protocol?))),
+        );
         let pings: Pings = Arc::default();
         let icons: Icons = Arc::default();
         ping_all(&servers, &pings, &icons, &servers_file(saves));
@@ -785,33 +824,58 @@ impl Screen {
                     ),
                 ]
             }
-            Self::Edit { address, packs, .. } => vec![
-                // ManageServerScreen's CycleButton, above Done.
-                b(
-                    half(w) - 100.0,
-                    quarter(h) + 72.0,
-                    200.0,
-                    &pack_setting_label(*packs),
-                    true,
-                    60,
-                ),
-                b(
-                    half(w) - 100.0,
-                    quarter(h) + 96.0 + 18.0,
-                    200.0,
-                    &crate::lang::get_or("gui.done", "Done"),
-                    servers::parse_address(address).is_some(),
-                    50,
-                ),
-                b(
-                    half(w) - 100.0,
-                    quarter(h) + 120.0 + 18.0,
-                    200.0,
-                    &crate::lang::get_or("gui.cancel", "Cancel"),
-                    true,
-                    51,
-                ),
-            ],
+            Self::Edit {
+                address,
+                packs,
+                version,
+                ..
+            } => {
+                // Horizon's Version sits under Server Resource Packs, and
+                // Done and Cancel follow it 24 apart.
+                let older = crate::net::older_servers_enabled();
+                let down = if older { 6.0 } else { 0.0 };
+                let mut buttons = vec![
+                    // ManageServerScreen's CycleButton, above Done.
+                    b(
+                        half(w) - 100.0,
+                        quarter(h) + 72.0,
+                        200.0,
+                        &pack_setting_label(*packs),
+                        true,
+                        60,
+                    ),
+                    b(
+                        half(w) - 100.0,
+                        quarter(h) + 96.0 + 18.0 + down,
+                        200.0,
+                        &crate::lang::get_or("gui.done", "Done"),
+                        servers::parse_address(address).is_some(),
+                        50,
+                    ),
+                    b(
+                        half(w) - 100.0,
+                        quarter(h) + 120.0 + 18.0 + down,
+                        200.0,
+                        &crate::lang::get_or("gui.cancel", "Cancel"),
+                        true,
+                        51,
+                    ),
+                ];
+                if older {
+                    buttons.insert(
+                        1,
+                        b(
+                            half(w) - 100.0,
+                            quarter(h) + 96.0,
+                            200.0,
+                            &version_label(*version),
+                            true,
+                            61,
+                        ),
+                    );
+                }
+                buttons
+            }
             // ConfirmScreen's two 150-wide buttons, 4 apart, under the message.
             Self::ConfirmDelete { lines, .. } => {
                 let y = confirm_top(h, lines.get()) + 41.0 + lines.get() as f32 * 9.0;
@@ -1002,6 +1066,9 @@ impl Screen {
                     None => ("manageServer.resourcePack.enabled", "Enabled"),
                 };
                 Narratable::cycle(label, crate::lang::get_or(key, fallback), rect, enabled)
+            }
+            Self::Edit { version, .. } if id == 61 => {
+                Narratable::cycle(label, version_value(next_version(*version)), rect, enabled)
             }
             _ => Narratable::button(label, rect, enabled),
         }
@@ -1256,6 +1323,13 @@ impl Screen {
                                 gray,
                                 true,
                             );
+                            // Horizon's: the older release it is joined as,
+                            // left of the player count.
+                            if let Some(Ping::Ok { via: Some(via), .. }) = pings.get(&server.ip) {
+                                let vw = HudBatch::text_width(atlas, via).ceil();
+                                let x = icon_x - sw - 5.0 - if sw > 0.0 { 4.0 } else { 0.0 } - vw;
+                                batch.text(atlas, via, x, cy + 1.0, gray, true);
+                            }
                             // Hovering the row: the join arrow over the icon
                             // and the move arrows, each highlighted under
                             // the pointer.
@@ -1568,6 +1642,7 @@ impl Screen {
                     address: String::new(),
                     focus: 1,
                     packs: None,
+                    version: None,
                 }
             }
             (
@@ -1584,6 +1659,7 @@ impl Screen {
                         address: s.ip,
                         focus: 0,
                         packs: s.accept_textures,
+                        version: s.protocol,
                     };
                 }
             }
@@ -1709,6 +1785,8 @@ impl Screen {
                     }
                 }
             }
+            // Horizon's Version: Auto, then each release from the newest, and round again.
+            (Self::Edit { version, .. }, Some(61)) => *version = next_version(*version),
             // CycleButton: Enabled, Disabled, Prompt, and round again.
             (Self::Edit { packs, .. }, Some(60)) => {
                 *packs = match *packs {
@@ -1723,6 +1801,7 @@ impl Screen {
                     name,
                     address,
                     packs,
+                    version,
                     ..
                 },
                 Some(50),
@@ -1730,11 +1809,13 @@ impl Screen {
                 let (mut list, mut hidden) = servers::load_all(&servers_file(saves));
                 let mut entry = ServerEntry::new(name.trim(), address.trim());
                 entry.accept_textures = *packs;
+                entry.protocol = *version;
                 match index.and_then(|i| list.get_mut(i)) {
                     Some(e) => {
                         e.name = entry.name;
                         e.ip = entry.ip;
                         e.accept_textures = entry.accept_textures;
+                        e.protocol = entry.protocol;
                     }
                     // addServerCallback: ServerList.unhide brings back a hidden entry
                     // for the address, given the new name and icon
@@ -1744,6 +1825,7 @@ impl Screen {
                             let mut e = hidden.remove(h);
                             e.name = entry.name;
                             e.icon = entry.icon;
+                            e.protocol = entry.protocol;
                             list.push(e);
                         }
                         None => list.push(entry),
@@ -2339,6 +2421,7 @@ mod tests {
                 player_list: Vec::new(),
                 ms: 42,
                 version: String::new(),
+                via: None,
             },
         );
         assert_eq!(hover(&pings, 0.0, (358.9, 44.9)).as_deref(), Some("42 ms"));
@@ -2444,6 +2527,7 @@ mod tests {
             player_list,
             ms: 1,
             version: String::new(),
+            via: None,
         };
         pings.insert("server0".into(), ok(vec![Text::literal("Lobby")]));
         // The 20-wide count ends 5 pixels left of the bars at (349, 37).

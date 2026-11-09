@@ -162,6 +162,7 @@ from Mojang on the device. Development APKs may carry private resource bundles. 
 python3 tools/test_android_engines.py   # engines, the boot library and instances
 python3 tools/test_android_worlds.py    # world ZIP import and export
 python3 tools/test_android_wgsl.py      # the renderer's shaders build, GLES forms included
+python3 tools/test_android_servers.py   # which release a server is joined with
 ```
 
 ## Languages
