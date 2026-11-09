@@ -18,6 +18,7 @@ use crate::{
     packets::{configuration, play},
 };
 
+pub(super) mod v1_20_1;
 pub(super) mod v1_20_2;
 pub(super) mod v1_20_3;
 mod v1_20_5;
@@ -68,6 +69,14 @@ pub fn clientbound(
         return Ok(Some((id, None)));
     };
     use packet_ids::play::clientbound as cb;
+    // 1.20.1's step runs first, outside `steps` below: the 1.20.2 text conversion and the handlers
+    // before the steps read 1.20.2's layouts.
+    let from_1_20_1 = if session.version.at_most(ServerVersion::V1_20_1) {
+        v1_20_1::clientbound(session, state, id, payload)?
+    } else {
+        None
+    };
+    let payload = from_1_20_1.as_deref().unwrap_or(payload);
     let normalized_text = if session.version.at_most(ServerVersion::V1_20_2) {
         v1_20_2::text::clientbound(session, state, id, payload)?
     } else {
@@ -332,6 +341,9 @@ pub fn clientbound(
         (State::Play, cb::SET_ENTITY_DATA) if session.version.at_most(ServerVersion::V1_21_11) => {
             let mut p = decode_play(ids, id, payload)?;
             if let play::Clientbound::SetEntityData(d) = &mut p {
+                if session.version.at_most(ServerVersion::V1_20_1) {
+                    v1_20_1::entity_data(session, d);
+                }
                 if session.version.at_most(ServerVersion::V1_20_3) {
                     v1_20_3::entity_data(session, d);
                 }
@@ -369,7 +381,7 @@ pub fn clientbound(
             | cb::PLACE_GHOST_RECIPE
             | cb::COMMANDS,
         ) => redecode(ids, id, payload)?,
-        _ => return Ok(Some((id, before.or(normalized_text)))),
+        _ => return Ok(Some((id, before.or(normalized_text).or(from_1_20_1)))),
     };
     Ok(Some((id, Some(out))))
 }
@@ -394,6 +406,17 @@ pub fn serverbound(
         return renumbered(id, payload.to_vec());
     };
     use packet_ids::play::serverbound as sb;
+    if session.version.at_most(ServerVersion::V1_20_1) {
+        match (state, id) {
+            (State::Login, packet_ids::login::serverbound::HELLO) => {
+                return renumbered(id, v1_20_1::hello(payload)?);
+            }
+            (State::Play, sb::SET_BEACON) => {
+                return renumbered(id, v1_20_1::set_beacon(ids, payload)?);
+            }
+            _ => {}
+        }
+    }
     if session.version.at_most(ServerVersion::V1_20_2) {
         if matches!(
             (state, id),
@@ -583,7 +606,9 @@ const V26_2_SWING: i32 = 63;
 
 /// The id an older `version` numbers its serverbound `swing` (play) by.
 pub(super) fn swing_id(version: ServerVersion) -> i32 {
-    if version.at_most(ServerVersion::V1_20_2) {
+    if version.at_most(ServerVersion::V1_20_1) {
+        v1_20_1::SWING
+    } else if version.at_most(ServerVersion::V1_20_2) {
         50
     } else if version.at_most(ServerVersion::V1_20_3) {
         51
@@ -2698,6 +2723,7 @@ mod tests {
     fn punches_cross_both_adapters_with_each_releases_swing_id() {
         // Packet IDs are the releases' vanilla serverbound reports, independent of the shared helper.
         for (version, swing) in [
+            (ServerVersion::V1_20_1, 0x2f),
             (ServerVersion::V1_20_2, 50),
             (ServerVersion::V1_20_3, 51),
             (ServerVersion::V1_20_6, 54),

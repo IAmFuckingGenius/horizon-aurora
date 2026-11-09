@@ -16,6 +16,28 @@ const MIN_TAG_COST: usize = 8;
 /// take ~32 bytes each here; capped, one value's tags take at most ~8 MiB.
 pub const NBT_MAX_TAGS: usize = NBT_QUOTA / MIN_TAG_COST;
 
+thread_local! {
+    /// Whether [`Reader::nbt`] takes, and [`Writer::nbt`] writes, protocol 763's named roots.
+    static NAMED_NBT: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
+}
+
+/// Until the guard drops, network NBT on this thread is protocol 763's (1.20 and 1.20.1): a root
+/// written as NbtIo wrote files, its type, an empty name, then the payload (`0A 00 00` for a
+/// compound), where 1.20.2 and later leave the name out. With `reads`, [`Reader::nbt`] reads a root
+/// that starts `0A 00 00` as named and anything else as network NBT: within one translation a payload
+/// can hold both, the server's own bytes and what a step already wrote again. With `writes`,
+/// [`Writer::nbt`] writes every root other than `End` named.
+pub fn named_nbt(reads: bool, writes: bool) -> NamedNbtGuard {
+    NamedNbtGuard(NAMED_NBT.replace((reads, writes)))
+}
+/// Restores the NBT form [`named_nbt`] replaced.
+pub struct NamedNbtGuard((bool, bool));
+impl Drop for NamedNbtGuard {
+    fn drop(&mut self) {
+        NAMED_NBT.set(self.0);
+    }
+}
+
 /// A cursor over a received packet body.
 pub struct Reader<'a> {
     data: &'a [u8],
@@ -164,15 +186,24 @@ impl<'a> Reader<'a> {
     pub fn uuid(&mut self) -> Result<u128> {
         Ok(u128::from_be_bytes(self.array()?))
     }
-    /// A network NBT tag (NbtIo.readAnyTag without a root name); `End` means none.
+    /// A network NBT tag (NbtIo.readAnyTag without a root name); `End` means none. Under
+    /// [`named_nbt`] a compound root with an empty name is taken too.
     pub fn nbt(&mut self) -> Result<Tag> {
         let limits = nbt::Limits {
             max_bytes: NBT_QUOTA,
             max_nodes: NBT_MAX_TAGS,
             ..nbt::Limits::default()
         };
-        let (tag, used) = nbt::read_network(&self.data[self.pos..], limits)
-            .map_err(|e| Error::new(format!("NBT: {e}")))?;
+        let rest = &self.data[self.pos..];
+        if NAMED_NBT.get().0
+            && rest.starts_with(&[10, 0, 0])
+            && let Ok((root, used)) = nbt::read_named(rest, limits)
+        {
+            self.pos += used;
+            return Ok(root.tag);
+        }
+        let (tag, used) =
+            nbt::read_network(rest, limits).map_err(|e| Error::new(format!("NBT: {e}")))?;
         self.pos += used;
         Ok(tag)
     }
@@ -292,6 +323,12 @@ impl Writer {
     }
     pub fn nbt(&mut self, tag: &Tag) {
         match nbt::write_network(tag, nbt::Limits::default()) {
+            // Protocol 763's root: the type, then an empty name (a zero length), then the payload.
+            Ok(bytes) if NAMED_NBT.get().1 && bytes.len() > 1 => {
+                self.data.push(bytes[0]);
+                self.data.extend_from_slice(&[0, 0]);
+                self.data.extend_from_slice(&bytes[1..]);
+            }
             Ok(bytes) => self.data.extend_from_slice(&bytes),
             // Unencodable tags (too deep) are sent as "no tag".
             Err(_) => self.data.push(0),
@@ -718,6 +755,34 @@ mod tests {
         );
         let refused = Reader::new(&over).nbt().unwrap_err().to_string();
         assert!(refused.contains("node limit"), "{refused}");
+    }
+
+    #[test]
+    fn protocol_763_roots_carry_an_empty_name_both_ways() {
+        // NbtIo.writeUnnamedTag's bytes for {a:1b} under 1.20.1's FriendlyByteBuf.writeNbt: the
+        // compound type, the empty name's length, then the entry and the end tag.
+        let named = [10, 0, 0, 1, 0, 1, b'a', 1, 0];
+        let tag = Tag::compound([("a", Tag::Byte(1))]);
+        // Without the guard a named root is not network NBT: the name's length reads as an end.
+        assert_ne!(Reader::new(&named).nbt().ok(), Some(tag.clone()));
+        {
+            let _named = named_nbt(true, true);
+            let then = [&named[..], &[0x2a]].concat();
+            let mut r = Reader::new(&then);
+            assert_eq!(r.nbt().unwrap(), tag);
+            assert_eq!(r.u8().unwrap(), 0x2a);
+            // A step's own rewrite of the same tag, nameless, reads too; and "no tag" is one zero.
+            let mut r = Reader::new(&[10, 1, 0, 1, b'a', 1, 0, 0]);
+            assert_eq!(r.nbt().unwrap(), tag);
+            assert_eq!(r.nbt().unwrap(), Tag::End);
+            let mut w = Writer::new();
+            w.nbt(&tag);
+            w.nbt(&Tag::End);
+            assert_eq!(w.data, [&named[..], &[0]].concat());
+        }
+        let mut w = Writer::new();
+        w.nbt(&tag);
+        assert_eq!(w.data, [10, 1, 0, 1, b'a', 1, 0]);
     }
 
     fn round<T: PartialEq + std::fmt::Debug, C: Codec<T>>(v: T) -> Vec<u8> {

@@ -102,10 +102,10 @@ impl Session {
     pub fn writing(&self) -> State {
         from_u8(self.writing.load(Ordering::Acquire))
     }
-    fn set_reading(&self, state: State) {
+    pub(super) fn set_reading(&self, state: State) {
         self.reading.store(to_u8(state), Ordering::Release);
     }
-    fn set_writing(&self, state: State) {
+    pub(super) fn set_writing(&self, state: State) {
         self.writing.store(to_u8(state), Ordering::Release);
     }
 
@@ -129,6 +129,11 @@ impl Session {
     /// knows no such packet.
     pub fn clientbound(&self, id: i32, payload: Vec<u8>) -> Result<Option<(i32, Vec<u8>)>> {
         let state = self.reading();
+        // 1.20.1's network NBT has a root name; what the translation writes again has none.
+        let _named = self
+            .version
+            .at_most(ServerVersion::V1_20_1)
+            .then(|| crate::buf::named_nbt(true, false));
         let _legacy = self
             .version
             .at_most(ServerVersion::V1_20_3)
@@ -137,7 +142,9 @@ impl Session {
             .version
             .at_most(ServerVersion::V1_20_3)
             .then(|| super::ids::legacy_items(self.legacy_items.clone()));
-        let recipe_book = if self.version.at_most(ServerVersion::V1_20_3) {
+        let recipe_book = if self.version.at_most(ServerVersion::V1_20_1) {
+            translate::v1_20_1::RECIPE_BOOK
+        } else if self.version.at_most(ServerVersion::V1_20_3) {
             63
         } else {
             65
@@ -150,10 +157,31 @@ impl Session {
         if self.version.at_most(ServerVersion::V1_21_4) && state == State::Play && id == 2 {
             return translate::old_experience_orb(self, &payload).map(Some);
         }
-        let Some(pinned) = self.version.clientbound_id(state, id) else {
-            return Ok(None);
+        let before_1_20_2 = self.version.at_most(ServerVersion::V1_20_1) && state == State::Play;
+        if before_1_20_2
+            && self.version.clientbound_id(state, id) == Some(ids::play::clientbound::LOGIN)
+        {
+            return self.login_1_20_1(&payload).map(Some);
+        }
+        // 1.20.1's add_player became an AddEntity of a player in 1.20.2.
+        let (pinned, payload) = if before_1_20_2 && id == translate::v1_20_1::ADD_PLAYER {
+            (
+                ids::play::clientbound::ADD_ENTITY,
+                translate::v1_20_1::add_player(self, &payload)?,
+            )
+        } else {
+            let Some(pinned) = self.version.clientbound_id(state, id) else {
+                return Ok(None);
+            };
+            (pinned, payload)
         };
         match (state, pinned) {
+            // 1.20.1 has no configuration: its server goes from the login straight to play.
+            (State::Login, ids::login::clientbound::LOGIN_FINISHED)
+                if self.version.at_most(ServerVersion::V1_20_1) =>
+            {
+                self.set_reading(State::Play)
+            }
             (State::Login, ids::login::clientbound::LOGIN_FINISHED) => {
                 self.set_reading(State::Configuration)
             }
@@ -200,10 +228,61 @@ impl Session {
         Ok(translated)
     }
 
+    /// 1.20.1 goes from the login straight to play, with its registries in the play login; Horizon
+    /// configures first. The login becomes a configuration (the enabled features, the registries and
+    /// what later releases' steps add before the finish), then the login in 1.20.2's layout: the
+    /// first packet, the rest queued in order.
+    fn login_1_20_1(&self, payload: &[u8]) -> Result<(i32, Vec<u8>)> {
+        use ids::configuration::clientbound as cfg;
+        let (registries, login) = translate::v1_20_1::login(payload)?;
+        let mut out = VecDeque::new();
+        // 1.20.1 sends its feature flags in play, right after the login: vanilla's own here.
+        let mut features = Writer::new();
+        features.varint(1);
+        features.string("minecraft:vanilla");
+        out.push_back((cfg::UPDATE_ENABLED_FEATURES, features.data));
+        let mut codec = Writer::new();
+        codec.nbt(&registries);
+        for (id, body) in [
+            (cfg::REGISTRY_DATA, codec.data),
+            (cfg::FINISH_CONFIGURATION, Vec::new()),
+        ] {
+            if let Some((id, translated)) =
+                translate::clientbound(self, State::Configuration, id, &body)?
+            {
+                out.push_back((id, translated.unwrap_or(body)));
+            }
+            out.extend(self.incoming.lock().unwrap().drain(..));
+        }
+        // The registries just remembered name the login's dimension type.
+        let _registries =
+            super::ids::legacy_registries(self.legacy_registries.lock().unwrap().clone());
+        self.set_legacy_secure_chat_enforcement(None);
+        let (id, body) =
+            translate::clientbound(self, State::Play, ids::play::clientbound::LOGIN, &login)?
+                .map(|(id, translated)| (id, translated.unwrap_or_else(|| login.clone())))
+                .ok_or_else(|| crate::Error::new("1.20.1 login dropped"))?;
+        out.push_back(translate::v1_21_1::boats::finish(self, id, body)?);
+        out.extend(self.incoming.lock().unwrap().drain(..));
+        let first = out
+            .pop_front()
+            .ok_or_else(|| crate::Error::new("empty 1.20.1 login"))?;
+        let mut incoming = self.incoming.lock().unwrap();
+        for packet in out.into_iter().rev() {
+            incoming.push_front(packet);
+        }
+        Ok(first)
+    }
+
     /// A packet body (VarInt id + payload) Horizon sends, as this server numbers and lays it out. `None`:
     /// the server has no such packet, so nothing is sent.
     pub fn serverbound(&self, body: &[u8]) -> Result<Option<Vec<u8>>> {
         let state = self.writing();
+        // 1.20.1 reads network NBT with a root name. Horizon's own payloads have none to read.
+        let _named = self
+            .version
+            .at_most(ServerVersion::V1_20_1)
+            .then(|| crate::buf::named_nbt(false, true));
         let _legacy = self
             .version
             .at_most(ServerVersion::V1_20_3)
@@ -230,6 +309,22 @@ impl Session {
             }
             _ => {}
         }
+        // A 1.20.1 server is in play once the login finished: the client's information and brand go
+        // as their play packets, and the rest of its configuration (the finish too) has no meaning.
+        let (state, id) =
+            if self.version.at_most(ServerVersion::V1_20_1) && state == State::Configuration {
+                match id {
+                    ids::configuration::serverbound::CLIENT_INFORMATION => {
+                        (State::Play, ids::play::serverbound::CLIENT_INFORMATION)
+                    }
+                    ids::configuration::serverbound::CUSTOM_PAYLOAD => {
+                        (State::Play, ids::play::serverbound::CUSTOM_PAYLOAD)
+                    }
+                    _ => return Ok(None),
+                }
+            } else {
+                (state, id)
+            };
         let Some((mapped, payload)) = translate::serverbound(self, state, id, payload)? else {
             return Ok(None);
         };

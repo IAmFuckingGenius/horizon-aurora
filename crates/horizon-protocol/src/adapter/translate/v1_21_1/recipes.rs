@@ -385,7 +385,9 @@ pub(crate) fn clientbound(session: &Session, id: i32, payload: &[u8]) -> Result<
             for _ in 0..n {
                 let legacy_serializer = if ids::quirks().legacy_item_nbt {
                     let name = r.string(32767)?;
-                    let names = if session.version.at_most(ServerVersion::V1_20_2) {
+                    let names = if session.version.at_most(ServerVersion::V1_20_1) {
+                        crate::adapter::v1_20_1_ids::RECIPE_SERIALIZER_NAMES
+                    } else if session.version.at_most(ServerVersion::V1_20_2) {
                         crate::adapter::v1_20_2_ids::RECIPE_SERIALIZER_NAMES
                     } else {
                         crate::adapter::v1_20_3_ids::RECIPE_SERIALIZER_NAMES

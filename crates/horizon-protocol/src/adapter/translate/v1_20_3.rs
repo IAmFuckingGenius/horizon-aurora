@@ -70,7 +70,9 @@ pub(super) fn clientbound(
             w.varint(r.varint()?);
             let count = r.count(65536)?;
             w.varint(count as i32);
-            let names = if session.version.at_most(ServerVersion::V1_20_2) {
+            let names = if session.version.at_most(ServerVersion::V1_20_1) {
+                crate::adapter::v1_20_1_ids::ATTRIBUTE_NAMES
+            } else if session.version.at_most(ServerVersion::V1_20_2) {
                 crate::adapter::v1_20_2_ids::ATTRIBUTE_NAMES
             } else {
                 crate::adapter::v1_20_3_ids::ATTRIBUTE_NAMES
@@ -149,6 +151,7 @@ pub(super) fn upgrade_block_entity(
         return;
     }
     let names = match session.version {
+        ServerVersion::V1_20_1 => crate::adapter::v1_20_1_ids::BLOCK_ENTITY_TYPE_NAMES,
         ServerVersion::V1_20_2 => crate::adapter::v1_20_2_ids::BLOCK_ENTITY_TYPE_NAMES,
         ServerVersion::V1_20_3 => crate::adapter::v1_20_3_ids::BLOCK_ENTITY_TYPE_NAMES,
         _ => return,
@@ -476,7 +479,9 @@ pub(super) fn entity_data(session: &Session, data: &mut play::SetEntityData) {
                     "minecraft:red_carpet",
                     "minecraft:black_carpet",
                 ][color as usize];
-                let names = if session.version.at_most(ServerVersion::V1_20_2) {
+                let names = if session.version.at_most(ServerVersion::V1_20_1) {
+                    crate::adapter::v1_20_1_ids::ITEM_NAMES
+                } else if session.version.at_most(ServerVersion::V1_20_2) {
                     crate::adapter::v1_20_2_ids::ITEM_NAMES
                 } else {
                     crate::adapter::v1_20_3_ids::ITEM_NAMES

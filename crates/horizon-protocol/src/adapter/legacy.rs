@@ -1,5 +1,5 @@
 //! Connection-local registry names used by the pre-component NBT item format.
-use super::{ServerVersion, ids, v1_20_2_ids as before, v1_20_3_ids as old};
+use super::{ServerVersion, ids, v1_20_1_ids as oldest, v1_20_2_ids as before, v1_20_3_ids as old};
 use crate::{Error, Result, packets::configuration, registry};
 use horizon_world::nbt::Tag;
 use std::sync::Arc;
@@ -12,7 +12,27 @@ pub(super) fn registries(version: ServerVersion) -> ids::LegacyRegistries {
         return Default::default();
     }
     let mut out = ids::LegacyRegistries::new();
-    let tables = if version.at_most(ServerVersion::V1_20_2) {
+    let tables = if version.at_most(ServerVersion::V1_20_1) {
+        // 1.20.1 numbers its mob effects from 1 (the table's first name is empty), lacks
+        // 1.20.2's max_absorption attribute and some sounds.
+        [
+            ("minecraft:item", oldest::OLD_ITEM_NAMES),
+            ("minecraft:block", oldest::BLOCK_NAMES),
+            ("minecraft:entity_type", oldest::ENTITY_TYPE_NAMES),
+            (
+                "minecraft:block_entity_type",
+                oldest::BLOCK_ENTITY_TYPE_NAMES,
+            ),
+            ("minecraft:attribute", oldest::ATTRIBUTE_NAMES),
+            ("minecraft:sound_event", oldest::SOUND_EVENT_NAMES),
+            ("minecraft:mob_effect", oldest::MOB_EFFECT_NAMES),
+            ("minecraft:potion", oldest::POTION_NAMES),
+            ("minecraft:enchantment", oldest::ENCHANTMENT_NAMES),
+            ("minecraft:painting_variant", oldest::PAINTING_VARIANT_NAMES),
+            ("minecraft:banner_pattern", oldest::BANNER_PATTERN_NAMES),
+            ("minecraft:instrument", oldest::INSTRUMENT_NAMES),
+        ]
+    } else if version.at_most(ServerVersion::V1_20_2) {
         [
             ("minecraft:item", before::OLD_ITEM_NAMES),
             ("minecraft:block", before::BLOCK_NAMES),
@@ -46,7 +66,9 @@ pub(super) fn registries(version: ServerVersion) -> ids::LegacyRegistries {
             ("minecraft:instrument", old::INSTRUMENT_NAMES),
         ]
     };
-    let aliases = if version.at_most(ServerVersion::V1_20_2) {
+    let aliases = if version.at_most(ServerVersion::V1_20_1) {
+        oldest::NAME_ALIASES
+    } else if version.at_most(ServerVersion::V1_20_2) {
         before::NAME_ALIASES
     } else {
         old::NAME_ALIASES

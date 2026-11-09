@@ -15,6 +15,8 @@ mod pinned_ids;
 pub mod session;
 mod translate;
 pub(crate) use translate::v1_20_2::read_component as read_legacy_component;
+pub mod v1_20_1;
+mod v1_20_1_ids;
 pub mod v1_20_2;
 mod v1_20_2_ids;
 pub mod v1_20_3;
@@ -76,11 +78,13 @@ pub enum ServerVersion {
     /// 1.20.3 and 1.20.4: one protocol.
     V1_20_3,
     V1_20_2,
+    /// 1.20 and 1.20.1: one protocol.
+    V1_20_1,
 }
 
 impl ServerVersion {
     /// Newest first.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Current,
         Self::V26_2,
         Self::V26_1,
@@ -95,6 +99,7 @@ impl ServerVersion {
         Self::V1_20_6,
         Self::V1_20_3,
         Self::V1_20_2,
+        Self::V1_20_1,
     ];
 
     /// Whether this is `other` or an older release: the translation steps from `other` up apply.
@@ -120,6 +125,7 @@ impl ServerVersion {
             Self::V1_20_6 => v1_20_6::PROTOCOL,
             Self::V1_20_3 => v1_20_3::PROTOCOL,
             Self::V1_20_2 => v1_20_2::PROTOCOL,
+            Self::V1_20_1 => v1_20_1::PROTOCOL,
         }
     }
 
@@ -140,6 +146,7 @@ impl ServerVersion {
             Self::V1_20_6 => v1_20_6::NAME,
             Self::V1_20_3 => v1_20_3::NAME,
             Self::V1_20_2 => v1_20_2::NAME,
+            Self::V1_20_1 => v1_20_1::NAME,
         }
     }
 
@@ -163,6 +170,7 @@ impl ServerVersion {
             Self::V1_20_6 => Release(1, 20, 5),
             Self::V1_20_3 => Release(1, 20, 3),
             Self::V1_20_2 => Release(1, 20, 2),
+            Self::V1_20_1 => Release(1, 20, 0),
         }
     }
 
@@ -183,6 +191,7 @@ impl ServerVersion {
             Self::V1_20_6 => "1.20.5-1.20.6",
             Self::V1_20_3 => "1.20.3-1.20.4",
             Self::V1_20_2 => "1.20.2",
+            Self::V1_20_1 => "1.20-1.20.1",
         }
     }
 
@@ -414,6 +423,16 @@ impl ServerVersion {
             entity_data_serializer: V1_20_3.entity_data_serializer,
             ..v1_20_2_ids::IDS
         };
+        static V1_20_1: ids::Ids = ids::Ids {
+            // 1.20.2's layouts inside what the shared readers decode, and its EntityDataSerializers
+            // registration order (the same 28, read off both jars); items carry 1.20.1's data version.
+            quirks: ids::Quirks {
+                legacy_item_data_version: 3465,
+                ..V1_20_2.quirks
+            },
+            entity_data_serializer: V1_20_2.entity_data_serializer,
+            ..v1_20_1_ids::IDS
+        };
         match self {
             Self::Current => None,
             Self::V26_2 => Some(&V26_2),
@@ -429,6 +448,7 @@ impl ServerVersion {
             Self::V1_20_6 => Some(&V1_20_6),
             Self::V1_20_3 => Some(&V1_20_3),
             Self::V1_20_2 => Some(&V1_20_2),
+            Self::V1_20_1 => Some(&V1_20_1),
         }
     }
 
@@ -494,6 +514,8 @@ impl ServerVersion {
             (Self::V1_20_3, Direction::Serverbound) => v1_20_3::serverbound(state),
             (Self::V1_20_2, Direction::Clientbound) => v1_20_2::clientbound(state),
             (Self::V1_20_2, Direction::Serverbound) => v1_20_2::serverbound(state),
+            (Self::V1_20_1, Direction::Clientbound) => v1_20_1::clientbound(state),
+            (Self::V1_20_1, Direction::Serverbound) => v1_20_1::serverbound(state),
         }
     }
 
@@ -582,7 +604,11 @@ mod tests {
             ServerVersion::from_protocol(764),
             Some(ServerVersion::V1_20_2)
         );
-        assert_eq!(ServerVersion::from_protocol(763), None);
+        assert_eq!(
+            ServerVersion::from_protocol(763),
+            Some(ServerVersion::V1_20_1)
+        );
+        assert_eq!(ServerVersion::from_protocol(762), None);
         assert!(ServerVersion::V26_1.at_most(ServerVersion::V26_2));
         assert!(!ServerVersion::V26_2.at_most(ServerVersion::V26_1));
     }
