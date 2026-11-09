@@ -231,11 +231,15 @@ impl Session {
     /// 1.20.1 goes from the login straight to play, with its registries in the play login; Horizon
     /// configures first. The login becomes a configuration (the enabled features, the registries and
     /// what later releases' steps add before the finish), then the login in 1.20.2's layout: the
-    /// first packet, the rest queued in order.
+    /// first packet, the rest queued in order. A later login (a 1.20.1 proxy moving the player to
+    /// another server) finds the client in play: it is sent back to configuration first.
     fn login_1_20_1(&self, payload: &[u8]) -> Result<(i32, Vec<u8>)> {
         use ids::configuration::clientbound as cfg;
         let (registries, login) = translate::v1_20_1::login(payload)?;
         let mut out = VecDeque::new();
+        if self.local_player.lock().unwrap().is_some() {
+            out.push_back((ids::play::clientbound::START_CONFIGURATION, Vec::new()));
+        }
         // 1.20.1 sends its feature flags in play, right after the login: vanilla's own here.
         let mut features = Writer::new();
         features.varint(1);

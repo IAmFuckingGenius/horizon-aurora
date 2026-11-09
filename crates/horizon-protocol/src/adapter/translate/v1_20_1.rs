@@ -451,6 +451,15 @@ mod tests {
             .collect();
         assert_eq!(registries[0], "minecraft:dimension_type");
         assert!(registries.iter().any(|r| r == "minecraft:world_clock"));
+        // A proxy's next login finds the client in play: back to configuration first.
+        let (id, _) = s.clientbound(OLD_LOGIN, old_login()).unwrap().unwrap();
+        assert_eq!(id, packet_ids::play::clientbound::START_CONFIGURATION);
+        let mut again = Vec::new();
+        while let Some((id, _)) = s.next_incoming() {
+            again.push(id);
+        }
+        assert_eq!(again.len(), packets.len());
+        assert_eq!(again.last(), Some(&packet_ids::play::clientbound::LOGIN));
     }
 
     #[test]

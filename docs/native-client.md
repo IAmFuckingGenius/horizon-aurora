@@ -254,10 +254,13 @@ from 1), and the layout changes from both jars' bytecode
 and respawn field order, add_player as a player AddEntity, two-int forgotten chunks,
 advancements' criteria names, mob effect ids, display entity data around 1.20.2's new
 position interpolation duration and named NBT in tag queries and effect data. Unit
-tests check these conversions against hand-written bytes; beacon effect data sent in
-container properties keeps 1.20.1's -1 for none, a limited-crafting game rule is not
-known (off), and play against a real 1.20/1.20.1 server is not yet verified (a manual
-`.github/workflows/protocol-e2e.yml` run does it once its dispatcher accepts the EULA).
+tests check these conversions against hand-written bytes. Stacks sent back to the
+server use the item NBT the 1.20.2–1.20.4 bridges write, with no reverse datafix to
+1.20.1's (its suspicious-stew effects, for one, were numeric). The limited-crafting
+game rule is not known (off). A 1.20.1 proxy's later login sends the client back to
+configuration first. Play against a real 1.20/1.20.1 server is not yet verified: a
+manual `.github/workflows/protocol-e2e.yml` run does it once its dispatcher accepts
+the EULA.
 Online-mode login and complete interactive playthroughs on these versions
 have not been validated. Earlier Java releases, Classic/Alpha/Beta,
 April Fools and Bedrock are outside the implemented adapter set.
