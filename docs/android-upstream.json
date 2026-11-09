@@ -7,14 +7,14 @@
   "compared_source_files": 3147,
   "modified_existing_files": 41,
   "branch": "main",
-  "merged_upstream_commit": "21a750533e2690dd049b70240e6de37b7d5d3cef",
-  "merged_upstream_commits": 26409,
-  "last_reviewed_date": "2026-11-09",
-  "last_update_commits": 3624,
-  "latest_fetched_commit": "21a750533e2690dd049b70240e6de37b7d5d3cef",
-  "review": "Aurora merged Horizon main of 2026-11-09 (21a7505) on top of the 2026-11-07 nightly. Upstream moved the game loop out of game.rs into game/*.rs (launch options, play input, pointer capture, inventory input, render settings, loading screen, resource loader, loading window); Aurora's Android paths were carried into those files. Taken from upstream: the settings shell and graphics screen, surface_setup.rs, the TerrainWire varying packing (Aurora's GLES lowering no longer packs varyings), the older-servers protocol adapter (1.20.2-26.2), Discord behind its feature. Kept for Android: the touch, keypad and gamepad input (upstream's unused port of Starling's input is not wired), the launcher's mod browser and installed list, Horizon Boost readout in the graphics screen, GLES terrain and entity lowering, compatibility mode and opaque surfaces. The older-servers adapter is on by default on Android with a launcher switch. cargo check passed on arm64-v8a, armeabi-v7a, x86 and x86_64, and the shader check (tools/test_android_wgsl.py) passed; device testing of this merge is pending.",
+  "merged_upstream_commit": "0300ba0a7633cbac18c931dd11a1f7b09ecbe181",
+  "merged_upstream_commits": 27136,
+  "last_reviewed_date": "2026-11-10",
+  "last_update_commits": 727,
+  "latest_fetched_commit": "0300ba0a7633cbac18c931dd11a1f7b09ecbe181",
+  "review": "Aurora merged Horizon main of 2026-11-10 (0300ba0) on top of the 2026-11-09 merge. Upstream moved remote packet polling to game/remote_poll.rs (Aurora's bounded Android chunk budget carried there), the Horizon settings page to options_ui_pages.rs (Aurora's Horizon Boost row added), the swapchain configuration to gfx/output_apply.rs (Aurora's full-window Android presentation size added), and Studio's fields into game.studio. Upstream removed offline names from its desktop launcher; Aurora keeps its own offline, Microsoft and Ely.by accounts in its Android launcher, and account.rs keeps provider-qualified keys. Kept for Android: touch and keypad input, the launcher's mod browser and installed list, skins.rs for the wardrobe. cargo check passed on arm64-v8a, armeabi-v7a, x86 and x86_64 with the source checks; device testing of this merge is pending.",
   "pending_review_commits": 0,
-  "selected_upstream_release": "main-2026-11-09",
+  "selected_upstream_release": "main-2026-11-10",
   "reviewed_render_optimizations": [
     "aa4622805",
     "de59ab97c568168d14718a1b27880cead8134997"
@@ -55,6 +55,17 @@
     "not_carried_over": [
       "Upstream's touch/aim and android_runtime tests (Aurora keeps its own input)",
       "Upstream's launcher mod browser fitting_update"
+    ],
+    "device_validated": false
+  },
+  "aurora_upstream_merge_3": {
+    "date": "2026-11-10",
+    "source": "main",
+    "commit": "0300ba0a7633cbac18c931dd11a1f7b09ecbe181",
+    "not_carried_over": [
+      "Upstream's touch gesture tests",
+      "Upstream's offline-name removal (desktop launcher only)",
+      "Upstream's mod browser version source (horizon_platform) and native status in the installed list"
     ],
     "device_validated": false
   }
