@@ -725,10 +725,24 @@ fn connect_tcp(
     Ok((c, host, port))
 }
 
-/// Whether joining servers of older releases is on (roadmap `older-servers`): off by default while the
-/// adapter is incomplete; `HORIZON_OLDER_SERVERS=1` turns it on.
+/// The app's choice for joining servers of older releases (`set_older_servers`): on by default on
+/// Android, whose launcher has a switch for it and where no environment can be set; off elsewhere
+/// while the adapter is incomplete.
+static OLDER_SERVERS: AtomicBool = AtomicBool::new(cfg!(target_os = "android"));
+
+/// Turns joining servers of older releases on or off (the Android launcher's Older servers).
+pub fn set_older_servers(on: bool) {
+    OLDER_SERVERS.store(on, Ordering::Relaxed);
+}
+
+/// Whether joining servers of older releases is on (roadmap `older-servers`):
+/// `HORIZON_OLDER_SERVERS=1` or `=0` when set, else the app's choice (`set_older_servers`).
 pub fn older_servers_enabled() -> bool {
-    std::env::var_os("HORIZON_OLDER_SERVERS").is_some_and(|v| v == "1")
+    match std::env::var_os("HORIZON_OLDER_SERVERS") {
+        Some(value) if value == "1" => true,
+        Some(value) if value == "0" => false,
+        _ => OLDER_SERVERS.load(Ordering::Relaxed),
+    }
 }
 
 /// The older release a server speaks, by its status ping, when Horizon can translate it; `None` for the

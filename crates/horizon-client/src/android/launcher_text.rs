@@ -529,6 +529,11 @@ static RU: &[(&str, &str)] = &[
     ),
     ("A new dev build is out", "Вышла новая dev-сборка"),
     ("Move from Horizon Android", "Перенос из Horizon Android"),
+    ("Older servers", "Старые серверы"),
+    (
+        "Joins servers of Minecraft 1.20.2 to 26.2 through Horizon's protocol adapter, chosen by the server's version. Experimental: some items and features of older releases may not work.",
+        "Подключение к серверам Minecraft от 1.20.2 до 26.2 через адаптер протокола Horizon, по версии сервера. Экспериментально: часть предметов и функций старых версий может не работать.",
+    ),
     (
         "Copies worlds, packs, shaders, mods, settings and touch controls from Horizon Android or Starling into a new instance. In the list of places choose «Horizon Android», then Use this folder. Accounts stay there: sign in again.",
         "Копирует миры, ресурспаки, шейдеры, моды, настройки и сенсорное управление из Horizon Android или Starling в новый инстанс. В списке мест выберите «Horizon Android», затем «Использовать эту папку». Аккаунты туда не переносятся: войдите снова.",

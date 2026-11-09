@@ -230,6 +230,7 @@ impl Launcher {
         crate::configure_input_mode(catalog.config.input_host);
         crate::device_runtime::configure(catalog.config.device);
         text::choose(catalog.config.launcher_language);
+        horizon_client::net::set_older_servers(!catalog.config.older_servers_off);
         let start_request = crate::engines::take_started(&home);
         let boot_error = crate::engines::take_boot_error(&home);
         // A request whose engine failed to load is not this engine's to open: the

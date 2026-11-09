@@ -2951,6 +2951,13 @@ impl Launcher {
                         Control::Dropdown(self.profile_name(), Action::Profile),
                     ),
                     Row::new(
+                        t("Older servers"),
+                        t(
+                            "Joins servers of Minecraft 1.20.2 to 26.2 through Horizon's protocol adapter, chosen by the server's version. Experimental: some items and features of older releases may not work.",
+                        ),
+                        Control::Switch(!c.older_servers_off, Action::OlderServers),
+                    ),
+                    Row::new(
                         t("Move from Horizon Android"),
                         t(
                             "Copies worlds, packs, shaders, mods, settings and touch controls from Horizon Android or Starling into a new instance. In the list of places choose «Horizon Android», then Use this folder. Accounts stay there: sign in again.",

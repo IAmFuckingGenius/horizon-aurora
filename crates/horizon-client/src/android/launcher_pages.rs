@@ -78,6 +78,8 @@ pub(super) enum Action {
     OpenAppUpdate,
     /// Copy Horizon Android's worlds, packs and settings into a new instance.
     ImportHorizon,
+    /// Join servers of older releases through Horizon's protocol adapter, or not.
+    OlderServers,
     /// Read the release lists when the launcher opens, or not.
     UpdateCheck,
     SignOut,
@@ -1112,6 +1114,11 @@ impl Launcher {
                         self.toast(super::text::t("Could not export the world"), error, true);
                     }
                 }
+            }
+            Some(Action::OlderServers) => {
+                self.catalog.config.older_servers_off ^= true;
+                self.catalog.config.save(&self.home)?;
+                horizon_client::net::set_older_servers(!self.catalog.config.older_servers_off);
             }
             Some(Action::ImportHorizon) => {
                 let from = self.catalog.config.profile;

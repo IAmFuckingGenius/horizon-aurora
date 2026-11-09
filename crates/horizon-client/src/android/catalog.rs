@@ -83,6 +83,9 @@ pub struct Config {
     /// Do not read Aurora's release lists when the launcher opens: no notice of a newer
     /// build of the app (read by default; Settings › Engines checks on demand).
     pub skip_update_check: bool,
+    /// Do not join servers of older releases through Horizon's protocol adapter
+    /// (`net::set_older_servers`; joined by default).
+    pub older_servers_off: bool,
 }
 
 /// The launcher's language choice.
