@@ -49,6 +49,13 @@ mod backend {
 }
 mod i18n {
     pub fn tr(en: &str) -> &str { en }
+    pub fn trf(en: &str, args: &[(&str, &str)]) -> String {
+        let mut out = en.to_owned();
+        for (name, value) in args {
+            out = out.replace(&format!("{{{name}}}"), value);
+        }
+        out
+    }
 }
 mod proxy {
     pub fn agent(builder: ureq::AgentBuilder, _: &str) -> ureq::AgentBuilder { builder }
