@@ -377,7 +377,7 @@ jobs:
       - name: Apply the bundles (horizon-mixins plan, then apply into a separate stage)
         run: |
           # horizon-mixins refuses links among its inputs; the tree's only one is CLAUDE.md -> AGENTS.md.
-          find . \( -path ./.git -o -path ./.local \) -prune -o -type l -print -delete
+          find . \( -path ./.git -o -path ./.local \) -prune -o -type l -print -exec rm -f {} +
           mods="$RUNNER_TEMP/native-bundle/mods"
           "$HORIZON_MIXINS" plan --workspace "$GITHUB_WORKSPACE" --mods "$mods" --out "$RUNNER_TEMP/plan.json"
           "$HORIZON_MIXINS" apply --workspace "$GITHUB_WORKSPACE" --mods "$mods" --out "$RUNNER_TEMP/stage" \
