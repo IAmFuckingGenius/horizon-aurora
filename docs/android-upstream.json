@@ -7,14 +7,14 @@
   "compared_source_files": 3147,
   "modified_existing_files": 41,
   "branch": "main",
-  "merged_upstream_commit": "6560641ba51a452f6bc2407baa4eb1b3be517ca8",
-  "merged_upstream_commits": 22785,
-  "last_reviewed_date": "2026-11-08",
-  "last_update_commits": 10184,
-  "latest_fetched_commit": "d17e8fa343b1ae9c6185fe425efc79a7c17bca72",
-  "review": "Aurora merged the 2026-11-07 Horizon nightly (6560641), not the moving main branch. Followed upstream's restructure: the game is the horizon-client library with horizon-client-lib below it, the Android host lives in horizon-client (android_host) and crates/horizon-android keeps only the native entry points and the DocumentsProvider exports. WebAssembly code mods are dropped as upstream did; content mods and the bundled native mods remain. Taken from upstream: terrain passes, GPU timing, panorama, audio probing, extras and graphics screens, zip 9. Kept for Android: compatibility mode, GLES entity shader and base-vertex fallback, surface suspension, the startup renderer worker, per-session ownership, HUD insets, keypad and touch input, Horizon Boost thermal limits. Newly arrived upstream workflows are stored disabled under .github/upstream-workflows. ARM64 cargo check and Clippy (-D warnings) and the Android source checks passed; device testing of this merge, other ABIs and GLES devices is still pending.",
-  "pending_review_commits": 113,
-  "selected_upstream_release": "nightly-2026-11-07",
+  "merged_upstream_commit": "21a750533e2690dd049b70240e6de37b7d5d3cef",
+  "merged_upstream_commits": 26409,
+  "last_reviewed_date": "2026-11-09",
+  "last_update_commits": 3624,
+  "latest_fetched_commit": "21a750533e2690dd049b70240e6de37b7d5d3cef",
+  "review": "Aurora merged Horizon main of 2026-11-09 (21a7505) on top of the 2026-11-07 nightly. Upstream moved the game loop out of game.rs into game/*.rs (launch options, play input, pointer capture, inventory input, render settings, loading screen, resource loader, loading window); Aurora's Android paths were carried into those files. Taken from upstream: the settings shell and graphics screen, surface_setup.rs, the TerrainWire varying packing (Aurora's GLES lowering no longer packs varyings), the older-servers protocol adapter (1.20.2-26.2), Discord behind its feature. Kept for Android: the touch, keypad and gamepad input (upstream's unused port of Starling's input is not wired), the launcher's mod browser and installed list, Horizon Boost readout in the graphics screen, GLES terrain and entity lowering, compatibility mode and opaque surfaces. The older-servers adapter is on by default on Android with a launcher switch. cargo check passed on arm64-v8a, armeabi-v7a, x86 and x86_64, and the shader check (tools/test_android_wgsl.py) passed; device testing of this merge is pending.",
+  "pending_review_commits": 0,
+  "selected_upstream_release": "main-2026-11-09",
   "reviewed_render_optimizations": [
     "aa4622805",
     "de59ab97c568168d14718a1b27880cead8134997"
@@ -45,6 +45,16 @@
       "Android tiler split-solid terrain on Vulkan",
       "GLES panorama reduction",
       "Nether fog culling"
+    ],
+    "device_validated": false
+  },
+  "aurora_upstream_merge_2": {
+    "date": "2026-11-09",
+    "source": "main",
+    "commit": "21a750533e2690dd049b70240e6de37b7d5d3cef",
+    "not_carried_over": [
+      "Upstream's touch/aim and android_runtime tests (Aurora keeps its own input)",
+      "Upstream's launcher mod browser fitting_update"
     ],
     "device_validated": false
   }
