@@ -599,12 +599,12 @@ pub use native_world_draw::NativeWorldDraw;
 pub use native_world_edit::{NativeBlockEdit, NativeBlockNbt, NativeBlockRun, NativeHeightmap};
 pub use native_world_read::NativeBlockReadError;
 use resource_load::{Progress, launch_world, load_resources, named_scope, synchronous_startup};
+#[cfg(target_os = "android")]
+pub(crate) use resource_loader::android_game;
 use resource_loader::{
     EntityModels, GameCpuResources, Loaded, LoaderMsg, PendingWorldEntry, WorldRestLoader,
     run_loading, write_report,
 };
-#[cfg(target_os = "android")]
-pub(crate) use resource_loader::android_game;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -10663,11 +10663,11 @@ impl Game<'_> {
         let can_build = self.may_build() || adventure;
         let outline = if touch_target_visible
             && block_outline_drawn(
-            self.ui.hide_gui,
-            self.entity_targeted(),
-            can_build,
-            self.shows_panorama(),
-        ) {
+                self.ui.hide_gui,
+                self.entity_targeted(),
+                can_build,
+                self.shows_panorama(),
+            ) {
             self.pick()
                 .filter(|h| {
                     self.may_build()
@@ -10721,17 +10721,18 @@ impl Game<'_> {
                                     let k = i % 3;
                                     p[k] + b[k] + e[i] * (b[k + 3] - b[k])
                                 })
-                                .collect();
-                        }
-                        f.outline_edges
-                            .iter()
-                            .map(|e| std::array::from_fn(|i| p[i % 3] + o[i % 3] + e[i]))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+                            })
+                            .collect();
+                    }
+                    f.outline_edges
+                        .iter()
+                        .map(|e| std::array::from_fn(|i| p[i % 3] + o[i % 3] + e[i]))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         pr.lap("pr_outline");
         let title = self.shows_panorama();
         let (yaw, pitch) = if title {
