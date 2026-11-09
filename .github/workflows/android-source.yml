@@ -36,6 +36,7 @@ jobs:
       - run: python3 tools/test_android_appearance.py
       - run: python3 tools/test_android_engines.py
       - run: python3 tools/test_android_worlds.py
+      - run: python3 tools/test_android_wgsl.py
       - name: Check workflow export matches the active workflow
         run: |
           cmp .github/workflows/android-source.yml packaging/android/source-checks.yml
