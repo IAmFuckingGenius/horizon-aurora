@@ -52,6 +52,9 @@ LEGACY_NAMES = "item=OLD_ITEM block entity_type block_entity_type attribute soun
                "potion enchantment painting_variant banner_pattern instrument recipe_serializer"
 # (inherit, substitutes, item names, extra renames, static registry names, legacy aliases)
 RELEASES = {
+    # Aurora: 1.20 and 1.20.1 (protocol 763), named as 1.20.2 names them.
+    "1.20.1": (None, False, True, COMPONENT_RENAMES + LEGACY_RENAMES + [
+        "block:minecraft:grass=minecraft:short_grass", "item:minecraft:grass=minecraft:short_grass"], LEGACY_NAMES, True),
     "1.20.2": ("1.20.3", False, True, COMPONENT_RENAMES + LEGACY_RENAMES + [
         "block:minecraft:grass=minecraft:short_grass", "item:minecraft:grass=minecraft:short_grass"], LEGACY_NAMES, True),
     "1.20.3": ("1.20.6", False, True, COMPONENT_RENAMES + LEGACY_RENAMES, LEGACY_NAMES, True),

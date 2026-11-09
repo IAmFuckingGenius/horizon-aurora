@@ -179,9 +179,12 @@ def state_substitutes(old_blocks, new_blocks):
 
 
 def entries(report, registry):
-    """{name: id} of one registry, checked to number its entries 0..n."""
+    """{name: id} of one registry, checked to number its entries 0..n (1..n for mob effects before
+    1.20.2, which kept their old numeric ids)."""
     found = {name: e["protocol_id"] for name, e in report.get(registry, {}).get("entries", {}).items()}
-    assert sorted(found.values()) == list(range(len(found))), registry
+    values = sorted(found.values())
+    start = values[0] if values else 0
+    assert start in (0, 1) and values == list(range(start, start + len(values))), registry
     return found
 
 
