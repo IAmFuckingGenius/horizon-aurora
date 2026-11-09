@@ -1066,6 +1066,8 @@
   "horizon.multiplayer.version.title": "Server Version",
   "horizon.multiplayer.version.hint": "Auto: chosen from the server's reply",
   "horizon.multiplayer.ping_as": "%s ms, as %s",
+  "horizon.loading.world_graphics": "Preparing world graphics",
+  "horizon.loading.world_graphics.hint": "The first start on this GPU can take up to a minute",
   "horizon.options.touch.mode": "Control scheme",
   "horizon.options.touch.scheme.joystick_crosshair": "Joystick & aim crosshair",
   "horizon.options.touch.scheme.joystick_tap": "Joystick & tap to interact",

@@ -217,6 +217,8 @@
   "horizon.multiplayer.version.title": "Версия сервера",
   "horizon.multiplayer.version.hint": "Авто: подбирается по ответу сервера",
   "horizon.multiplayer.ping_as": "%s мс, как %s",
+  "horizon.loading.world_graphics": "Подготовка графики мира",
+  "horizon.loading.world_graphics.hint": "Первый запуск на этой видеокарте может занять до минуты",
   "horizon.multiplayer.invite_code": "Код приглашения",
   "horizon.multiplayer.relay": "Ретранслятор (необязательно)",
   "Preset": "Набор",

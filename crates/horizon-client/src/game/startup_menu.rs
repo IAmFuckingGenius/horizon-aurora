@@ -1808,23 +1808,46 @@ impl Loading {
             return;
         }
         if self.menu.pending.is_some() {
+            // Android on GLES: the world renderer's shaders compile with the screen held on
+            // this frame, the first time on a GPU for up to a minute, so it says so.
+            let gles_world = cfg!(target_os = "android")
+                && self
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|r| r.info.backend == wgpu::Backend::Gl)
+                && matches!(self.loaded, Some(Ok(_)));
+            let line = if gles_world {
+                horizon_client::lang::get_or(
+                    "horizon.loading.world_graphics",
+                    "Preparing world graphics",
+                )
+            } else {
+                self.progress.line().to_owned()
+            };
             horizon_client::level_loading::draw_loading_overlay(
                 batch,
                 &gui.atlas,
-                if cfg!(target_os = "android")
-                    && self
-                        .renderer
-                        .as_ref()
-                        .is_some_and(|r| r.info.backend == wgpu::Backend::Gl)
-                    && matches!(self.loaded, Some(Ok(_)))
-                {
-                    "Preparing world graphics"
-                } else {
-                    self.progress.line()
-                },
+                &line,
                 self.progress.fraction(),
                 self.settings.file.bool("darkMojangStudiosBackground"),
             );
+            if gles_world {
+                let hint = horizon_client::lang::get_or(
+                    "horizon.loading.world_graphics.hint",
+                    "The first start on this GPU can take up to a minute",
+                );
+                let width = HudBatch::text_width(&gui.atlas, &hint);
+                // Under the progress bar (`draw_loading_overlay`'s, at 83.25 % of the height).
+                let y = (f64::from(batch.height) * 0.8325) as f32 + 10.0;
+                batch.text(
+                    &gui.atlas,
+                    &hint,
+                    ((batch.width - width) / 2.0).floor(),
+                    y,
+                    horizon_client::hud::rgba(170, 170, 170, 255),
+                    true,
+                );
+            }
         } else if let Some((win, frame)) = &mut self.menu.win {
             let now = Instant::now();
             // 20 ticks a second: the startup menu runs no tick rate.
