@@ -94,7 +94,6 @@ fn emissive_branches(first: u32, depth: usize) -> String {
     code
 }
 
-
 #[cfg(test)]
 #[path = "terrain_source/hdr_gpu_tests.rs"]
 mod hdr_gpu_tests;

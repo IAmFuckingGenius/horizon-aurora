@@ -2933,10 +2933,10 @@ impl Renderer {
             previous.map(Self::replacement_context),
             api,
             translucent_batching,
-            wide_frame,
             shader_pack,
-            linear_pack,
-            hdr_float,
+            settings,
+            request,
+            display,
         )
         .await
     }
@@ -2960,10 +2960,12 @@ impl Renderer {
         mut previous: Option<ReplacementContext>,
         api: GraphicsApi,
         translucent_batching: bool,
-        wide_frame: bool,
         shader_pack: bool,
-        linear_pack: bool,
-        hdr_float: bool,
+        // As `new`: the settings and the pack's `request` pick the frame, with what this
+        // window's display reported before.
+        settings: &crate::graphics::Graphics,
+        request: output::FrameRequest,
+        display: output::DisplayReading,
     ) -> Result<Self> {
         #[cfg(target_os = "android")]
         let startup = (!offscreen && api != GraphicsApi::OpenGl)
@@ -3029,7 +3031,9 @@ impl Renderer {
                 &device_lost,
                 surface.get_capabilities(&adapter),
                 size,
-                previous.as_ref().map(|renderer| renderer.config.present_mode),
+                previous
+                    .as_ref()
+                    .map(|renderer| renderer.config.present_mode),
                 previous.is_none(),
                 &window,
             )?),
@@ -3122,8 +3126,11 @@ impl Renderer {
         let shader = kept.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Horizon terrain"),
             source: wgpu::ShaderSource::Wgsl(
-                terrain_source::lowered(terrain_shader(), adapter.get_info().backend == wgpu::Backend::Gl)
-                    .into(),
+                terrain_source::lowered(
+                    terrain_shader(),
+                    adapter.get_info().backend == wgpu::Backend::Gl,
+                )
+                .into(),
             ),
         });
         let entry = |binding, visibility, ty| wgpu::BindGroupLayoutEntry {
@@ -5757,7 +5764,7 @@ impl Renderer {
             device_lost: self.device_lost.clone(),
             config: self.config.clone(),
             present_modes: self.present_modes.clone(),
-            hdr_output: self.hdr_output,
+            hdr_output: self.output_caps.hdr,
             reuse: self.reuse.clone(),
         }
     }

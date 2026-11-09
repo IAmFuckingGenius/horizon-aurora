@@ -733,7 +733,15 @@ impl Hdr {
         };
         if let (Some(l), Some(hud), Some([_, group, _])) = (&self.layered, &t.hud, &t.passes) {
             let view = hud.create_view(&Default::default());
-            Self::draw(encoder, &l.keep.1, group, &view, "HDR HUD backdrop", timing, None);
+            Self::draw(
+                encoder,
+                &l.keep.1,
+                group,
+                &view,
+                "HDR HUD backdrop",
+                timing,
+                None,
+            );
             return;
         }
         encoder.copy_texture_to_texture(
