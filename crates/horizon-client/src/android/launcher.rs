@@ -304,7 +304,6 @@ impl Launcher {
         horizon_client::auth::clear_current();
         self.session_ready = false;
         self.prepared_session = None;
-        horizon_client::discord_presence::stop();
         horizon_client::ui_theme::reset_atlas();
         self.cursor = (0.0, 0.0);
         self.drag = None;

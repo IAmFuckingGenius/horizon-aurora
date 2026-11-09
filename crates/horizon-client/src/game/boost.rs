@@ -81,6 +81,7 @@ impl Game<'_> {
                 g.fxaa,
                 g.taa,
                 g.upscaling.ratio(),
+                g.upscaling_sharpness as f32 / 100.0,
             );
         }
     }
