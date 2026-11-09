@@ -169,7 +169,7 @@ default buffer size.
 
 The native Rust adapter recognizes 26.2, 26.1.x, 1.21.11, 1.21.9/1.21.10,
 1.21.7/1.21.8, 1.21.6, 1.21.5, 1.21.4, 1.21.2/1.21.3, 1.21/1.21.1,
-1.20.5/1.20.6, 1.20.3/1.20.4 and 1.20.2. It is off by default while compatibility is incomplete. Set
+1.20.5/1.20.6, 1.20.3/1.20.4, 1.20.2 and 1.20/1.20.1. It is off by default while compatibility is incomplete. Set
 `HORIZON_OLDER_SERVERS=1` before starting the game; the server's status ping selects
 the adapter. The client still needs its prepared **26.3** resources.
 
@@ -241,6 +241,23 @@ including a late failed download affecting newly pending packs. Advanced mutated
 entity NBT has no general reverse schema, including old projectile potion data.
 Structured hover-item and hover-entity rendering still has native gaps; verified
 wire-text conversion does not establish complete interactive hover behavior.
+The 1.20/1.20.1 bridge (protocol 763) runs before the 1.20.2 one. That protocol
+has no configuration state: its play login carries the whole registry codec, which
+becomes a synthesized configuration (vanilla's enabled features, the split registries,
+the static registries and world clock later steps add) ahead of the login in 1.20.2's
+layout; the client's information and brand go to the server as play packets and the
+rest of its configuration is dropped. Its network NBT has an empty root name, read
+from the server and written back to it. Packet ids come from the 1.20.1 server jar's
+`ConnectionProtocol`, registry ids from its official reports (mob effects numbered
+from 1), and the layout changes from both jars' bytecode
+(`tools/compare_packet_layouts.py`): the login start's optional profile id, the login
+and respawn field order, add_player as a player AddEntity, two-int forgotten chunks,
+advancements' criteria names, mob effect ids, display entity data around 1.20.2's new
+position interpolation duration and named NBT in tag queries and effect data. Unit
+tests check these conversions against hand-written bytes; beacon effect data sent in
+container properties keeps 1.20.1's -1 for none, a limited-crafting game rule is not
+known (off), and play against a real 1.20/1.20.1 server is not yet verified (a manual
+`.github/workflows/protocol-e2e.yml` run does it once its dispatcher accepts the EULA).
 Online-mode login and complete interactive playthroughs on these versions
 have not been validated. Earlier Java releases, Classic/Alpha/Beta,
 April Fools and Bedrock are outside the implemented adapter set.
@@ -248,7 +265,7 @@ April Fools and Bedrock are outside the implemented adapter set.
 For a protocol-only development check, append `--server-protocol 772` to
 `cargo run -p horizon-protocol --example protocol_probe -- 127.0.0.1:25565 20`.
 The probe fails if it encounters packet or chunk decode errors.
-Use `--server-protocol 764` for 1.20.2, `765` for 1.20.3/1.20.4, `766` for 1.20.5/1.20.6,
+Use `--server-protocol 763` for 1.20/1.20.1, `764` for 1.20.2, `765` for 1.20.3/1.20.4, `766` for 1.20.5/1.20.6,
 `767` for 1.21/1.21.1, `768` for 1.21.2/1.21.3, `769` for 1.21.4, `770` for 1.21.5, or `771` for 1.21.6;
 1.21.7 and 1.21.8 both use `772`.
 

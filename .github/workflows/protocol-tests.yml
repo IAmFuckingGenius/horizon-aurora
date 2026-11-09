@@ -1,0 +1,17 @@
+# The protocol crate's own unit tests (the older-servers adapter's translations among them), which the
+# Android checks do not run. Manual only; it needs no game files.
+name: Protocol unit tests
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  horizon-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test horizon-protocol's library
+        run: cargo test --locked -p horizon-protocol --lib

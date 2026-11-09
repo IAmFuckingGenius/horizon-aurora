@@ -1,0 +1,63 @@
+# Joins a real vanilla 1.20.1 server (protocol 763) through Horizon's older-servers adapter and fails on
+# any packet or chunk decode error (crates/horizon-protocol/examples/probe.rs). Manual only: the server is
+# Mojang's and runs only when the person dispatching accepts its EULA for this run.
+name: Protocol end-to-end
+on:
+  workflow_dispatch:
+    inputs:
+      accept_mojang_eula:
+        description: I accept the Minecraft EULA (https://aka.ms/MinecraftEULA) for this run's vanilla 1.20.1 server
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  server-1-20-1:
+    if: ${{ inputs.accept_mojang_eula }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The official 1.20.1 server jar (piston-meta's 1.20.1 version manifest).
+      SERVER_SHA1: 84194a2f286ef7c14ed7ce0090dba59902951553
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the protocol probe
+        run: cargo build --locked -p horizon-protocol --example protocol_probe
+      - name: Download the official 1.20.1 server
+        run: |
+          mkdir -p "$RUNNER_TEMP/server-1.20.1"
+          cd "$RUNNER_TEMP/server-1.20.1"
+          curl -fsSL -o server.jar "https://piston-data.mojang.com/v1/objects/$SERVER_SHA1/server.jar"
+          echo "$SERVER_SHA1  server.jar" | sha1sum -c -
+      - name: Configure an offline server
+        run: |
+          cd "$RUNNER_TEMP/server-1.20.1"
+          cat > server.properties <<'PROPERTIES'
+          online-mode=false
+          server-port=25565
+          level-type=minecraft\:flat
+          view-distance=4
+          simulation-distance=4
+          motd=Horizon protocol 763 check
+          PROPERTIES
+          # The dispatcher accepted the EULA with this run's input.
+          echo "eula=true" > eula.txt
+      - name: Start the server
+        run: |
+          cd "$RUNNER_TEMP/server-1.20.1"
+          nohup "$JAVA_HOME_17_X64/bin/java" -Xmx1G -jar server.jar nogui > server.log 2>&1 &
+          for _ in $(seq 1 240); do
+            if grep -q 'Done (' server.log; then
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 60 server.log
+          exit 1
+      - name: Join as protocol 763 and decode everything for 20 seconds
+        run: cargo run --locked -p horizon-protocol --example protocol_probe -- 127.0.0.1:25565 20 --server-protocol 763
+      - name: Server log
+        if: always()
+        run: tail -n 80 "$RUNNER_TEMP/server-1.20.1/server.log" || true
