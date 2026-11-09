@@ -40,8 +40,7 @@
 **[Последний релиз](https://github.com/IAmFuckingGenius/horizon-aurora/releases/latest)**: по APK на каждую архитектуру,
 большинству телефонов нужен **arm64-v8a**. При первом запуске приложение скачивает оригинальные ресурсы Minecraft с серверов
 Mojang. Aurora ставится отдельным приложением рядом с Horizon Android и Starling: **Настройки › Аккаунт › Перенос из
-Horizon Android** копирует его миры, паки, моды и настройки в новый инстанс (пока в dev-сборках; в 0.7.7-aurora.1
-миры переносятся экспортом и импортом).
+Horizon Android** копирует его миры, паки, моды и настройки в новый инстанс.
 Экспериментальные сборки каждого изменения лежат в пре-релизе [`dev`](https://github.com/IAmFuckingGenius/horizon-aurora/releases/tag/dev)
 («Aurora Dev», ставится рядом с релизом). Как выпускаются релизы: [docs/android-releases.md](docs/android-releases.md).
 

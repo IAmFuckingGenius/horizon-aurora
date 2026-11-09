@@ -14,7 +14,7 @@ android {
         versionCode providers.gradleProperty('devVersionCode').orElse(providers.gradleProperty('localVersionCode')).getOrElse('29').toInteger()
         // The release's version, also shown in the launcher (tools/android_build.py reads it).
         // A release tag is `v` + this; bump it before tagging the next one.
-        versionName '0.7.7-aurora.1' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
+        versionName '0.7.8-aurora.1' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
         ndk { abiFilters providers.gradleProperty('abi').get() }
         // Dev builds sit beside the release on the home screen: name them apart.
         manifestPlaceholders = [appLabel: providers.gradleProperty('devVersionCode').isPresent() ? 'Aurora Dev' : 'Horizon Aurora']

@@ -97,7 +97,7 @@ pub(crate) mod backend {
     /// on dev builds (tools/android_build.py passes it).
     pub const VERSION: &str = match option_env!("HORIZON_ANDROID_VERSION") {
         Some(version) => version,
-        None => "0.7.7-aurora.1-dev",
+        None => "0.7.8-aurora.1-dev",
     };
     static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     pub fn initialize(home: std::path::PathBuf) {
