@@ -214,6 +214,8 @@
   "horizon.multiplayer.join_friend": "Играть с другом",
   "horizon.multiplayer.version": "Версия",
   "horizon.multiplayer.version.auto": "Авто",
+  "horizon.multiplayer.version.title": "Версия сервера",
+  "horizon.multiplayer.version.hint": "Авто: подбирается по ответу сервера",
   "horizon.multiplayer.ping_as": "%s мс, как %s",
   "horizon.multiplayer.invite_code": "Код приглашения",
   "horizon.multiplayer.relay": "Ретранслятор (необязательно)",

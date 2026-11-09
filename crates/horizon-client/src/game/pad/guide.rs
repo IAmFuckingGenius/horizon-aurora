@@ -31,6 +31,14 @@ impl Game<'_> {
     /// or missing player, not once the mouse or keyboard took over, and not when the setting is off.
     fn pad_guide_shows(&self) -> bool {
         let settings = &self.settings.controller;
+        // Android's touch controls and keypad play through the pad too: the guide is a
+        // controller's, so it waits for a controller to be the input in use.
+        #[cfg(target_os = "android")]
+        if horizon_client::android_runtime::active_input()
+            != horizon_client::android_gamepad::InputMode::Controller
+        {
+            return false;
+        }
         settings.enabled
             && settings.guide_detail != GuideDetail::Off
             && self.pad.in_use
@@ -112,6 +120,13 @@ impl Game<'_> {
     /// batch's first vertex of the screen.
     pub(in crate::game) fn draw_pad_menu_guide(&mut self, batch: &mut HudBatch, from: usize) {
         let settings = &self.settings.controller;
+        // As the gameplay rows: on Android only while a controller is the input in use.
+        #[cfg(target_os = "android")]
+        if horizon_client::android_runtime::active_input()
+            != horizon_client::android_gamepad::InputMode::Controller
+        {
+            return;
+        }
         if !settings.enabled
             || settings.guide_detail == GuideDetail::Off
             || !self.pad.in_use

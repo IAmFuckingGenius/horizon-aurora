@@ -126,6 +126,12 @@ pub enum Screen {
     Direct {
         address: String,
     },
+    /// Horizon's Version list for the server being added or edited: Auto,
+    /// then every release Horizon speaks, all on one page; a press picks one
+    /// and goes back to the edit screen (roadmap `older-servers`).
+    Version {
+        edit: Box<Screen>,
+    },
     /// ConfirmScreen for Delete: the list it returns to, the server's name
     /// and how many lines the warning took when last drawn.
     ConfirmDelete {
@@ -179,6 +185,7 @@ impl Screen {
             Self::Edit { index: None, .. } => "add_server",
             Self::Edit { index: Some(_), .. } => "edit_server",
             Self::Direct { .. } => "direct_connect",
+            Self::Version { .. } => "server_version",
             Self::ConfirmDelete { .. } => "server_delete",
             Self::Friend { .. } => "friends_join",
             Self::Disconnected { .. } => "disconnected",
@@ -484,16 +491,21 @@ fn entry_address(servers: &[ServerEntry], lan: &Scanner, index: usize) -> Option
     }
 }
 
-/// Horizon's Version choices after `version`: Auto (none), then each
-/// protocol Horizon speaks from the newest, and round again.
-fn next_version(version: Option<i32>) -> Option<i32> {
-    use horizon_protocol::adapter::ServerVersion;
-    let all = ServerVersion::ALL;
-    match version.and_then(|p| all.iter().position(|v| v.protocol() == p)) {
-        None => Some(all[0].protocol()),
-        Some(i) => all.get(i + 1).map(|v| v.protocol()),
-    }
+/// Horizon's Version choices, in the list's order: Auto (none), then each
+/// protocol Horizon speaks from the newest.
+fn version_choices() -> impl Iterator<Item = Option<i32>> {
+    std::iter::once(None).chain(
+        horizon_protocol::adapter::ServerVersion::ALL
+            .into_iter()
+            .map(|v| Some(v.protocol())),
+    )
 }
+/// The Version list's first button id; choice `i` is `VERSION_BUTTONS + i`.
+const VERSION_BUTTONS: u8 = 70;
+/// The Version list's columns.
+const VERSION_COLUMNS: usize = 3;
+/// The Version list's first row.
+const VERSION_TOP: f32 = 44.0;
 /// The value Horizon's Version shows: Auto, or the releases of the chosen
 /// protocol.
 fn version_value(version: Option<i32>) -> String {
@@ -917,6 +929,43 @@ impl Screen {
                     53,
                 ),
             ],
+            Self::Version { edit } => {
+                // Three columns of 98, 4 apart; the chosen one between marks.
+                let chosen = match &**edit {
+                    Self::Edit { version, .. } => *version,
+                    _ => None,
+                };
+                let left = half(w) - 151.0;
+                let mut buttons: Vec<ButtonSpec> = version_choices()
+                    .enumerate()
+                    .map(|(i, choice)| {
+                        let value = version_value(choice);
+                        let label = if choice == chosen {
+                            format!("> {value} <")
+                        } else {
+                            value
+                        };
+                        b(
+                            left + (i % VERSION_COLUMNS) as f32 * 102.0,
+                            VERSION_TOP + (i / VERSION_COLUMNS) as f32 * 24.0,
+                            98.0,
+                            &label,
+                            true,
+                            VERSION_BUTTONS + i as u8,
+                        )
+                    })
+                    .collect();
+                let rows = buttons.len().div_ceil(VERSION_COLUMNS) as f32;
+                buttons.push(b(
+                    half(w) - 100.0,
+                    (VERSION_TOP + rows * 24.0 + 8.0).min(h - 28.0),
+                    200.0,
+                    &crate::lang::get_or("gui.cancel", "Cancel"),
+                    true,
+                    69,
+                ));
+                buttons
+            }
             Self::Friend { code, .. } => vec![
                 b(
                     half(w) - 100.0,
@@ -1017,6 +1066,10 @@ impl Screen {
                 "multiplayer/direct",
                 get("selectServer.direct", "Direct Connection"),
             ),
+            Self::Version { .. } => ScreenInfo::new(
+                "multiplayer/version",
+                get("horizon.multiplayer.version.title", "Server Version"),
+            ),
             // ConfirmScreen: its title and its message.
             Self::ConfirmDelete { name, .. } => {
                 let warning = format_translation(
@@ -1066,9 +1119,6 @@ impl Screen {
                     None => ("manageServer.resourcePack.enabled", "Enabled"),
                 };
                 Narratable::cycle(label, crate::lang::get_or(key, fallback), rect, enabled)
-            }
-            Self::Edit { version, .. } if id == 61 => {
-                Narratable::cycle(label, version_value(next_version(*version)), rect, enabled)
             }
             _ => Narratable::button(label, rect, enabled),
         }
@@ -1323,12 +1373,23 @@ impl Screen {
                                 gray,
                                 true,
                             );
-                            // Horizon's: the older release it is joined as,
-                            // left of the player count.
-                            if let Some(Ping::Ok { via: Some(via), .. }) = pings.get(&server.ip) {
-                                let vw = HudBatch::text_width(atlas, via).ceil();
+                            // Horizon's: the release it is joined as, left of
+                            // the player count: gold when the player chose it
+                            // (shown whatever the ping says), grey when the
+                            // ping settled an older one.
+                            let chosen = server
+                                .protocol
+                                .filter(|_| crate::net::older_servers_enabled())
+                                .and_then(horizon_protocol::adapter::ServerVersion::from_protocol);
+                            let release = match (chosen, pings.get(&server.ip)) {
+                                (Some(v), _) => Some((v.releases(), rgba(255, 170, 0, 255))),
+                                (None, Some(Ping::Ok { via: Some(via), .. })) => Some((*via, gray)),
+                                _ => None,
+                            };
+                            if let Some((release, color)) = release {
+                                let vw = HudBatch::text_width(atlas, release).ceil();
                                 let x = icon_x - sw - 5.0 - if sw > 0.0 { 4.0 } else { 0.0 } - vw;
-                                batch.text(atlas, via, x, cy + 1.0, gray, true);
+                                batch.text(atlas, release, x, cy + 1.0, color, true);
                             }
                             // Hovering the row: the join arrow over the icon
                             // and the move arrows, each highlighted under
@@ -1451,6 +1512,23 @@ impl Screen {
                     max,
                     (94.0, 106.0),
                     *focus == 1,
+                );
+            }
+            Self::Version { .. } => {
+                centered(
+                    batch,
+                    &crate::lang::get_or("horizon.multiplayer.version.title", "Server Version"),
+                    15.0,
+                    u32::MAX,
+                );
+                centered(
+                    batch,
+                    &crate::lang::get_or(
+                        "horizon.multiplayer.version.hint",
+                        "Auto: chosen from the server's reply",
+                    ),
+                    28.0,
+                    rgba(160, 160, 160, 255),
                 );
             }
             Self::Direct { address } => {
@@ -1785,8 +1863,33 @@ impl Screen {
                     }
                 }
             }
-            // Horizon's Version: Auto, then each release from the newest, and round again.
-            (Self::Edit { version, .. }, Some(61)) => *version = next_version(*version),
+            // Horizon's Version: the list of every release, on its own page.
+            (Self::Edit { .. }, Some(61)) => {
+                let edit = std::mem::replace(
+                    self,
+                    Self::Direct {
+                        address: String::new(),
+                    },
+                );
+                *self = Self::Version {
+                    edit: Box::new(edit),
+                };
+            }
+            (Self::Version { edit }, Some(id)) if id == 69 || id >= VERSION_BUTTONS => {
+                let mut edit = std::mem::replace(
+                    &mut **edit,
+                    Self::Direct {
+                        address: String::new(),
+                    },
+                );
+                if id != 69
+                    && let Self::Edit { version, .. } = &mut edit
+                    && let Some(choice) = version_choices().nth(usize::from(id - VERSION_BUTTONS))
+                {
+                    *version = choice;
+                }
+                *self = edit;
+            }
             // CycleButton: Enabled, Disabled, Prompt, and round again.
             (Self::Edit { packs, .. }, Some(60)) => {
                 *packs = match *packs {
@@ -2154,6 +2257,17 @@ impl Screen {
             | Self::Friend {
                 from_title: true, ..
             } => true,
+            // The Version list goes back to the edit screen as it was.
+            Self::Version { edit } => {
+                let edit = std::mem::replace(
+                    &mut **edit,
+                    Self::Direct {
+                        address: String::new(),
+                    },
+                );
+                *self = edit;
+                false
+            }
             // ConfirmScreen.keyPressed: Escape answers no.
             Self::ConfirmDelete { list, .. } => {
                 let list = std::mem::replace(

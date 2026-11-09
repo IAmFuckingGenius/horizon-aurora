@@ -218,6 +218,8 @@
   "horizon.multiplayer.join_friend": "Join a Friend",
   "horizon.multiplayer.version": "Version",
   "horizon.multiplayer.version.auto": "Auto",
+  "horizon.multiplayer.version.title": "Server Version",
+  "horizon.multiplayer.version.hint": "Auto: chosen from the server's reply",
   "horizon.multiplayer.ping_as": "%s ms, as %s",
   "horizon.multiplayer.invite_code": "Invite Code",
   "horizon.multiplayer.relay": "Relay (optional)",
