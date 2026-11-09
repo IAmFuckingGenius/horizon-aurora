@@ -1,8 +1,12 @@
 # The protocol crate's own unit tests (the older-servers adapter's translations among them), which the
-# Android checks do not run. Manual only; it needs no game files.
+# Android checks do not run: by hand, and on protocol work branches when the crate changes. It needs no
+# game files.
 name: Protocol unit tests
 on:
   workflow_dispatch:
+  push:
+    branches: ['protocol-*']
+    paths: ['crates/horizon-protocol/**', '.github/workflows/protocol-tests.yml']
 permissions:
   contents: read
 jobs:
