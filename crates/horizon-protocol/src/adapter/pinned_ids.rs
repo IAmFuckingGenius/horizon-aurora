@@ -16,6 +16,7 @@ pub mod entity_type {
     pub const BIRCH_BOAT: i32 = 12;
     pub const BIRCH_CHEST_BOAT: i32 = 13;
     pub const BLAZE: i32 = 14;
+    pub const BLOCK_DISPLAY: i32 = 15;
     pub const BREEZE: i32 = 17;
     pub const CAMEL: i32 = 19;
     pub const CAMEL_HUSK: i32 = 20;
@@ -57,6 +58,7 @@ pub mod entity_type {
     pub const HUSK: i32 = 68;
     pub const ILLUSIONER: i32 = 69;
     pub const IRON_GOLEM: i32 = 71;
+    pub const ITEM_DISPLAY: i32 = 73;
     pub const ITEM_FRAME: i32 = 74;
     pub const JUNGLE_BOAT: i32 = 75;
     pub const JUNGLE_CHEST_BOAT: i32 = 76;
@@ -102,6 +104,7 @@ pub mod entity_type {
     pub const STRAY: i32 = 131;
     pub const STRIDER: i32 = 132;
     pub const TADPOLE: i32 = 134;
+    pub const TEXT_DISPLAY: i32 = 135;
     pub const TNT_MINECART: i32 = 137;
     pub const TRADER_LLAMA: i32 = 138;
     pub const TROPICAL_FISH: i32 = 140;

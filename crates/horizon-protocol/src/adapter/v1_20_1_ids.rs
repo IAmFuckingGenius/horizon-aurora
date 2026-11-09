@@ -239,7 +239,7 @@ pub const MENU_DOWN: &[(u16, u16, u16)] = &[
 /// `minecraft:mob_effect`: 33 in 1.20.1, 40 pinned.
 #[rustfmt::skip]
 pub const MOB_EFFECT_UP: &[(u16, u16, u16)] = &[
-    (0, 0, 33),
+    (1, 0, 33),
 ];
 #[rustfmt::skip]
 pub const MOB_EFFECT_DOWN: &[(u16, u16, u16)] = &[

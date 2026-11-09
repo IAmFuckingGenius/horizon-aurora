@@ -76,16 +76,16 @@ REGISTRIES = [
 PINNED_NAMES = {
     "entity_type": """
         acacia_boat acacia_chest_boat allay area_effect_cloud armadillo armor_stand axolotl
-        bamboo_chest_raft bamboo_raft bat bee birch_boat birch_chest_boat blaze breeze camel camel_husk cat
+        bamboo_chest_raft bamboo_raft bat bee birch_boat birch_chest_boat blaze block_display breeze camel camel_husk cat
         cave_spider cherry_boat cherry_chest_boat chest_minecart chicken cod command_block_minecart cow
         creeper dark_oak_boat dark_oak_chest_boat dolphin donkey drowned elder_guardian ender_dragon
         enderman endermite evoker experience_orb falling_block fox frog furnace_minecart ghast giant
         glow_item_frame glow_squid goat guardian happy_ghast hoglin hopper_minecart horse husk illusioner
-        iron_golem item_frame jungle_boat jungle_chest_boat llama magma_cube mangrove_boat
+        iron_golem item_display item_frame jungle_boat jungle_chest_boat llama magma_cube mangrove_boat
         mangrove_chest_boat mannequin minecart mooshroom mule nautilus oak_boat oak_chest_boat ocelot
         painting panda parrot phantom pig piglin piglin_brute pillager player polar_bear pufferfish rabbit
         ravager salmon sheep shulker silverfish skeleton skeleton_horse slime sniffer snow_golem
-        spawner_minecart spider spruce_boat spruce_chest_boat squid stray strider tadpole tnt_minecart
+        spawner_minecart spider spruce_boat spruce_chest_boat squid stray strider tadpole text_display tnt_minecart
         trader_llama tropical_fish turtle vex villager vindicator wandering_trader warden witch wither
         wither_skeleton wolf zoglin zombie zombie_horse zombie_nautilus zombie_villager zombified_piglin
     """.split(),
@@ -205,11 +205,15 @@ def table(source, target, renames=None, reassign=None):
     to), or NONE."""
     renames = renames or {}
     reassign = reassign or {}
-    by_id = sorted(source.items(), key=lambda kv: kv[1])
+    # Indexed by the source's own ids: a registry numbered from 1 (mob effects before 1.20.2) has no
+    # entry at 0, rather than every entry shifted down one.
+    out = [NONE] * (max(source.values(), default=-1) + 1)
     # A removed entry may alias an entry that still exists (creaking_transient -> creaking).
     # Prefer that exact name in reverse, rather than sending the removed variant back.
-    return [target.get(reassign[key], NONE) if key in reassign else
-            target.get(key, target.get(renames.get(key, key), NONE)) for key, _ in by_id]
+    for key, index in source.items():
+        out[index] = (target.get(reassign[key], NONE) if key in reassign else
+                      target.get(key, target.get(renames.get(key, key), NONE)))
+    return out
 
 
 def reverse_table(source, target, renames=None, reassign=None):
