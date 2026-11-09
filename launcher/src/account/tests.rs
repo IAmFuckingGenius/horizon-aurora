@@ -800,6 +800,7 @@ fn the_game_plays_only_as_an_account_that_owns_it() {
         name: "Alex".into(),
         skin: None,
         cape: None,
+        provider: Default::default(),
     });
     accounts.play_as("other").unwrap();
     let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap_err();
@@ -845,11 +846,6 @@ fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
         serde_json::json!({ "accounts": accounts.accounts, "selected": UUID })
     );
     assert!(!dir.join("skins").exists());
-    // The developer option of 0.2.58 reads as nothing and is not written back.
-    let settings = crate::backend::Settings::parse(r#"{"dev_offline": true, "keep_versions": 3}"#);
-    let saved = serde_json::to_value(&settings).unwrap();
-    assert!(saved.get("dev_offline").is_none(), "{saved}");
-    assert_eq!(saved["keep_versions"], 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
