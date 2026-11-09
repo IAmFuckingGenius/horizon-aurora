@@ -604,7 +604,12 @@ impl TouchUi {
     pub fn draw_keyboard(&self, b: &mut HudBatch, a: &HudAtlas) {
         if let Some(k) = &self.keyboard {
             let mut ui = crate::ui_theme::Ui::new(a, b, (0.0, 0.0));
-            k.draw(&mut ui, false, crate::gamepad::GlyphStyle::Xbox, false);
+            // The touch keyboard's glyphs: Xbox's, as before any pad is read.
+            let glyphs = crate::pad_glyph::Glyphs::of(
+                &Default::default(),
+                crate::gamepad::GlyphStyle::Xbox,
+            );
+            k.draw(&mut ui, false, glyphs);
             ui.finish();
         }
     }
