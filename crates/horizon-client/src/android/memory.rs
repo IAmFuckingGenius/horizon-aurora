@@ -26,3 +26,32 @@ pub fn trim_level() -> Option<i32> {
         env.get_field(&info, "lastTrimLevel", "I")?.i()
     })
 }
+
+/// Total memory, at most, of a phone that starts a new game folder with lighter settings
+/// (`settings::set_low_memory_device`): 3 GiB phones report about 2.8 GiB, 4 GiB ones 3.6.
+pub const LOW_MEMORY_TOTAL: u64 = 3 << 30;
+
+/// The device's memory as the system counts it (`ActivityManager.MemoryInfo.totalMem`), or
+/// `None` when JNI failed.
+pub fn total_bytes() -> Option<u64> {
+    crate::platform::with_context(|env, activity| {
+        let service = jni::objects::JObject::from(env.new_string("activity")?);
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service)],
+            )?
+            .l()?;
+        let info = env.new_object("android/app/ActivityManager$MemoryInfo", "()V", &[])?;
+        env.call_method(
+            &manager,
+            "getMemoryInfo",
+            "(Landroid/app/ActivityManager$MemoryInfo;)V",
+            &[JValue::Object(&info)],
+        )?;
+        env.get_field(&info, "totalMem", "J")?.j()
+    })
+    .and_then(|total| u64::try_from(total).ok())
+}

@@ -217,6 +217,42 @@ pub struct Settings {
     /// The picked pack's options while its Shader Options page is open.
     pub shader_options: Option<crate::shader_options::ShaderOptions>,
 }
+/// The device has little memory (an Android phone with 3 GiB or less): a game folder with no
+/// options.txt starts with [`Settings::low_memory`] instead of vanilla's defaults.
+static LOW_MEMORY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says whether this device has little memory ([`LOW_MEMORY`]), before options are loaded.
+pub fn set_low_memory_device(low: bool) {
+    LOW_MEMORY.store(low, std::sync::atomic::Ordering::Relaxed);
+}
+
+impl Settings {
+    /// Lighter settings for a phone with little memory: fewer chunks kept and drawn (each
+    /// one is held by the client and by the single-player server), smaller mipmaps, a
+    /// narrower biome blend, fewer particles and no entity shadows. Everything else is
+    /// vanilla's, and the player can raise any of them.
+    pub fn low_memory() -> Self {
+        Self {
+            render_distance: 6,
+            simulation_distance: 5,
+            mipmap_levels: 2,
+            biome_blend: 1,
+            particles: 1,
+            entity_shadows: false,
+            ..Self::default()
+        }
+    }
+    /// The settings of a game folder with no options.txt: vanilla's, or
+    /// [`Self::low_memory`] on a device with little memory.
+    fn fresh() -> Self {
+        if LOW_MEMORY.load(std::sync::atomic::Ordering::Relaxed) {
+            Self::low_memory()
+        } else {
+            Self::default()
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -408,7 +444,7 @@ impl Settings {
                 keypad,
                 extras,
                 mods,
-                ..Self::default()
+                ..Self::fresh()
             },
         };
         // Horizon's own key bindings live in horizon-extras.txt, not in options.txt.

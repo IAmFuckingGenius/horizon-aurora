@@ -259,6 +259,21 @@ pub fn main(app: AndroidApp) {
     }
     let engine_data = app.asset_manager().open(c"engine-data.zip");
     APP.with(|slot| *slot.borrow_mut() = Some(app));
+    // Before any options.txt is read: a phone with little memory starts new game folders
+    // with lighter settings.
+    if let Some(total) = memory::total_bytes() {
+        let low = total <= memory::LOW_MEMORY_TOTAL;
+        horizon_client::settings::set_low_memory_device(low);
+        log::info!(
+            "Horizon: {} MiB of memory{}",
+            total >> 20,
+            if low {
+                ", lighter settings for new game folders"
+            } else {
+                ""
+            }
+        );
+    }
     let Some(cache) = platform::cache_dir() else {
         log::error!("Android supplied no application cache directory");
         return;
