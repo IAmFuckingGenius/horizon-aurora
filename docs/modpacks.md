@@ -383,7 +383,7 @@ files (constant pool, superclass, declared methods; no decompiling) for what the
 take, then writes the verdict to `<out>/check.json`. **Works**: content only, and the code just
 registers it. **Partly**: the content ports, and the code features listed don't (block entities,
 menus, entities, blocks and items with behaviour of their own, recipe types, Mixins, game events).
-**Doesn't run**: nothing to port, or a jar made for 1.20 or older. Each mod class is followed up to
+**Doesn't run**: nothing to port, or a jar made for 1.20 or older (`--old` carries such a jar anyway, its data under 1.21's folder names and its JSON upgraded where the carry knows how, for trying a mod; a Forge jar brings its `forge/biome_modifier` files). Each mod class is followed up to
 the first game class it extends; a block subclass that only overrides how it looks or is placed
 (`getStateForPlacement`, `rotate`...) is registration. Game classes are read by Mojang's names
 (26.1 and later, and NeoForge since 1.20.5); older Fabric jars name them in intermediary, so a

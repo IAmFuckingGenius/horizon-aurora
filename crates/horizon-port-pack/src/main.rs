@@ -44,7 +44,7 @@ use std::{
     process::ExitCode,
 };
 
-const USAGE: &str = "usage: horizon-port-pack import <pack> <work> | inventory <work> [--offline] | fetch <work> [--from <folder>] [<mod id>...] | carry <work> [--resources <prepared>] [<mod id>...] | report <work> | check <jar> <out> | port <pack> <work> [--from <folder>] [--resources <prepared>] | upgrade-datapack <pack> (<out> | --world <world>) | events <jar or folder> [--hooks <native-hooks.json>]";
+const USAGE: &str = "usage: horizon-port-pack import <pack> <work> | inventory <work> [--offline] | fetch <work> [--from <folder>] [<mod id>...] | carry <work> [--resources <prepared>] [<mod id>...] | report <work> | check <jar> <out> [--old] | port <pack> <work> [--from <folder>] [--resources <prepared>] | upgrade-datapack <pack> (<out> | --world <world>) | events <jar or folder> [--hooks <native-hooks.json>]";
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -83,7 +83,8 @@ fn main() -> ExitCode {
                 Ok(())
             }
             Some("check") => {
-                let c = horizon_port_pack::check::check(path(1)?, path(2)?)?;
+                let old = args.iter().any(|a| a == "--old");
+                let c = horizon_port_pack::check::check_with(path(1)?, path(2)?, old)?;
                 println!("{}: {}. {}", c.mod_id, c.verdict.label(), c.summary);
                 for p in &c.ports {
                     println!("  ports: {p}");

@@ -79,6 +79,12 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// `out/carry-report.json` beside it). The carry is the folder mod an
 /// install copies.
 pub fn check(jar_path: &Path, out: &Path) -> Result<Check, String> {
+    check_with(jar_path, out, false)
+}
+
+/// [`check`], carrying a jar made for 1.20 or older too when `old` (its data under 1.21's folder
+/// names, its JSON upgraded where the carry knows how): for trying such a mod, not for a pack.
+pub fn check_with(jar_path: &Path, out: &Path, old: bool) -> Result<Check, String> {
     let info = jar::read(jar_path)?;
     let file = fs::File::open(jar_path).map_err(|e| format!("{}: {e}", jar_path.display()))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", jar_path.display()))?;
@@ -127,7 +133,7 @@ pub fn check(jar_path: &Path, out: &Path) -> Result<Check, String> {
         crate::pipeline::write_json(&out.join("check.json"), &check)?;
         Ok(check)
     };
-    if carry::old_layout(&names) {
+    if carry::old_layout(&names) && !old {
         check.summary = carry::OLD_LAYOUT.into();
         return done(check);
     }
