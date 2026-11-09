@@ -72,7 +72,8 @@ def export(root, output):
         raise ValueError('Missing source/license files')
     for template, destination in [('packaging/android/source-checks.yml', '.github/workflows/android-source.yml'),
                                   ('packaging/android/dev-builds.yml', '.github/workflows/android-dev.yml'),
-                                  ('packaging/android/release-builds.yml', '.github/workflows/android-release.yml')]:
+                                  ('packaging/android/release-builds.yml', '.github/workflows/android-release.yml'),
+                                  ('packaging/android/native-engine.yml', '.github/workflows/android-native-engine.yml')]:
         workflow = root / template
         if workflow.is_file():
             data = workflow.read_bytes()

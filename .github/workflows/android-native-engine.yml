@@ -1,0 +1,516 @@
+# Horizon Aurora: an Android engine (.hengine) with native mods compiled in. Manual dispatch only.
+#
+# Prerequisite: no `#![cfg(...)]` / `#![cfg_attr(...)]` in crates/horizon-client/src/lib.rs. horizon-mixins reads
+# any cfg other than `test` as unresolved and refuses every target under it (E_UNSUPPORTED_CFG / E_MODULE); see
+# the comment at the top of that file.
+#
+# How it builds: horizon-mixins (the binary the desktop launcher uses, at launcher/src/native_mods.rs MIXINS_REV)
+# applies the bundles to this checkout into a separate stage; the stage then replaces the checkout's files in place,
+# so the path, the release flags (--remap-path-prefix) and the android-dev Cargo cache stay the same; then
+# tools/android_build.py --public --profile release --rust-only and tools/android_engine_pack.py, as android-dev.yml.
+#
+# Trust: the build job compiles third-party code (the bundle's helpers, its crates' build scripts). It has no secret
+# and a read-only token. Only the optional publish job can write, and it compiles nothing.
+name: Horizon Aurora native-mod engine
+run-name: Aurora native engine · ${{ inputs.engine_id }} · ${{ inputs.bundle }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle:
+        description: "smoke | github:OWNER/REPO@<40-hex commit>[:folder] | https://…/<file>.hnmod or .hmod#sha256=<64 hex>"
+        required: true
+        default: smoke
+      aurora_ref:
+        description: Aurora commit, tag or branch to build (empty = this run's commit). Use the players' APK line.
+        default: ''
+      engine_id:
+        description: Engine id, its folder on the phone (an installed engine with this id is replaced)
+        default: botania
+      engine_name:
+        description: Name shown in Settings › Engines
+        default: Aurora + Botania
+      abis:
+        description: ABIs to build
+        type: choice
+        options: [arm64-v8a and armeabi-v7a, arm64-v8a, armeabi-v7a]
+        default: arm64-v8a and armeabi-v7a
+      mixins_rev:
+        description: horizon-mixins commit (empty = MIXINS_REV in launcher/src/native_mods.rs)
+        default: ''
+      publish:
+        description: Add the engines to the rolling `engines` pre-release and its engines.json (from main only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: android-native-engine-${{ github.ref }}-${{ inputs.engine_id }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      abis: ${{ steps.bundle.outputs.abis }}
+      aurora_commit: ${{ steps.bundle.outputs.aurora_commit }}
+      mixins_rev: ${{ steps.bundle.outputs.mixins_rev }}
+      label: ${{ steps.bundle.outputs.label }}
+      smoke: ${{ steps.bundle.outputs.smoke }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.aurora_ref || github.sha }}
+          persist-credentials: false
+      - name: Fetch the bundle, check it and pin it to this commit
+        id: bundle
+        env:
+          BUNDLE: ${{ inputs.bundle }}
+          ENGINE_ID: ${{ inputs.engine_id }}
+          ENGINE_NAME: ${{ inputs.engine_name }}
+          ABIS: ${{ inputs.abis }}
+          MIXINS_REV: ${{ inputs.mixins_rev }}
+        run: |
+          python3 -I - <<'PY'
+          import hashlib, io, json, os, re, shutil, subprocess, sys, tomllib, urllib.request, zipfile
+          from pathlib import Path
+
+          def fail(message):
+              print(f'::error::{message}')
+              sys.exit(1)
+
+          tmp = Path(os.environ['RUNNER_TEMP'])
+          out = tmp / 'native-bundle'
+          mods = out / 'mods'
+          mods.mkdir(parents=True)
+          spec = os.environ['BUNDLE'].strip()
+          engine_id = os.environ['ENGINE_ID'].strip()
+          engine_name = os.environ['ENGINE_NAME'].strip()[:48] or engine_id
+          # horizon_boot::valid_id, minus the ids the launcher gives meaning to (the APK's own, the release
+          # and dev engines whose versions drive "A newer Horizon Aurora is out").
+          if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', engine_id)
+                  or engine_id in ('builtin', 'aurora', 'aurora-dev')):
+              fail(f'engine id {engine_id!r}: letters, digits, . _ -, and not builtin, aurora or aurora-dev')
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+
+          # The smallest native mod: one HEAD hook on a named hook point, adding a row to Options > Mods.
+          SMOKE = {
+              'horizon-mixin.toml': '''[mod]
+          id = "aurora_smoke"
+          version = "0.1.0"
+
+          [[injection]]
+          id = "list"
+          hook = "mods"
+          hook_version = 1
+          kind = "HEAD"
+          helper = "list.rs"
+          bindings = [
+            { name = "mods", ty = "&mut Vec<crate::game::native_hooks::NativeMod>", value = "&mut *mods" },
+          ]
+          ''',
+              'list.rs': '''// Runs before the game fills Options > Mods: the row proves the engine has the mod.
+          fn list(mods: &mut Vec<crate::game::native_hooks::NativeMod>) {
+              mods.push(crate::game::native_hooks::NativeMod {
+                  id: "aurora_smoke".into(),
+                  title: "Aurora smoke 0.1.0".into(),
+                  description: "Compiled into this engine by horizon-mixins on GitHub Actions.".into(),
+                  keys: Vec::new(),
+              });
+          }
+          ''',
+          }
+
+          def copy_tree(src, dst):
+              for path in sorted(src.rglob('*')):
+                  rel = path.relative_to(src)
+                  if any(part in ('target', '.git') for part in rel.parts):
+                      continue
+                  if path.is_symlink():
+                      fail(f'{rel}: links are refused (horizon-mixins refuses them too)')
+                  if path.is_dir():
+                      (dst / rel).mkdir(parents=True, exist_ok=True)
+                  elif path.is_file():
+                      (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copyfile(path, dst / rel)
+
+          native = None
+          if spec == 'smoke':
+              folder = mods / 'aurora_smoke'
+              folder.mkdir()
+              for name, text in SMOKE.items():
+                  (folder / name).write_text(text)
+          elif m := re.fullmatch(r'github:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([0-9a-f]{40})(?::(\S+))?', spec):
+              repo, sha, sub = m.group(1), m.group(2), (m.group(3) or '.').strip('/') or '.'
+              src = tmp / 'bundle-src'
+              subprocess.run(['git', 'init', '-q', str(src)], check=True)
+              subprocess.run(['git', '-C', str(src), 'fetch', '-q', '--depth', '1',
+                              f'https://github.com/{repo}', sha], check=True)
+              subprocess.run(['git', '-C', str(src), '-c', 'advice.detachedHead=false',
+                              'checkout', '-q', 'FETCH_HEAD'], check=True)
+              root = (src / sub).resolve()
+              if not root.is_relative_to(src.resolve()) or not root.is_dir():
+                  fail(f'{sub}: no such folder in {repo}@{sha[:12]}')
+              found = ([root] if (root / 'horizon-mixin.toml').is_file()
+                       else sorted(p.parent for p in root.glob('*/horizon-mixin.toml')))
+              if not found:
+                  fail(f'no horizon-mixin.toml in {sub} or its folders')
+              for folder in found:
+                  mod_id = str(tomllib.loads((folder / 'horizon-mixin.toml').read_text()).get('mod', {}).get('id', ''))
+                  if not re.fullmatch(r'[a-z0-9_]+', mod_id) or (mods / mod_id).exists():
+                      fail(f'{folder.relative_to(src)}: [mod] id {mod_id!r} is not a lowercase id, or is taken twice')
+                  copy_tree(folder, mods / mod_id)
+          elif m := re.fullmatch(r'(https://\S+\.(?:hnmod|hmod))#sha256=([0-9a-f]{64})', spec):
+              url, digest = m.groups()
+              with urllib.request.urlopen(url, timeout=60) as response:
+                  data = response.read((64 << 20) + 1)
+              if len(data) > 64 << 20:
+                  fail('the mod file is over 64 MiB')
+              if hashlib.sha256(data).hexdigest() != digest:
+                  fail('the mod file does not have the SHA-256 given')
+              archive = zipfile.ZipFile(io.BytesIO(data))
+              try:
+                  native = json.loads(archive.read('horizon-native.json'))
+              except KeyError:
+                  fail('no horizon-native.json: a content-only .hmod has no native code to build')
+              if native.get('schema') != 1 or not re.fullmatch(r'[a-z0-9_]+', str(native.get('id', ''))):
+                  fail('horizon-native.json: schema 1 and a lowercase id are required')
+              mod_id = native['id']
+              prefix = f'mixins/{mod_id}/'
+              content = []
+              for info in archive.infolist():
+                  name = info.filename
+                  if name.startswith('/') or '\\' in name or '..' in name.split('/'):
+                      fail(f'{name}: not a plain relative path')
+                  if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                      fail(f'{name}: links are refused')
+                  if name == 'horizon-native.json' or info.is_dir():
+                      continue
+                  if name.startswith(prefix):
+                      target = mods / mod_id / name[len(prefix):]
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(archive.read(info))
+                  elif name == 'horizon-mod.toml' or name.startswith(('assets/', 'data/')):
+                      content.append(info)
+                  else:
+                      fail(f'{name}: neither native code (mixins/{mod_id}/) nor content')
+              if not (mods / mod_id / 'horizon-mixin.toml').is_file():
+                  fail(f'no mixins/{mod_id}/horizon-mixin.toml')
+              if content:
+                  # One .hmod for content and code: its content alone, for the phone's Mods > Import.
+                  (out / 'content').mkdir()
+                  with zipfile.ZipFile(out / 'content' / f'{mod_id}-content.hmod', 'w', zipfile.ZIP_DEFLATED) as z:
+                      for info in content:
+                          z.writestr(info.filename, archive.read(info))
+          else:
+              fail('bundle: smoke, github:OWNER/REPO@<40-hex commit>[:folder], or an https .hnmod/.hmod URL ending in #sha256=<64 hex>')
+
+          hooks_api = int(re.search(r'const NATIVE_HOOKS_API: u32 = (\d+);',
+                                    Path('crates/horizon-client/src/game/native_hooks.rs').read_text()).group(1))
+          if native and native.get('hooks') and native['hooks'] > hooks_api:
+              fail(f'the mod needs hook points API {native["hooks"]}; this Aurora has {hooks_api}')
+          launcher_rev = re.search(r'pub const MIXINS_REV: &str = "([0-9a-f]{40})";',
+                                   Path('launcher/src/native_mods.rs').read_text()).group(1)
+          mixins_rev = os.environ['MIXINS_REV'].strip() or launcher_rev
+          if not re.fullmatch(r'[0-9a-f]{40}', mixins_rev):
+              fail('mixins_rev must be a full 40-hex commit')
+          if native and native.get('mixins') and native['mixins'] != mixins_rev:
+              print(f'::warning::the mod was made with horizon-mixins {native["mixins"][:12]}; this build uses {mixins_rev[:12]}')
+          upstream = json.loads(Path('docs/android-upstream.json').read_text()).get('merged_upstream_commit', '')
+
+          records = []
+          for folder in sorted(p for p in mods.iterdir() if p.is_dir()):
+              path = folder / 'horizon-mixin.toml'
+              text = path.read_text()
+              manifest = tomllib.loads(text)
+              info = manifest.get('mod', {})
+              if info.get('id') != folder.name:
+                  fail(f'{folder.name}: [mod] id must name the folder')
+              if 'api' in manifest or any('trait_method' in i for i in manifest.get('injection', [])):
+                  fail(f'{folder.name}: a trait mod ([api], trait_method) needs the desktop launcher\'s own preparation; this workflow builds mixin bundles')
+              if manifest.get('post_build'):
+                  fail(f'{folder.name}: [[post_build]] writes beside a desktop game; an Android engine has no such folder')
+              files = sorted(p for p in folder.rglob('*') if p.is_file())
+              tree = hashlib.sha256(b''.join(p.relative_to(folder).as_posix().encode() + b'\0'
+                                             + hashlib.sha256(p.read_bytes()).digest() for p in files)).hexdigest()
+              pin = manifest.get('compatibility', {}).get('horizon_revision')
+              # horizon-mixins compares a pin with `git rev-parse HEAD`: Aurora's commit, never an upstream one.
+              # Like the launcher's `repin`, the copy is pinned to the commit it builds on (the mod's own pin is
+              # recorded), and `[dependencies]`, which horizon-mixins refuses, is dropped as the launcher drops it.
+              lines, table = [], None
+              for line in text.splitlines(keepends=True):
+                  header = re.match(r'\s*\[\[?\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\]\]?\s*(?:#.*)?$', line)
+                  if header:
+                      table = header.group(1)
+                  if table == 'dependencies' or (table or '').startswith('dependencies.'):
+                      continue
+                  if table == 'compatibility' and re.match(r'\s*horizon_revision\s*=', line):
+                      line = f'horizon_revision = "{commit}"\n'
+                  lines.append(line)
+              edited = ''.join(lines)
+              expected = {k: v for k, v in manifest.items() if k != 'dependencies'}
+              if pin is not None:
+                  expected['compatibility'] = {**manifest['compatibility'], 'horizon_revision': commit}
+              if tomllib.loads(edited) != expected:
+                  fail(f'{folder.name}: horizon-mixin.toml could not be rewritten safely')
+              path.write_text(edited)
+              if pin and pin != commit:
+                  note = 'the upstream commit Aurora merged' if pin == upstream else f'Aurora merged upstream {upstream[:12]}'
+                  print(f'::warning::{folder.name} pins Horizon {pin[:12]} ({note}); building on Aurora {commit[:12]}')
+              records.append({'id': folder.name, 'version': str(info.get('version', '')), 'pin': pin,
+                              'crates': len(manifest.get('crate', [])), 'tree_sha256': tree})
+
+          label = re.sub(r'[^A-Za-z0-9._-]', '-', '.'.join(f'{r["id"]}.{r["version"]}' for r in records))[:40]
+          abis = {'arm64-v8a and armeabi-v7a': ['arm64-v8a', 'armeabi-v7a'],
+                  'arm64-v8a': ['arm64-v8a'], 'armeabi-v7a': ['armeabi-v7a']}[os.environ['ABIS']]
+          (out / 'bundle.json').write_text(json.dumps({
+              'source': spec, 'aurora_commit': commit, 'upstream_merged': upstream, 'hooks_api': hooks_api,
+              'mixins_rev': mixins_rev, 'engine_id': engine_id, 'engine_name': engine_name,
+              'native_manifest': native, 'mods': records}, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'abis={json.dumps(abis)}\naurora_commit={commit}\nmixins_rev={mixins_rev}\n'
+                           f'label={label}\nsmoke={str(spec == "smoke").lower()}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'### Native engine `{engine_id}` on Aurora `{commit[:12]}`\n\n'
+                            + ''.join(f'- `{r["id"]}` {r["version"]}, pinned to {(r["pin"] or "nothing")[:12]}, '
+                                      f'{r["crates"]} crate(s)\n' for r in records)
+                            + f'\nhorizon-mixins `{mixins_rev[:12]}`; hook points API {hooks_api}.\n')
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-bundle
+          path: ${{ runner.temp }}/native-bundle
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(needs.prepare.outputs.abis) }}
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      # The android-dev builds' path: their cache, and the same --remap-path-prefix flags, apply here.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.local/ci-target
+      HORIZON_TELEMETRY_URL: 'off'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.aurora_commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-bundle
+          path: ${{ runner.temp }}/native-bundle
+      - name: Install Android toolchain
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'build-tools;35.0.0' 'ndk;28.2.13676358'
+          rustup show
+          case "$ABI" in
+            arm64-v8a) target=aarch64-linux-android ;;
+            armeabi-v7a) target=armv7-linux-androideabi ;;
+          esac
+          rustup target add "$target"
+      # The dev builds' crates, read only: a native engine never writes the shared cache. Keyed on the pristine
+      # Cargo.lock, before a bundle's crates enter it.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .local/ci-target
+          key: android-dev-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-${{ needs.prepare.outputs.aurora_commit }}
+          restore-keys: |
+            android-dev-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-
+            android-dev-${{ runner.os }}-${{ matrix.abi }}-
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.horizon-mixins/${{ needs.prepare.outputs.mixins_rev }}
+          key: horizon-mixins-${{ runner.os }}-${{ needs.prepare.outputs.mixins_rev }}-${{ hashFiles('rust-toolchain.toml') }}
+      - name: horizon-mixins, built once per commit (as the launcher's `tool`)
+        env:
+          REV: ${{ needs.prepare.outputs.mixins_rev }}
+        run: |
+          bin="$HOME/.horizon-mixins/$REV/bin/horizon-mixins"
+          if [[ ! -x "$bin" ]]; then
+            toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+            (cd "$RUNNER_TEMP" && cargo "+$toolchain" install --locked \
+              --git https://github.com/horizon-rust/horizon-mixins --rev "$REV" \
+              --root "$HOME/.horizon-mixins/$REV" horizon-mixins-cli)
+          fi
+          "$bin" --version
+          echo "HORIZON_MIXINS=$bin" >> "$GITHUB_ENV"
+      - name: Check public source boundaries (pristine tree)
+        run: python3 tools/check_public_tree.py
+      - name: Can horizon-mixins index this tree?
+        run: |
+          python3 -I - <<'PY'
+          import re
+          from pathlib import Path
+          # Crate roots of the hook points' crates. An inner cfg/cfg_attr makes horizon-mixins skip the whole
+          # crate: every target in it is refused. `plan` below gives the authoritative error.
+          for root in ('crates/horizon-client/src/lib.rs', 'crates/horizon-client/src/client_lib.rs',
+                       'crates/horizon-client-render/src/lib.rs', 'crates/horizon-world/src/lib.rs',
+                       'crates/horizon-items/src/lib.rs'):
+              for number, line in enumerate(Path(root).read_text().splitlines(), 1):
+                  if re.match(r'\s*#!\[\s*cfg(_attr)?\s*\(', line):
+                      print(f'::warning file={root},line={number}::{line.strip()}: horizon-mixins refuses every target of this crate (E_UNSUPPORTED_CFG); upstream keeps crate roots free of cfg (#8169)')
+          PY
+      - name: Fetch the locked crates
+        run: cargo fetch --locked
+      - name: Apply the bundles (horizon-mixins plan, then apply into a separate stage)
+        run: |
+          # horizon-mixins refuses links among its inputs; the tree's only one is CLAUDE.md -> AGENTS.md.
+          find . \( -path ./.git -o -path ./.local \) -prune -o -type l -print -delete
+          mods="$RUNNER_TEMP/native-bundle/mods"
+          "$HORIZON_MIXINS" plan --workspace "$GITHUB_WORKSPACE" --mods "$mods" --out "$RUNNER_TEMP/plan.json"
+          "$HORIZON_MIXINS" apply --workspace "$GITHUB_WORKSPACE" --mods "$mods" --out "$RUNNER_TEMP/stage" \
+            | tee "$RUNNER_TEMP/apply.json"
+          python3 -I - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          tmp = Path(os.environ['RUNNER_TEMP'])
+          applied = json.loads((tmp / 'apply.json').read_text())
+          record = json.loads((tmp / 'stage/.horizon-mixins-stage.json').read_text())
+          wanted = {m['id'] for m in json.loads((tmp / 'native-bundle/bundle.json').read_text())['mods']}
+          staged = {e.get('mod_id') for key in ('injections', 'modules') for e in record.get(key, [])}
+          if applied.get('post_build'):
+              sys.exit('::error::the plan has post-build steps, which an Android engine cannot run')
+          if wanted - staged:
+              sys.exit(f'::error::applied nothing of {sorted(wanted - staged)}')
+          print(f'Applied {sorted(staged)}: {applied["injections"]} injection(s), {applied["modules"]} module(s), '
+                f'{applied["crates"]} crate(s), {applied["data"]} data file(s)')
+          PY
+          # The stage replaces the checkout's files at the same path. Kept: .git (commit, dirty) and .local (cache).
+          rsync -a --delete --exclude=/.git/ --exclude=/.local/ "$RUNNER_TEMP/stage/" "$GITHUB_WORKSPACE/"
+      - name: Build the engine library (release profile and public mode, as the published APKs)
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          python3 tools/android_build.py --abi "$ABI" --public --profile release --rust-only \
+            --sdk "$ANDROID_HOME" --ndk-version 28.2.13676358 --build-tools-version 35.0.0
+      - name: The smoke mod is in the library
+        if: needs.prepare.outputs.smoke == 'true'
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          case "$ABI" in
+            arm64-v8a) target=aarch64-linux-android ;;
+            armeabi-v7a) target=armv7-linux-androideabi ;;
+          esac
+          grep -c -a 'aurora_smoke' "$CARGO_TARGET_DIR/$target/release/libhorizon_android.so"
+      - name: Pack the .hengine and its records
+        env:
+          ABI: ${{ matrix.abi }}
+          ENGINE_ID: ${{ inputs.engine_id }}
+          ENGINE_NAME: ${{ inputs.engine_name }}
+          LABEL: ${{ needs.prepare.outputs.label }}
+        run: |
+          mkdir -p dist
+          version=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" packaging/android/build.gradle | head -n 1)
+          python3 tools/android_engine_pack.py --abi "$ABI" --skip-build --profile release \
+            --id "$ENGINE_ID" --name "$ENGINE_NAME" --version "$version+$LABEL" \
+            --output "dist/$ENGINE_ID-$ABI.hengine"
+          python3 -I - <<'PY'
+          import hashlib, json, os, shutil, subprocess, zipfile
+          from pathlib import Path
+          tmp, dist = Path(os.environ['RUNNER_TEMP']), Path('dist')
+          abi, engine_id = os.environ['ABI'], os.environ['ENGINE_ID']
+          engine = dist / f'{engine_id}-{abi}.hengine'
+          manifest = json.loads(zipfile.ZipFile(engine).read('engine.json'))
+          bundle = json.loads((tmp / 'native-bundle/bundle.json').read_text())
+          for name in ('plan.json', 'apply.json'):
+              shutil.copyfile(tmp / name, dist / f'{engine_id}-{abi}-{name}')
+          for content in (tmp / 'native-bundle/content').glob('*.hmod'):
+              shutil.copyfile(content, dist / content.name)
+          (dist / f'{engine_id}-{abi}-BUILD.json').write_text(json.dumps({
+              'engine': manifest, 'bundle': bundle,
+              'rustc': subprocess.check_output(['rustc', '--version'], text=True).strip(),
+              'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+          }, indent=2) + '\n')
+          sums = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
+                         for p in sorted(dist.glob('*.hengine')) + sorted(dist.glob('*.hmod')))
+          (dist / f'SHA256SUMS-{engine_id}-{abi}.txt').write_text(sums)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'### {manifest["name"]} ({abi})\n\n`{engine.name}`: {engine.stat().st_size / 1e6:.1f} MB; '
+                            f'library {manifest["size"] / 1e6:.1f} MB, SHA-256 `{manifest["sha256"]}`, shell {manifest["shell"]}.\n\n'
+                            'On the phone: Settings › Engines › Import, pick the file, confirm, then Start '
+                            '(or give an instance this engine). Content mods (.hmod) go in that instance\'s Mods.\n')
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-engine-${{ inputs.engine_id }}-${{ matrix.abi }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    # The launcher reads only the latest release's and the dev pre-release's engines.json (engines::LISTS). Until a
+    # third list (this release's) is added there, players import these files by hand; the list is ready for it.
+    needs: [prepare, build]
+    if: ${{ !cancelled() && inputs.publish && github.ref == 'refs/heads/main' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    concurrency:
+      group: aurora-engines-list
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.aurora_commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: native-engine-${{ inputs.engine_id }}-*
+          path: parts
+      - name: Merge into the rolling `engines` pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENGINE_ID: ${{ inputs.engine_id }}
+        run: |
+          mkdir -p dist old
+          cp parts/*/*.hengine dist/
+          cp parts/*/*.hmod dist/ 2>/dev/null || true
+          cat parts/*/SHA256SUMS-*.txt | sort -u -k2 > "dist/SHA256SUMS-$ENGINE_ID.txt"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/engines/"
+          python3 tools/android_engine_index.py --output new.json --base-url "$base" dist/*.hengine
+          if gh release view engines --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release download engines --repo "$GITHUB_REPOSITORY" --pattern engines.json --dir old || true
+          else
+            gh release create engines --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+              --target "$GITHUB_SHA" --title "Extra engines" \
+              --notes "Engines with native mods compiled in (android-native-engine.yml). Settings › Engines › Import. Build engines from the same Aurora line as the installed app."
+          fi
+          python3 -I - <<'PY'
+          import json
+          from pathlib import Path
+          new = json.loads(Path('new.json').read_text())
+          old_path = Path('old/engines.json')
+          old = json.loads(old_path.read_text()) if old_path.is_file() else {'format': 1, 'engines': []}
+          if old.get('format') != 1:
+              raise SystemExit('::error::the published engines.json has another format')
+          fresh = {(e['id'], e['abi']) for e in new['engines']}
+          engines = [e for e in old['engines'] if (e['id'], e['abi']) not in fresh] + new['engines']
+          engines.sort(key=lambda e: (e['id'], e['abi']))
+          Path('dist/engines.json').write_text(json.dumps({'format': 1, 'engines': engines}, indent=2) + '\n')
+          print(f'engines.json: {len(engines)} engine(s)')
+          PY
+          gh release upload engines --repo "$GITHUB_REPOSITORY" --clobber dist/*
