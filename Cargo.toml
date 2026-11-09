@@ -3,6 +3,7 @@ exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-re
 members = [
     "crates/horizon-android",
     "crates/horizon-boot",
+    "crates/horizon-addresses",
     "crates/horizon-core",
     "crates/horizon-dualsense",
     "crates/horizon-narrator",
@@ -29,6 +30,8 @@ members = [
     "crates/horizon-theme",
     "crates/horizon-prepare",
     "crates/horizon-telemetry",
+    "crates/horizon-system",
+    "crates/horizon-platform",
     "crates/horizon-bench",
     "crates/horizon-friends",
     "crates/horizon-relay",

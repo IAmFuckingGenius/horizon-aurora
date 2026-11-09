@@ -16,6 +16,8 @@ RENDER = ROOT / 'crates/horizon-client-render/src'
 FRAGMENTS = {
     'entity.wgsl', 'static_entity.wgsl', 'oit_world.wgsl', 'oit_clouds.wgsl',
     'oit_features.wgsl', 'oit_border.wgsl', 'visbuffer.wgsl', 'gpu_occlusion.wgsl',
+    'hdr_light.wgsl', 'custom_sky.wgsl', 'stars.wgsl', 'hdr.wgsl', 'world_warp_fragment.wgsl',
+    'world_warp.wgsl',
 }
 
 MAIN = r'''
@@ -96,17 +98,19 @@ fn check(name: &str, src: &str, gles: Option<u16>) -> bool {
 fn main() {
     let read = |file: &str| std::fs::read_to_string(format!("@RENDER@/{file}")).unwrap();
     let mut ok = true;
-    let terrain = terrain_source::terrain_shader(false).into_owned();
+    // gfx.rs's terrain_shader and entity_shader.
+    let terrain = read("hdr_light.wgsl") + &read("terrain.wgsl");
     ok &= check("terrain", &terrain, None);
     // The storage-buffer entry points need GLES 3.1, where the renderer makes them.
-    match std::panic::catch_unwind(|| terrain_source::terrain_shader(true)) {
+    let whole = terrain.clone();
+    match std::panic::catch_unwind(move || terrain_source::lowered(whole, true)) {
         Ok(gles) => ok &= check("terrain (GLES)", &gles, Some(310)),
         Err(_) => {
             println!("FAIL terrain (GLES): the lowering panicked");
             ok = false;
         }
     }
-    let entity = overlay::wgsl_constants() + &read("entity.wgsl");
+    let entity = overlay::wgsl_constants() + &read("hdr_light.wgsl") + &read("entity.wgsl");
     ok &= check("entity", &entity, None);
     let gles_entity = terrain_source::gles_uniforms(&entity_source::legacy_overlay(&entity));
     ok &= check("entity (GLES)", &gles_entity, Some(300));
@@ -121,6 +125,11 @@ fn main() {
         None,
     );
     ok &= check("visbuffer", &(terrain.clone() + &read("visbuffer.wgsl")), None);
+    // Shaders with HDR's shared maths in front (gfx/custom_sky.rs, stars.rs, hdr.rs).
+    let hdr_light = read("hdr_light.wgsl");
+    ok &= check("custom sky", &(hdr_light.clone() + &read("gfx/custom_sky.wgsl")), None);
+    ok &= check("stars", &(hdr_light.clone() + &read("gfx/stars.wgsl")), None);
+    ok &= check("hdr", &(hdr_light.clone() + &read("hdr.wgsl")), None);
     ok &= check(
         "gpu occlusion",
         &(read("gfx/gpu_culling.wgsl") + &read("gfx/gpu_occlusion.wgsl")),

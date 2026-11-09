@@ -1402,6 +1402,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-addresses"
+version = "0.1.0"
+
+[[package]]
 name = "horizon-android"
 version = "0.1.0"
 dependencies = [
@@ -1630,7 +1634,6 @@ dependencies = [
  "glam",
  "half",
  "horizon-assets",
- "horizon-bench",
  "horizon-client-core",
  "horizon-client-input",
  "horizon-command",
@@ -1641,10 +1644,11 @@ dependencies = [
  "horizon-mod-api-gen",
  "horizon-narrator",
  "horizon-optifine",
+ "horizon-polytone",
  "horizon-protocol",
  "horizon-shader-api",
  "horizon-shaders",
- "horizon-telemetry",
+ "horizon-system",
  "horizon-theme",
  "horizon-threads",
  "horizon-world",
@@ -1693,6 +1697,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "glam",
+ "horizon-addresses",
  "png",
  "serde",
  "serde_json",
@@ -1715,6 +1720,7 @@ dependencies = [
  "chacha20poly1305",
  "getrandom 0.3.4",
  "hkdf",
+ "horizon-addresses",
  "if-addrs",
  "serde",
  "serde_json",
@@ -1825,9 +1831,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-platform"
+version = "0.1.0"
+dependencies = [
+ "horizon-system",
+]
+
+[[package]]
 name = "horizon-polytone"
 version = "0.1.0"
 dependencies = [
+ "log",
  "regex",
  "serde_json",
 ]
@@ -1961,10 +1975,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-system"
+version = "0.1.0"
+
+[[package]]
 name = "horizon-telemetry"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
+ "horizon-addresses",
+ "horizon-platform",
  "ruzstd",
  "serde",
  "serde_json",

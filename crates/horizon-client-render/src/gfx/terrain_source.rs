@@ -1,13 +1,9 @@
-//! Legacy GLES lowering. Vulkan retains the original WGSL byte for byte.
-use std::borrow::Cow;
+//! Legacy GLES lowering of the terrain shader (`gfx::terrain_shader`). Vulkan retains the
+//! original WGSL byte for byte.
 
-pub(super) fn terrain_shader(gl: bool) -> Cow<'static, str> {
-    let source = include_str!("../terrain.wgsl");
-    if gl {
-        Cow::Owned(gles_source(source))
-    } else {
-        Cow::Borrowed(source)
-    }
+/// The terrain shader `source` as a device of the GL backend (`gl`) takes it.
+pub(super) fn lowered(source: String, gl: bool) -> String {
+    if gl { gles_source(&source) } else { source }
 }
 
 /// GLES 3.0 cannot declare arrays of arrays. Two adjacent vec4 entries
@@ -45,47 +41,8 @@ fn gles_source(source: &str) -> String {
     output.push_str(&source[end..rgss]);
     output.push_str(&source[rgss_end..]);
 
-    // Adreno 304 renders broken terrain with the separated scalar varyings.
-    // Pack values sharing their interpolation qualifier; leave the vertex
-    // buffers, texture sampling, fade, lighting, fog and HDR arithmetic alone.
-    let start = output
-        .find("struct TerrainOut {")
-        .expect("terrain interface");
-    let fields_end = output[start..]
-        .find("\n}\n")
-        .expect("terrain interface end")
-        + start
-        + 3;
-    // The terrain functions run up to the next stage interface (the native fluids',
-    // then the sky's), whose own fields of the same names stay.
-    let end = output[fields_end..]
-        .match_indices("\nstruct ")
-        .map(|(i, _)| fields_end + i + 1)
-        .find(|&i| {
-            output[i..]
-                .split_once('{')
-                .is_some_and(|(head, _)| head.trim_end().ends_with("Out"))
-        })
-        .expect("the next stage interface");
-    let mut body = output[fields_end..end].to_owned();
-    for (member, packed) in [
-        ("emissive_layer", "codes.w"),
-        ("layer", "codes.x"),
-        ("emission", "codes.y"),
-        ("fade", "codes.z"),
-        ("spherical", "distances.x"),
-        ("cylindrical", "distances.y"),
-        ("visibility", "distances.z"),
-        ("height", "distances.w"),
-    ] {
-        for variable in ["in", "out"] {
-            body = body.replace(
-                &format!("{variable}.{member}"),
-                &format!("{variable}.{packed}"),
-            );
-        }
-    }
-    output.replace_range(start..end, &(PACKED_INTERFACE.to_owned() + &body));
+    // The stages already pass terrain's varyings packed in five vec4s (`TerrainWire`), the
+    // integers flat: what Adreno 304's broken scalar varyings needed here before.
     output
 }
 
@@ -137,16 +94,6 @@ fn emissive_branches(first: u32, depth: usize) -> String {
     code
 }
 
-const PACKED_INTERFACE: &str = "struct TerrainOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) @interpolate(flat) codes: vec4<u32>,
-    @location(2) color: vec4<f32>,
-    @location(3) distances: vec4<f32>,
-    @location(4) local: vec3<f32>,
-    @location(5) scene: vec2<f32>,
-}
-";
 
 #[cfg(test)]
 #[path = "terrain_source/hdr_gpu_tests.rs"]
@@ -158,10 +105,10 @@ mod tests {
 
     #[test]
     fn vulkan_source_is_unchanged_and_gles_validates_every_entrypoint() {
-        assert!(matches!(terrain_shader(false), Cow::Borrowed(_)));
-        assert_eq!(terrain_shader(false), include_str!("../terrain.wgsl"));
-        let source = terrain_shader(true);
-        let original = include_str!("../terrain.wgsl").replace("\r\n", "\n");
+        let shader = super::super::terrain_shader();
+        assert_eq!(lowered(shader.clone(), false), shader);
+        let source = lowered(shader.clone(), true);
+        let original = shader.replace("\r\n", "\n");
         assert_eq!(
             &source[source.find("struct SkyOut {").unwrap()..],
             &original[original.find("struct SkyOut {").unwrap()..],
@@ -173,10 +120,8 @@ mod tests {
         for index in 0..7 {
             assert!(source.contains(&format!("array_index == {index}u")));
         }
-        assert!(source.contains("let whole = in.codes.y > 4u"));
-        assert!(source.contains("if in.codes.w != 0xffffffffu"));
-        assert!(!source.contains("in.height"));
-        assert!(!source.contains("out.emissive_layer"));
+        // The emissive search with constant indices only.
+        assert!(!source.contains("globals.emissive_layers[i]"));
         let module = naga::front::wgsl::parse_str(&source).unwrap();
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
@@ -199,14 +144,14 @@ mod tests {
                 .iter()
                 .filter(|m| matches!(m.binding, Some(naga::Binding::Location { .. })))
                 .count(),
-            // uv, codes, color, distances, local, and HDR lighting's scene.
-            6
+            // `TerrainWire`'s five packed vec4s.
+            5
         );
     }
 
     #[test]
     fn windows_line_endings_produce_the_same_gles_shader() {
-        let source = include_str!("../terrain.wgsl").replace("\r\n", "\n");
+        let source = super::super::terrain_shader().replace("\r\n", "\n");
         assert_eq!(
             gles_source(&source),
             gles_source(&source.replace('\n', "\r\n"))
