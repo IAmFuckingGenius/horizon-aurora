@@ -5,6 +5,7 @@
 //! The numbers and rules follow Botania's source; the code is rewritten in Rust for Horizon.
 
 pub mod apothecary;
+pub mod armor_model;
 pub mod burst;
 pub mod consts;
 pub mod daisy;

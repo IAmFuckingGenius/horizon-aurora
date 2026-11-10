@@ -23,6 +23,10 @@
         "operation": "add_value",
         "slot": "head"
       }
-    ]
+    ],
+    "minecraft:equippable": {
+      "slot": "head",
+      "equip_sound": "minecraft:item.armor.equip_iron"
+    }
   }
 }

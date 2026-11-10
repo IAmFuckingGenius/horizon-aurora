@@ -8,7 +8,9 @@ take their numbers in code (BotaniaAPIImpl.ItemTier and ArmorMaterial, the item 
 constructors, BotaniaItems' durabilities: Botania 1.20.1-456), so they are written here as 26.3
 components over the vanilla item of the same kind and mining level. What Botania adds on top in code
 (mana repair, the Terra Blade's beam, the Thundercaller's chain lightning, the Starcaller's stars,
-the Terra Shatterer's area mining, set bonuses, Botania's armour model) is not here.
+the Terra Shatterer's area mining, set bonuses) is not here. Botania draws its armour with models of
+its own, which the native bundle draws (`bundle/armour.rs`): the armour's `equippable` names no
+equipment asset, so the vanilla armour layer draws nothing for it.
 """
 import json
 from pathlib import Path
@@ -48,13 +50,14 @@ TOOLS = {
 MINEABLE = {'pickaxe': 'pickaxe', 'shovel': 'shovel', 'axe': 'axe', 'hoe': 'hoe'}
 
 # ArmorMaterial: durability multiplier, defence (helmet, chestplate, leggings, boots), enchantability,
-# toughness, repair item; and the vanilla look worn (Botania draws its own model). A content item can
-# only set component types some vanilla item has by default, so no dyed_color: leather stays brown.
+# toughness, repair item, the vanilla armour the item is made over, and the equip sound
+# (`BotaniaSounds.equip*`, which Botania's sounds.json plays as these vanilla events). A content item
+# can only set component types some vanilla item has by default, so no dyed_color.
 ARMOUR = {
-    'manasteel': (16, (2, 6, 5, 2), 18, 0.0, 'botania:manasteel_ingot', 'diamond'),
-    'manaweave': (5, (1, 3, 2, 1), 18, 0.0, 'botania:manaweave_cloth', 'leather'),
-    'elementium': (18, (2, 6, 5, 2), 18, 0.0, 'botania:elementium_ingot', 'iron'),
-    'terrasteel': (34, (3, 8, 6, 3), 26, 3.0, 'botania:terrasteel_ingot', 'netherite'),
+    'manasteel': (16, (2, 6, 5, 2), 18, 0.0, 'botania:manasteel_ingot', 'diamond', 'iron'),
+    'manaweave': (5, (1, 3, 2, 1), 18, 0.0, 'botania:manaweave_cloth', 'leather', 'leather'),
+    'elementium': (18, (2, 6, 5, 2), 18, 0.0, 'botania:elementium_ingot', 'iron', 'iron'),
+    'terrasteel': (34, (3, 8, 6, 3), 26, 3.0, 'botania:terrasteel_ingot', 'netherite', 'diamond'),
 }
 PIECES = (('helmet', 'head', 11), ('chestplate', 'chest', 16), ('leggings', 'legs', 15), ('boots', 'feet', 13))
 
@@ -97,7 +100,7 @@ def tool(name, tier, kind, damage, speed, durability):
     write(name, {'template': f'minecraft:{material}_{kind}', 'components': components})
 
 
-def armour(material, multiplier, defence, enchant, toughness, repair, look):
+def armour(material, multiplier, defence, enchant, toughness, repair, template, sound):
     for (piece, slot, health), armor in zip(PIECES, defence):
         components = {
             'minecraft:max_damage': health * multiplier,
@@ -109,10 +112,12 @@ def armour(material, multiplier, defence, enchant, toughness, repair, look):
                 {'type': 'minecraft:armor_toughness', 'id': f'minecraft:armor.{piece}', 'amount': toughness,
                  'operation': 'add_value', 'slot': slot},
             ],
+            # No asset_id: Botania's model is drawn by the native bundle instead.
+            'minecraft:equippable': {'slot': slot, 'equip_sound': f'minecraft:item.armor.equip_{sound}'},
         }
-        if look == 'netherite':
+        if template == 'netherite':
             components['!minecraft:damage_resistant'] = {}
-        write(f'{material}_{piece}', {'template': f'minecraft:{look}_{piece}', 'components': components})
+        write(f'{material}_{piece}', {'template': f'minecraft:{template}_{piece}', 'components': components})
 
 
 def main():
