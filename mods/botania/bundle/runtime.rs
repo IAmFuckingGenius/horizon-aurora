@@ -330,13 +330,17 @@ fn mana_void_below(game: &Game<'_>, pos: [i32; 3]) -> bool {
     game.native_block([pos[0], pos[1] - 1, pos[2]]) == "botania:mana_void"
 }
 
-// `ManaPoolBlockEntity.serverTick` without mana items (phase 2): join the network, keep the
-// capacity, send clients the mana at most every 10 ticks, and tell comparators.
+// `ManaPoolBlockEntity.serverTick`: join the network, keep the capacity, charge or drain the mana
+// items in it (`botania_mana::pool_items`), send clients the mana at most every 10 ticks, and
+// tell comparators.
 fn pool_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
     let dim = game.dim.id();
     let block = game.native_block(pos);
     let mut p = pool_of(&entity.nbt, &block);
     let crafted = infuse(game, pos, &mut p);
+    // The mana items lying in it, charged or drained (mana.rs).
+    let ticks = state().pools.get(&(dim, pos)).map_or(0, |t| t.ticks);
+    super::botania_mana::pool_items(game, pos, &mut p, &entity.nbt, ticks);
     set_int(entity, "mana", p.mana);
     set_int(entity, "manaCap", p.cap);
     let level = p.comparator();
@@ -1885,6 +1889,16 @@ const RECIPES: &[(&str, &[u8])] = &[
     (
         "twig_wand",
         horizon_client::native_data!("botania", "recipe/twig_wand.json"),
+    ),
+    // `botania:mana_upgrade(_shapeless)` as plain crafting: the ring starts empty (Botania carries
+    // the tablet's or ring's mana over; the crafting grid isn't reachable from a hook).
+    (
+        "mana_ring",
+        horizon_client::native_data!("botania", "recipe/mana_ring.json"),
+    ),
+    (
+        "mana_ring_greater",
+        horizon_client::native_data!("botania", "recipe/mana_ring_greater.json"),
     ),
     (
         "livingwood_twig",
