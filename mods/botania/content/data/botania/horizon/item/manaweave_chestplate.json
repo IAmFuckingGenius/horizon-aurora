@@ -23,12 +23,6 @@
         "operation": "add_value",
         "slot": "chest"
       }
-    ],
-    "minecraft:dyed_color": 14478335,
-    "minecraft:tooltip_display": {
-      "hidden_components": [
-        "minecraft:dyed_color"
-      ]
-    }
+    ]
   }
 }

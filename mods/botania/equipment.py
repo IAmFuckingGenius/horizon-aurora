@@ -48,15 +48,15 @@ TOOLS = {
 MINEABLE = {'pickaxe': 'pickaxe', 'shovel': 'shovel', 'axe': 'axe', 'hoe': 'hoe'}
 
 # ArmorMaterial: durability multiplier, defence (helmet, chestplate, leggings, boots), enchantability,
-# toughness, repair item; and the vanilla look worn (Botania draws its own model).
+# toughness, repair item; and the vanilla look worn (Botania draws its own model). A content item can
+# only set component types some vanilla item has by default, so no dyed_color: leather stays brown.
 ARMOUR = {
-    'manasteel': (16, (2, 6, 5, 2), 18, 0.0, 'botania:manasteel_ingot', 'diamond', None),
-    'manaweave': (5, (1, 3, 2, 1), 18, 0.0, 'botania:manaweave_cloth', 'leather', 0xDCEBFF),
-    'elementium': (18, (2, 6, 5, 2), 18, 0.0, 'botania:elementium_ingot', 'leather', 0xF29BD4),
-    'terrasteel': (34, (3, 8, 6, 3), 26, 3.0, 'botania:terrasteel_ingot', 'netherite', None),
+    'manasteel': (16, (2, 6, 5, 2), 18, 0.0, 'botania:manasteel_ingot', 'diamond'),
+    'manaweave': (5, (1, 3, 2, 1), 18, 0.0, 'botania:manaweave_cloth', 'leather'),
+    'elementium': (18, (2, 6, 5, 2), 18, 0.0, 'botania:elementium_ingot', 'iron'),
+    'terrasteel': (34, (3, 8, 6, 3), 26, 3.0, 'botania:terrasteel_ingot', 'netherite'),
 }
 PIECES = (('helmet', 'head', 11), ('chestplate', 'chest', 16), ('leggings', 'legs', 15), ('boots', 'feet', 13))
-EQUIP_SOUND = {'diamond': 'diamond', 'leather': 'leather', 'netherite': 'netherite'}
 
 
 def f32(value):
@@ -97,7 +97,7 @@ def tool(name, tier, kind, damage, speed, durability):
     write(name, {'template': f'minecraft:{material}_{kind}', 'components': components})
 
 
-def armour(material, multiplier, defence, enchant, toughness, repair, look, colour):
+def armour(material, multiplier, defence, enchant, toughness, repair, look):
     for (piece, slot, health), armor in zip(PIECES, defence):
         components = {
             'minecraft:max_damage': health * multiplier,
@@ -110,14 +110,8 @@ def armour(material, multiplier, defence, enchant, toughness, repair, look, colo
                  'operation': 'add_value', 'slot': slot},
             ],
         }
-        if colour is not None:
-            components['minecraft:dyed_color'] = colour
-            components['minecraft:tooltip_display'] = {'hidden_components': ['minecraft:dyed_color']}
         if look == 'netherite':
             components['!minecraft:damage_resistant'] = {}
-        if material != 'manaweave' and look == 'leather':
-            components['minecraft:equippable'] = {'slot': slot, 'asset_id': 'minecraft:leather',
-                                                  'equip_sound': 'minecraft:item.armor.equip_iron'}
         write(f'{material}_{piece}', {'template': f'minecraft:{look}_{piece}', 'components': components})
 
 

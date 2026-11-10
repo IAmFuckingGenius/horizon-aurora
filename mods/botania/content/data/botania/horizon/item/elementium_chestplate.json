@@ -1,5 +1,5 @@
 {
-  "template": "minecraft:leather_chestplate",
+  "template": "minecraft:iron_chestplate",
   "components": {
     "minecraft:max_damage": 288,
     "minecraft:enchantable": {
@@ -23,17 +23,6 @@
         "operation": "add_value",
         "slot": "chest"
       }
-    ],
-    "minecraft:dyed_color": 15899604,
-    "minecraft:tooltip_display": {
-      "hidden_components": [
-        "minecraft:dyed_color"
-      ]
-    },
-    "minecraft:equippable": {
-      "slot": "chest",
-      "asset_id": "minecraft:leather",
-      "equip_sound": "minecraft:item.armor.equip_iron"
-    }
+    ]
   }
 }

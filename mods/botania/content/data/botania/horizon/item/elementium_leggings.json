@@ -1,5 +1,5 @@
 {
-  "template": "minecraft:leather_leggings",
+  "template": "minecraft:iron_leggings",
   "components": {
     "minecraft:max_damage": 270,
     "minecraft:enchantable": {
@@ -23,17 +23,6 @@
         "operation": "add_value",
         "slot": "legs"
       }
-    ],
-    "minecraft:dyed_color": 15899604,
-    "minecraft:tooltip_display": {
-      "hidden_components": [
-        "minecraft:dyed_color"
-      ]
-    },
-    "minecraft:equippable": {
-      "slot": "legs",
-      "asset_id": "minecraft:leather",
-      "equip_sound": "minecraft:item.armor.equip_iron"
-    }
+    ]
   }
 }

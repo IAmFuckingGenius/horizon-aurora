@@ -1,5 +1,5 @@
 {
-  "template": "minecraft:leather_helmet",
+  "template": "minecraft:iron_helmet",
   "components": {
     "minecraft:max_damage": 198,
     "minecraft:enchantable": {
@@ -23,17 +23,6 @@
         "operation": "add_value",
         "slot": "head"
       }
-    ],
-    "minecraft:dyed_color": 15899604,
-    "minecraft:tooltip_display": {
-      "hidden_components": [
-        "minecraft:dyed_color"
-      ]
-    },
-    "minecraft:equippable": {
-      "slot": "head",
-      "asset_id": "minecraft:leather",
-      "equip_sound": "minecraft:item.armor.equip_iron"
-    }
+    ]
   }
 }

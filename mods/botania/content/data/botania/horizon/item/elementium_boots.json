@@ -1,5 +1,5 @@
 {
-  "template": "minecraft:leather_boots",
+  "template": "minecraft:iron_boots",
   "components": {
     "minecraft:max_damage": 234,
     "minecraft:enchantable": {
@@ -23,17 +23,6 @@
         "operation": "add_value",
         "slot": "feet"
       }
-    ],
-    "minecraft:dyed_color": 15899604,
-    "minecraft:tooltip_display": {
-      "hidden_components": [
-        "minecraft:dyed_color"
-      ]
-    },
-    "minecraft:equippable": {
-      "slot": "feet",
-      "asset_id": "minecraft:leather",
-      "equip_sound": "minecraft:item.armor.equip_iron"
-    }
+    ]
   }
 }
