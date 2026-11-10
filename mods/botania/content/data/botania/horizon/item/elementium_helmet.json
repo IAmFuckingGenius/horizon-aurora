@@ -1,0 +1,39 @@
+{
+  "template": "minecraft:leather_helmet",
+  "components": {
+    "minecraft:max_damage": 198,
+    "minecraft:enchantable": {
+      "value": 18
+    },
+    "minecraft:repairable": {
+      "items": "botania:elementium_ingot"
+    },
+    "minecraft:attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "id": "minecraft:armor.helmet",
+        "amount": 2.0,
+        "operation": "add_value",
+        "slot": "head"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "id": "minecraft:armor.helmet",
+        "amount": 0.0,
+        "operation": "add_value",
+        "slot": "head"
+      }
+    ],
+    "minecraft:dyed_color": 15899604,
+    "minecraft:tooltip_display": {
+      "hidden_components": [
+        "minecraft:dyed_color"
+      ]
+    },
+    "minecraft:equippable": {
+      "slot": "head",
+      "asset_id": "minecraft:leather",
+      "equip_sound": "minecraft:item.armor.equip_iron"
+    }
+  }
+}

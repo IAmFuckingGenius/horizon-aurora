@@ -1,0 +1,39 @@
+{
+  "template": "minecraft:leather_leggings",
+  "components": {
+    "minecraft:max_damage": 270,
+    "minecraft:enchantable": {
+      "value": 18
+    },
+    "minecraft:repairable": {
+      "items": "botania:elementium_ingot"
+    },
+    "minecraft:attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "id": "minecraft:armor.leggings",
+        "amount": 5.0,
+        "operation": "add_value",
+        "slot": "legs"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "id": "minecraft:armor.leggings",
+        "amount": 0.0,
+        "operation": "add_value",
+        "slot": "legs"
+      }
+    ],
+    "minecraft:dyed_color": 15899604,
+    "minecraft:tooltip_display": {
+      "hidden_components": [
+        "minecraft:dyed_color"
+      ]
+    },
+    "minecraft:equippable": {
+      "slot": "legs",
+      "asset_id": "minecraft:leather",
+      "equip_sound": "minecraft:item.armor.equip_iron"
+    }
+  }
+}

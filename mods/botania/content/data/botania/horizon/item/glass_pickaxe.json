@@ -1,0 +1,41 @@
+{
+  "template": "minecraft:wooden_pickaxe",
+  "components": {
+    "minecraft:max_damage": 125,
+    "minecraft:enchantable": {
+      "value": 10
+    },
+    "minecraft:repairable": {
+      "items": "minecraft:glass"
+    },
+    "minecraft:attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "id": "minecraft:base_attack_damage",
+        "amount": 1.0,
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "id": "minecraft:base_attack_speed",
+        "amount": -1.0,
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ],
+    "minecraft:tool": {
+      "rules": [
+        {
+          "blocks": "#minecraft:incorrect_for_wooden_tool",
+          "correct_for_drops": false
+        },
+        {
+          "blocks": "#minecraft:mineable/pickaxe",
+          "correct_for_drops": true,
+          "speed": 4.800000190734863
+        }
+      ]
+    }
+  }
+}

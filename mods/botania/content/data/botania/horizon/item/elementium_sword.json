@@ -1,0 +1,28 @@
+{
+  "template": "minecraft:diamond_sword",
+  "components": {
+    "minecraft:max_damage": 720,
+    "minecraft:enchantable": {
+      "value": 20
+    },
+    "minecraft:repairable": {
+      "items": "botania:elementium_ingot"
+    },
+    "minecraft:attribute_modifiers": [
+      {
+        "type": "minecraft:attack_damage",
+        "id": "minecraft:base_attack_damage",
+        "amount": 5.0,
+        "operation": "add_value",
+        "slot": "mainhand"
+      },
+      {
+        "type": "minecraft:attack_speed",
+        "id": "minecraft:base_attack_speed",
+        "amount": -2.4000000953674316,
+        "operation": "add_value",
+        "slot": "mainhand"
+      }
+    ]
+  }
+}

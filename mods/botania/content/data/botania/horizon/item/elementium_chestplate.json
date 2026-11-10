@@ -1,0 +1,39 @@
+{
+  "template": "minecraft:leather_chestplate",
+  "components": {
+    "minecraft:max_damage": 288,
+    "minecraft:enchantable": {
+      "value": 18
+    },
+    "minecraft:repairable": {
+      "items": "botania:elementium_ingot"
+    },
+    "minecraft:attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "id": "minecraft:armor.chestplate",
+        "amount": 6.0,
+        "operation": "add_value",
+        "slot": "chest"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "id": "minecraft:armor.chestplate",
+        "amount": 0.0,
+        "operation": "add_value",
+        "slot": "chest"
+      }
+    ],
+    "minecraft:dyed_color": 15899604,
+    "minecraft:tooltip_display": {
+      "hidden_components": [
+        "minecraft:dyed_color"
+      ]
+    },
+    "minecraft:equippable": {
+      "slot": "chest",
+      "asset_id": "minecraft:leather",
+      "equip_sound": "minecraft:item.armor.equip_iron"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "template": "minecraft:netherite_boots",
+  "components": {
+    "minecraft:max_damage": 442,
+    "minecraft:enchantable": {
+      "value": 26
+    },
+    "minecraft:repairable": {
+      "items": "botania:terrasteel_ingot"
+    },
+    "minecraft:attribute_modifiers": [
+      {
+        "type": "minecraft:armor",
+        "id": "minecraft:armor.boots",
+        "amount": 3.0,
+        "operation": "add_value",
+        "slot": "feet"
+      },
+      {
+        "type": "minecraft:armor_toughness",
+        "id": "minecraft:armor.boots",
+        "amount": 3.0,
+        "operation": "add_value",
+        "slot": "feet"
+      }
+    ],
+    "!minecraft:damage_resistant": {}
+  }
+}
