@@ -243,7 +243,8 @@ impl BlockEntityDraw {
     pub fn still(&mut self) {
         self.spins.push((self.vertices.len(), None));
     }
-    fn apply(&mut self, m: Mat4) {
+    /// Multiplies the pose by `m` (`PoseStack.mulPose`).
+    pub(super) fn apply(&mut self, m: Mat4) {
         if let Some(pose) = self.poses.last_mut() {
             *pose *= m;
         }

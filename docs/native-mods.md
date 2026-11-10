@@ -1833,6 +1833,8 @@ letting go shows them all on one frame ([Holding the world's picture](#holding-t
 
 API 415 adds a world warp through `native_world_warp`: once a frame a client mod may give WGSL (`world_warp(pos, section) -> Warped`, and optionally `world_fragment(f) -> Painted` after a line `// [fragments]`) that every terrain vertex, far terrain's tiles included, and entity vertex goes through, with sixteen floats it reads as `warp.params`. While it is on the frame culls nothing by where it was. A frame without one costs nothing more ([World warps](#world-warps)). Bundles need "hooks": 415.
 
+API 416 adds `native_armor_stand_layer(stand, parts, draw)` and `native_player_preview_layer(player, parts, draw)`: a layer on every armour stand in view, which `native_mob_layer` never sees, and on the player the inventory draws, each after its model and layers, in a frame at its feet turned with its body. `NativeArmorStandRender` has the stand's id, `small`, `invisible`, the partial tick, `body_yaw` and its six `equipment` slots; the doll has its `NativeMobRender`, its faces show from both sides and are lit for the screen. `parts.place(name, draw)` (`NativeModelParts`) moves `draw` onto a humanoid part where it is drawn this frame, the stand's posed like it, so a layer's `ModelPart` follows as vanilla armour does ([Mobs drawn by a mod](#mobs-drawn-by-a-mod)). Bundles need "hooks": 416.
+
 ## What the launcher does
 
 **Developing a mod?** Run `horizon-launcher settings native-profile dev` once, or pick "Dev build" in the Mods page's
@@ -3991,6 +3993,16 @@ items are left out (NeoForge's `RenderLivingEvent.Pre`, cancelled); its name tag
   after its vanilla model and layers, in the same frame (not for one a mod drew itself); `who` is set for a player. The
   geometry hangs from the entity's frame, not from a model bone: place a hat from `head_yaw`, `pitch` and the entity type's
   eye height.
+- An armour stand is no mob: `native_armor_stand_layer(stand, parts, draw)` (API 416) adds to every stand in
+  view after its model and layers, with `stand` (`NativeArmorStandRender`: its id, `small`, `invisible`, the partial tick,
+  `body_yaw` and its six `equipment` slots in `EquipmentSlot` order) and a `draw` at its feet turned with its body.
+  `native_player_preview_layer(player, parts, draw)` (same API) adds to this window's player where the inventory draws it,
+  after its model and layers, with the doll's `NativeMobRender` and a `draw` at its feet; its faces show from both sides
+  and are lit for the screen, as the doll is. In both, `parts.place(name, draw)` (`NativeModelParts`) moves `draw` onto a
+  humanoid part (`head`, `hat`, `body`, `right_arm`, `left_arm`, `right_leg`, `left_leg`) where it is drawn this frame (the
+  stand's armour model posed like the stand, `ArmorStandArmorModel`), so a layer's own `ModelPart` drawn there with
+  `native_draw_model_part` follows it as vanilla's armour does (`HumanoidModel.copyPropertiesTo`). Call it between
+  `draw.push()` and `draw.pop()`.
 - A model built in code, as a NeoForge mod's `createBodyLayer()` builds it, is an entity model layer (API
   @API:model_layers@). `native_layer_definitions(layers)` (`EntityRenderersEvent.RegisterLayerDefinitions`, asked once at
   start) takes a mod's layers by id, `<mod id>:<model>#<layer>`. Each is a `LayerDefinition`: a `MeshDefinition` whose

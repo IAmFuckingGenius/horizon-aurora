@@ -6,6 +6,9 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 416 adds layers on armour stands and on the player drawn in the inventory (`native_armor_stand_layer`,
+//! `native_player_preview_layer`), with where their parts are drawn (`NativeModelParts`).
+//!
 //! API 415 adds a world warp (`native_world_warp`): WGSL every terrain and entity vertex goes through, with an optional per-pixel stage for terrain.
 //!
 //! API 414 adds a held world (`native_world_hold`): the terrain kept drawn as it stands while the world changes under it, and every change shown on one frame when let go.
@@ -999,7 +1002,9 @@ use super::{
     maps::{NativeMapDecoration, NativeMapInfo},
     native_block_entity_draw::BlockEntityDraw,
     native_configs::{NativeConfig, NativeConfigFile},
-    native_mob_draw::{NativeMobRender, NativePlayerRender},
+    native_mob_draw::{
+        NativeArmorStandRender, NativeMobRender, NativeModelParts, NativePlayerRender,
+    },
     native_panel_recipes::RecipePage,
     native_reload_listeners::NativeReloadListener,
     native_world_draw::NativeWorldDraw,
@@ -1083,7 +1088,7 @@ pub(super) use horizon_world::level::flags;
 
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
-pub(crate) const NATIVE_HOOKS_API: u32 = 415;
+pub(crate) const NATIVE_HOOKS_API: u32 = 416;
 
 impl GameLevel<'_> {
     /// A crop, stem, cactus, sugar cane, bamboo, mushroom or vine on an
@@ -3670,6 +3675,37 @@ impl Game<'_> {
         draw: &mut BlockEntityDraw,
     ) {
         mod_api::dispatch_mob_layer(self, mod_api::mods(), mob, who, draw);
+    }
+    /// A layer on every armour stand in view, once a frame after its model
+    /// and layers (`ArmorStandRenderer`'s, `EntityRenderersEvent.AddLayers`),
+    /// which `native_mob_layer` never sees: `stand` is which stand and what it
+    /// wears and holds, `parts` where its armour model's head, body, arms and
+    /// legs are drawn, posed like the stand (`ArmorStandArmorModel`). `draw`
+    /// starts at its feet turned with its body, as `native_mob_layer`'s does,
+    /// and holds its light. API 416.
+    pub(super) fn native_armor_stand_layer(
+        &self,
+        stand: &NativeArmorStandRender<'_>,
+        parts: &NativeModelParts<'_>,
+        draw: &mut BlockEntityDraw,
+    ) {
+        mod_api::dispatch_armor_stand_layer(self, mod_api::mods(), stand, parts, draw);
+    }
+    /// A layer on this window's player where a screen draws it (the
+    /// inventory's, `InventoryScreen.extractEntityInInventoryFollowsMouse`),
+    /// after its model and layers, each time it is drawn: what
+    /// `native_mob_layer` adds to the player in the world, for the doll.
+    /// `player` is the doll's frame (turned toward the cursor), `parts` where
+    /// its body's parts are drawn, and `draw` starts at its feet turned with
+    /// its body, lit as the doll is (`Lighting.Entry.ENTITY_IN_UI`). Its faces
+    /// show from both sides, as a mod's do in the world. API 416.
+    pub(super) fn native_player_preview_layer(
+        &self,
+        player: &NativeMobRender<'_>,
+        parts: &NativeModelParts<'_>,
+        draw: &mut BlockEntityDraw,
+    ) {
+        mod_api::dispatch_player_preview_layer(self, mod_api::mods(), player, parts, draw);
     }
     /// Icons a mod puts on map `map` each time it is drawn: held, in an
     /// item frame or on the cartography table's screen (a map's pixels are

@@ -103,6 +103,8 @@ mod tests {
         pub(super) struct NativeMapDecoration;
         pub(super) struct NativeMapInfo<'a>(pub &'a ());
         pub(super) struct NativePlayerRender<'a>(pub &'a ());
+        pub(super) struct NativeArmorStandRender<'a>(pub &'a ());
+        pub(super) struct NativeModelParts<'a>(pub &'a ());
         pub(super) struct NativeCommand;
         pub(super) struct NativeLifecycleContext;
         pub(super) struct NativeServerPlayer;

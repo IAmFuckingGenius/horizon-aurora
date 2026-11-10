@@ -3,9 +3,12 @@
 //! of `hurtServer` (creative breaks at once), and `ArmorStandRenderer` with
 //! the default pose, the hit wobble and humanoid armor layers.
 use super::entity::Entity;
-use super::{Game, InteractTarget};
+use super::native_block_entity_draw::BlockEntityDraw;
+use super::native_mob_draw::{NativeArmorStandRender, NativeModelParts, mob_pose};
+use super::{Dim, Game, InteractTarget};
 use horizon_client::{
     Result,
+    block_entity_render::diffuse_lights,
     cit::{Hand, Kind, Rule},
     cit_armor,
     entities::ArmorStand,
@@ -1432,10 +1435,60 @@ impl Game<'_> {
                 self.armor_stand_vertices(a, base, packed, None, out);
                 None
             };
+            // `native_armor_stand_layer`: a native mod's layer, over the stand's own.
+            let yaw = a.render_yaw(alpha as f32) - wobble;
+            self.mod_armor_stand_layer(a, p, yaw, base, alpha as f32, packed, out);
             if !self.entity_glowing(a.id) {
                 self.cull_skinned(out, entity_start, skinned);
             }
         }
+    }
+    /// `native_armor_stand_layer` for stand `a` at `at` (its feet, from the
+    /// camera) turned by `yaw`, under `base` (its `setupRotations`): what a
+    /// mod adds to `out` is drawn with the stand.
+    #[allow(clippy::too_many_arguments)]
+    fn mod_armor_stand_layer(
+        &self,
+        a: &ArmorStand,
+        at: glam::DVec3,
+        yaw: f32,
+        base: glam::Mat4,
+        partial: f32,
+        light: u32,
+        out: &mut Vec<Vertex>,
+    ) {
+        // ArmorStandArmorModel.setupAnim: the armour's model, posed like the stand.
+        let layers = &self.armor_stand_assets.layers;
+        let Some(model) = ["chestplate", "helmet", "leggings", "boots"]
+            .into_iter()
+            .find_map(|slot| layers.get(&(slot, a.small)))
+        else {
+            return;
+        };
+        let mut poses = Poses::new(model);
+        apply_pose(&mut poses, &a.pose);
+        let pose = mob_pose(at, yaw);
+        let parts = NativeModelParts::of_model(model, poses, base, pose);
+        let stand = NativeArmorStandRender {
+            id: a.id,
+            small: a.small,
+            invisible: a.invisible,
+            partial,
+            body_yaw: yaw,
+            equipment: &a.equipment,
+        };
+        let feet = a.render_position(f64::from(partial));
+        let mut draw = BlockEntityDraw::posed(
+            partial,
+            self.world.game_time,
+            light,
+            [feet.x, feet.y, feet.z].map(|c| c.floor() as i32),
+            pose,
+            diffuse_lights(self.dim == Dim::Nether),
+            std::mem::take(out),
+        );
+        self.native_armor_stand_layer(&stand, &parts, &mut draw);
+        *out = draw.into_vertices();
     }
     /// `ArmorStandRenderer.submit` for stand `a` under `base` (its
     /// `setupRotations`): the body, the hand and head items, the armour and

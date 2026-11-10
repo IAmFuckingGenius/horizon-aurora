@@ -931,15 +931,6 @@ impl Game<'_> {
             let base = horizon_client::mobs::render::base_transform(&m, 1.0, camera);
             self.cosmetics_geometry(&m, true, base, None, 1.0, 240 | 240 << 8, false, &mut verts);
         }
-        // `WingsLayer` draws through `RenderTypes.armorCutoutNoCull`: the
-        // wings' faces show from both sides (the elytra texture is empty on
-        // the face that looks at the body).
-        let wings_start = verts.len();
-        self.player_elytra_geometry(&m, chest, camera, 1.0, 240 | 240 << 8, &mut verts);
-        let wings = wings_start..verts.len();
-        self.shoulder_parrots_geometry(&m, camera, 1.0, 240 | 240 << 8, &mut verts);
-        self.held_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, None, &mut verts);
-        self.head_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, &mut verts);
         let height = if m.extra.crouching { 1.5 } else { 1.8 };
         // PictureInPictureRenderer: the box centre, (size, size, -size);
         // then the translation and Rz(pi) * Rx(y_angle * 20 degrees).
@@ -948,13 +939,25 @@ impl Game<'_> {
             * glam::Mat4::from_translation(glam::Vec3::new(0.0, height / 2.0 + offset_y, 0.0))
             * glam::Mat4::from_rotation_z(std::f32::consts::PI)
             * glam::Mat4::from_rotation_x((y_angle * 20.0).to_radians());
+        // `WingsLayer` draws through `RenderTypes.armorCutoutNoCull`: the
+        // wings' faces show from both sides (the elytra texture is empty on
+        // the face that looks at the body).
+        let wings_start = verts.len();
+        self.player_elytra_geometry(&m, chest, camera, 1.0, 240 | 240 << 8, &mut verts);
+        // `native_player_preview_layer`: a native mod's layer, its faces from
+        // both sides too (as the world draws a mod's), lit for the screen.
+        let lit = self.mod_preview_layer(&m, camera, ui_lights(gui), &mut verts);
+        let wings = wings_start..verts.len();
+        self.shoulder_parrots_geometry(&m, camera, 1.0, 240 | 240 << 8, &mut verts);
+        self.held_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, None, &mut verts);
+        self.head_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, &mut verts);
         let fire = self
             .player
             .as_ref()
             .filter(|p| p.fire_ticks > 0 && !p.spectator)
             .map(|p| (p.dimensions.width, p.dimensions.height));
         let glints = preview_glint_quads(&verts, gui, wings.clone(), self.glint_frame);
-        let quads = player_preview_quads_no_cull(verts, gui, fire, &atlas.sprites, wings);
+        let quads = player_preview_quads_lit(verts, gui, fire, &atlas.sprites, wings, lit);
         emit_preview(batch, quads, glints, [x0, y0, x1, y1]);
     }
     /// The survival inventory's player box (`InventoryScreen`).
@@ -1323,10 +1326,20 @@ impl Game<'_> {
 /// face's outward normal in the preview's screen space (x right, y down, z
 /// towards the viewer), where a face that looks up has a negative y.
 fn entity_in_ui_shade(normal: glam::Vec3) -> f32 {
-    const LIGHT_0: glam::Vec3 = glam::Vec3::new(0.2, -1.0, 1.0);
-    const LIGHT_1: glam::Vec3 = glam::Vec3::new(-0.2, -1.0, 0.0);
-    let light = LIGHT_0.normalize().dot(normal).max(0.0) + LIGHT_1.normalize().dot(normal).max(0.0);
+    let light =
+        UI_LIGHT_0.normalize().dot(normal).max(0.0) + UI_LIGHT_1.normalize().dot(normal).max(0.0);
     (light * 0.6 + 0.4).min(1.0)
+}
+const UI_LIGHT_0: glam::Vec3 = glam::Vec3::new(0.2, -1.0, 1.0);
+const UI_LIGHT_1: glam::Vec3 = glam::Vec3::new(-0.2, -1.0, 0.0);
+
+/// The two inventory lights (`entity_in_ui_shade`) in the frame `gui` draws
+/// on the screen: a face lit by them there (`block_entity_render::diffuse`)
+/// has the shade the screen would give it.
+fn ui_lights(gui: glam::Mat4) -> (glam::Vec3, glam::Vec3) {
+    let back = glam::Mat3::from_mat4(gui).inverse();
+    let light = |l: glam::Vec3| (back * l.normalize()).normalize_or_zero();
+    (light(UI_LIGHT_0), light(UI_LIGHT_1))
 }
 
 pub(super) fn player_preview_quads(
@@ -1342,11 +1355,25 @@ pub(super) fn player_preview_quads(
 /// kept when they look away (a `NoCull` render type); their light still comes
 /// from the face's own outward normal, as the vertex normal gives it.
 pub(super) fn player_preview_quads_no_cull(
+    verts: Vec<horizon_client::mesher::Vertex>,
+    gui: glam::Mat4,
+    fire: Option<(f32, f32)>,
+    sprites: &std::collections::HashMap<String, horizon_client::hud::Rect>,
+    no_cull: std::ops::Range<usize>,
+) -> Vec<(f32, [[f32; 3]; 4], [[f32; 2]; 4], u32)> {
+    player_preview_quads_lit(verts, gui, fire, sprites, no_cull, 0..0)
+}
+
+/// `player_preview_quads_no_cull` where the faces of the vertices in `lit`
+/// (a native mod's layer, `native_player_preview_layer`) keep the colour they
+/// were drawn with, lit for the screen already (`ui_lights`).
+pub(super) fn player_preview_quads_lit(
     mut verts: Vec<horizon_client::mesher::Vertex>,
     gui: glam::Mat4,
     fire: Option<(f32, f32)>,
     sprites: &std::collections::HashMap<String, horizon_client::hud::Rect>,
     no_cull: std::ops::Range<usize>,
+    lit: std::ops::Range<usize>,
 ) -> Vec<(f32, [[f32; 3]; 4], [[f32; 2]; 4], u32)> {
     let flame_start = verts.len();
     if let Some((width, height)) = fire {
@@ -1372,7 +1399,7 @@ pub(super) fn player_preview_quads_no_cull(
             continue;
         }
         let n = n.normalize_or_zero();
-        let shade = if index * 4 >= flame_start {
+        let shade = if index * 4 >= flame_start || lit.contains(&(index * 4)) {
             1.0
         } else {
             entity_in_ui_shade(-n)

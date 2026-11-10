@@ -5240,6 +5240,28 @@
         "contract": "collect",
         "out": "warp"
       }
+    },
+    {
+      "name": "armor_stand_layer",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_armor_stand_layer",
+      "neoforge": "EntityRenderersEvent.AddLayers (an armour stand's renderer)",
+      "side": "client",
+      "cancellable": false,
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "player_preview_layer",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_preview_layer",
+      "neoforge": "EntityRenderersEvent.AddLayers (the player drawn in the inventory screen)",
+      "side": "client",
+      "cancellable": false,
+      "mod_api": {
+        "contract": "listen"
+      }
     }
   ]
 }
