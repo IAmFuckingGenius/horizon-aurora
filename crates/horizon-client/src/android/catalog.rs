@@ -296,7 +296,7 @@ impl Catalog {
             if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink()) {
                 continue;
             }
-            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
                 if !entry.file_type().is_ok_and(|t| t.is_file()) {
                     continue;
                 }
@@ -311,9 +311,9 @@ impl Catalog {
                     horizon_client::content_files::Kind::Shaders => {
                         settings.horizon.shader_pack == name
                     }
-                    horizon_client::content_files::Kind::Mods => name
-                        .strip_suffix(".hmod")
-                        .is_some_and(|id| on.enabled.contains(id)),
+                    horizon_client::content_files::Kind::Mods => {
+                        mod_id(&dir, &name).is_some_and(|id| on.enabled.contains(&id))
+                    }
                 };
                 self.local.push(LocalItem {
                     kind,
@@ -634,11 +634,11 @@ impl Catalog {
         match item.kind {
             horizon_client::content_files::Kind::Mods => {
                 let mut on = horizon_client::mod_list::ModList::load(&game);
-                if let Some(id) = item.file.strip_suffix(".hmod") {
+                if let Some(id) = mod_id(&game.join(item.kind.folder()), &item.file) {
                     if item.enabled {
-                        on.enabled.remove(id);
+                        on.enabled.remove(&id);
                     } else {
-                        on.enabled.insert(id.to_owned());
+                        on.enabled.insert(id);
                     }
                 }
                 on.save(&game);
@@ -708,8 +708,8 @@ impl Catalog {
             settings.save(&path);
             if item.kind == horizon_client::content_files::Kind::Mods {
                 let mut on = horizon_client::mod_list::ModList::load(&game);
-                if let Some(id) = item.file.strip_suffix(".hmod") {
-                    on.enabled.remove(id);
+                if let Some(id) = mod_id(&game.join(item.kind.folder()), &item.file) {
+                    on.enabled.remove(&id);
                 }
                 on.save(&game);
             }
@@ -765,4 +765,14 @@ impl Catalog {
             }
         }
     }
+}
+
+/// The id a content mod in `dir` goes by: its manifest's, which the game reads, not its file
+/// name (a `.hmod` copied in keeps whatever name it had); the file name's stem when the
+/// manifest can't be read.
+fn mod_id(dir: &Path, file: &str) -> Option<String> {
+    horizon_mods::Package::read(&dir.join(file))
+        .ok()
+        .map(|package| package.manifest.id)
+        .or_else(|| file.strip_suffix(".hmod").map(str::to_owned))
 }
