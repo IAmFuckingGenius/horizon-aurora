@@ -1,0 +1,8 @@
+{
+  "template": "minecraft:wandering_trader",
+  "attributes": {
+    "minecraft:max_health": 2.0,
+    "minecraft:gravity": 0.0,
+    "minecraft:fall_damage_multiplier": 0.0
+  }
+}

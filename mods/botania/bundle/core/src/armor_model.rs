@@ -166,7 +166,7 @@ pub fn jingle_the_bells(unix_days: i64) -> bool {
 
 /// The month (1 to 12) and day of the month of a day counted from 1970-01-01 in the proleptic
 /// Gregorian calendar (Howard Hinnant's `civil_from_days`).
-fn month_day(unix_days: i64) -> (u32, u32) {
+pub(crate) fn month_day(unix_days: i64) -> (u32, u32) {
     let z = unix_days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;

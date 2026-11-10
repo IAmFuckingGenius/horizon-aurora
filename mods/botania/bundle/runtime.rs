@@ -1121,7 +1121,12 @@ fn daisy_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
                     id = with;
                 }
             }
-            game.native_set_block(dim, at, id, horizon_world::level::flags::UPDATE_ALL);
+            if game.native_set_block(dim, at, id, horizon_world::level::flags::UPDATE_ALL)
+                && let Some(function) = &recipes[i].success_function
+            {
+                // `PureDaisyRecipe.set`: the recipe's function at the block's bottom centre.
+                super::botania_entities::run_success_function(game, function, at);
+            }
             // `PARTICLES_DESTROY_BLOCK` of the new block, then `RECIPE_COMPLETE_EVENT`'s wisps.
             game.level_event_at(2001, at, id.0 as i32);
             turned = Some(at);
