@@ -24,6 +24,8 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 // The `SoundSource` ordinal of `PLAYERS`.
 const PLAYERS: usize = 7;
+// `StarcallerItem.TAG_LAST_TRIGGER`.
+const LAST_TRIGGER: &str = "lastTriggerTime";
 
 #[derive(Default)]
 struct State {
@@ -36,8 +38,6 @@ struct State {
     strength: HashMap<u128, f32>,
     // Thundercaller hits for their player's tick: (player, entity hit).
     chains: Vec<(u128, u32)>,
-    // Each player's last star (`lastTriggerTime`, kept per player rather than per sword).
-    last_star: HashMap<u128, i64>,
     blades: Vec<Blade>,
     stars: Vec<Falling>,
     // An area break is running: the breaks it makes don't start another (`ToolCommons.recCall`).
@@ -117,6 +117,17 @@ fn aabb(b: horizon_core::geometry::Aabb) -> burst::Aabb {
 
 fn key(k: &str) -> JavaString {
     JavaString::from(k)
+}
+
+// A long in the stack's `minecraft:custom_data` (`ItemNBTHelper.getLong`), if it has one.
+fn custom_long(stack: &ItemStack, k: &str) -> Option<i64> {
+    match stack.custom_data()?.get(&key(k))? {
+        Tag::Long(v) => Some(*v),
+        Tag::Int(v) => Some(i64::from(*v)),
+        Tag::Short(v) => Some(i64::from(*v)),
+        Tag::Byte(v) => Some(i64::from(*v)),
+        _ => None,
+    }
 }
 
 fn custom_int(stack: &ItemStack, k: &str) -> i32 {
@@ -376,8 +387,9 @@ pub(super) fn fov(game: &Game<'_>, player: &FovPlayer, base: f32, modifier: &mut
     *modifier *= bow / base;
 }
 
-// Each tick of a carried stack: the Starcaller starts its timer, the Terra Shatterer spends its
-// mana while its area is on. Mending with mana is the mana module's (`botania_mana`).
+// Each tick of a carried stack: a Starcaller without a timer starts one (`lastTriggerTime`, the
+// game time, in its own NBT), the Terra Shatterer spends its mana while its area is on. Mending
+// with mana is the mana module's (`botania_mana`).
 pub(super) fn inventory_tick(game: &mut Game<'_>, slot: i32) {
     let Some(item) = game.native_carried_stack(slot).map(|s| s.item.clone()) else {
         return;
@@ -389,12 +401,18 @@ pub(super) fn inventory_tick(game: &mut Game<'_>, slot: i32) {
     if !game.native_authoritative() {
         return;
     }
-    let Some(player) = game.native_acting_player() else {
+    if game.native_acting_player().is_none() {
         return;
-    };
+    }
     if star {
         let now = game.world.game_time;
-        state().last_star.entry(player.uuid).or_insert(now);
+        if let Some(stack) = game.native_carried_stack(slot)
+            && custom_long(stack, LAST_TRIGGER).is_none()
+        {
+            edit_custom(stack, |c| {
+                c.insert(key(LAST_TRIGGER), Tag::Long(now));
+            });
+        }
     }
     if &*item == weapons::TERRA_PICK {
         pick_tick(game, slot);
@@ -535,18 +553,21 @@ fn thunder(game: &mut Game<'_>, attacker: u32, first: u32) {
     super::botania_particles::send(game, fx);
 }
 
-// `StarcallerItem.inventoryTick` on a swing: more than 12 ticks after the last, a star falls on
-// the block the player looks at within 48 blocks, two on some nights.
-fn starcaller(game: &mut Game<'_>, uuid: u128, owner: u32, now: i64) {
+// `StarcallerItem.inventoryTick` on a swing: more than 12 ticks after the sword's last
+// (`lastTriggerTime` in its NBT, now when it has none), a star falls on the block the player looks
+// at within 48 blocks, two on some nights.
+fn starcaller(game: &mut Game<'_>, owner: u32, now: i64) {
     {
-        let mut s = state();
-        if s.last_star
-            .get(&uuid)
-            .is_some_and(|&last| !weapons::star_ready(now, last))
-        {
+        let Some(sword) = game.held_mut().as_mut() else {
+            return;
+        };
+        let last = custom_long(sword, LAST_TRIGGER).unwrap_or(now);
+        if !weapons::star_ready(now, last) {
             return;
         }
-        s.last_star.insert(uuid, now);
+        edit_custom(sword, |c| {
+            c.insert(key(LAST_TRIGGER), Tag::Long(now));
+        });
     }
     let Some(eye) = game.eye_position() else {
         return;
@@ -622,7 +643,7 @@ pub(super) fn player_tick(game: &mut Game<'_>) {
             {
                 spawn_blade(game, me);
             }
-            Some(weapons::STAR_SWORD) => starcaller(game, uuid, me, now),
+            Some(weapons::STAR_SWORD) => game.with_hand(Hand::Main, |g| starcaller(g, me, now)),
             _ => {}
         }
     }
@@ -959,18 +980,15 @@ fn break_area(
         {
             continue;
         }
+        super::botania_tools::seen_breaking(game, player.uuid, p, s);
         game.native_player_break_block(player.uuid, p, false);
     }
     state().breaking = false;
 }
 
-// `TerraShattererItem.onBlockStartBreak` / `breakOtherBlock`: with its area on, the blocks around
-// the one mined, on the face the player looks at, as wide as its rank.
-fn pick_break(game: &mut Game<'_>, tool: &ItemStack, pos: [i32; 3], block_state: BlockStateId) {
-    let data = pick_data(tool);
-    if !data.enabled {
-        return;
-    }
+// `TerraShattererItem.onBlockStartBreak`: the face the player looks at within 10 blocks, then
+// `breakOtherBlock` on it.
+fn pick_break(game: &mut Game<'_>, tool: &ItemStack, pos: [i32; 3]) {
     let Some(eye) = game.eye_position() else {
         return;
     };
@@ -978,10 +996,30 @@ fn pick_break(game: &mut Game<'_>, tool: &ItemStack, pos: [i32; 3], block_state:
     let Some(hit) = game.clip_ray(eye, dir, weapons::PICK_REACH) else {
         return;
     };
+    pick_break_other(game, tool, pos, hit.face);
+}
+
+// `TerraShattererItem.breakOtherBlock`: with its area on, the blocks around the one at `pos` (not
+// yet broken), on `face`, as wide as its rank, which the rings change (`botania_tools::area_rings`:
+// Thor every axis and a rank more, Temperance rank B at most). The Ring of Loki's cursors break
+// theirs here too.
+pub(super) fn pick_break_other(
+    game: &mut Game<'_>,
+    tool: &ItemStack,
+    pos: [i32; 3],
+    face: [i32; 3],
+) {
+    let data = pick_data(tool);
+    if !data.enabled {
+        return;
+    }
+    let block_state = game.world.block(pos[0], pos[1], pos[2]);
     if !pick_can_mine(game, tool, block_state) || game.res.behaviours().is_air(block_state) {
         return;
     }
-    let Some((begin, end)) = weapons::pick_area(weapons::pick_level(data.mana), hit.face) else {
+    let rings = super::botania_tools::area_rings(game);
+    let level = weapons::pick_level(data.mana);
+    let Some((begin, end)) = botania_core::tools::pick_area_with(level, face, rings) else {
         return;
     };
     let targets = weapons::between_closed(pos, begin, end);
@@ -1025,7 +1063,7 @@ pub(super) fn destroy_block(
         return;
     }
     if pick {
-        pick_break(game, &tool, pos, block_state);
+        pick_break(game, &tool, pos);
     } else {
         shovel_break(game, &tool, pos, block_state);
     }
