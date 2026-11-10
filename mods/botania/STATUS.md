@@ -96,6 +96,31 @@ see "In game" under Verified. It has not been played on a phone yet.
   - the item use a client sends after a block click it saw no answer to (`startUseItem` after a
     PASS) does nothing for 250 ms after a click the module answered, so a selection doesn't also
     switch the wand's mode and an apothecary's bucket doesn't act twice;
+  - block entity renderers (`[[module]] botania_render`, `renderers.rs`; hooks
+    `block_entity_submit`, `standalone_models` and a second `block_entity_update_tag` injection,
+    `update_tag_items`), Botania's three renderers with their arithmetic in `botania-core::render`:
+    - pool (`ManaPoolBlockEntityRenderer`): the mana's surface, only with mana, from 1/16 + 0.001
+      up to 7/16 (diluted 5/16, creative 9/16) by `mana / manaCap`, cropped to texels 2–14
+      (diluted 1–15), `botania:block/mana_water` tinted two texels at a time to the colour
+      Botania's `mana_pool` shader gives it (red 0, moving bands of green and blue) and full
+      bright; under it the overlay of an alchemy or conjuration catalyst or a mana void below;
+      the fabulous pool's model tinted round the rainbow (`hsvToRgb(frac((t + new
+      Random(x ^ y ^ z).nextInt(100000)) * 0.005), 0.6, 1)`);
+    - apothecary (`PetalApothecaryBlockEntityRenderer`): water (`block/water_still`, its biome's
+      water colour, alpha 0.7) or lava (full bright) at 15/16, texels 3–13, through
+      `native_draw_fluid_box` (a box of no height: its top only, culled from below); in water
+      its items (sent to clients as `Items`, the slots up to the first empty one) going round
+      under the surface as dropped items an eighth of their size, with Botania's radius, bob and
+      tumble; kept (`draw.keep`) while nothing moves (no fluid, lava, water without items);
+    - spreader (`ManaSpreaderBlockEntityRenderer`): its model turned `rotationX + 90` about y and
+      `rotationY` about x through the centre (the Gaia spreader's tinted round the rainbow), its
+      core (`botania:block/*_spreader_core`) turning a degree a tick about the body's axis and
+      bobbing `sin(t / 20) * 0.05` along it;
+    - the four spreaders and the fabulous pool are `ENTITYBLOCK_ANIMATED` in their content
+      declarations (`render_shape`), as Botania's `getRenderShape`: the chunk mesh leaves them
+      out and the renderer draws them, within 64 blocks as every block entity renderer;
+      `dist/botania.hmod` carries the five changed declarations (`build_content.py --overlay`,
+      sha256 `6197a5db…`);
   - phase 1 crafting recipes (apothecary, pools, livingrock slab, spreader, wand, twig,
     livingwood, petals) given in 26.3's form under `recipe/botania:horizon/<name>`.
 - `content/`: 55 corrected block declarations and the 16 mystical flower patches with
@@ -137,6 +162,10 @@ see "In game" under Verified. It has not been played on a phone yet.
     injections, 1 module, 1 crate, 1 data folder; release library in 16 min 55 s, no warnings
     from the bundle; `botania-arm64-v8a.hengine` 36.1 MB (artifact
     `native-engine-botania-arm64-v8a`, until 2026-11-24). This is the current bundle.
+  - 42873359539 (x86_64), bundle 7e3ca26d84 (branch `botania-render`: + block entity renderers,
+    `block_entity_submit`, `standalone_models`, `update_tag_items`, module `botania_render`,
+    content with the five `ENTITYBLOCK_ANIMATED` declarations): **success**; 17 injections,
+    2 modules; no warnings from the bundle. `cargo test` of `botania-core`: 49 passed.
 
 ### In game (Waydroid x86_64, 2026-11-10)
 
@@ -230,9 +259,12 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 - Apothecary: buckets act in the main hand only; a fish bucket used by hand isn't handled; a
   burning item shows no fire; rain doesn't fill it.
 - Mystical flowers: Botania's 5% tall flowers are left out; mushrooms not touched.
-- No block entity renderers yet (`native_block_entity_submit`): a spreader is drawn by its block
-  model whatever its aim (the trail shows where it shoots), a pool doesn't show its mana, the
-  apothecary's items aren't drawn.
+- Block entity renderers: not seen in game yet. Against Botania: the helpers draw opaque vertex
+  colours and no shader of the mod's, so the pool's catalyst overlay doesn't fade in and out
+  (Botania: alpha 0.2–0.8) and the `mana_pool` shader is imitated by tints per two texels, with
+  the sprite placed in a nominal 2048 atlas for its bands; the apothecary's water is its biome's
+  colour, not blended over neighbouring biomes; time is the level's game time, not
+  `ticksInGame`; a spreader's lens, padding and scaffolding aren't drawn (not ported).
 - Not done in game yet: levelEvent 2001 when the daisy converts, floating flowers, Enchanted
   Soil's double tick, mana items (tablet) in pools, pool colour with petals, lenses, other
   generating flowers.
@@ -242,8 +274,10 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 ## Next
 
 1. The device test above, on the run 42860962514 engine.
-2. Block entity renderers: the spreader turned to its aim with its spinning core, the pool's
-   mana, the apothecary's items (`native_block_entity_submit`, `draw.spin`, `keep`).
+2. Block entity renderers in game: a spreader facing where it shoots and turning with the wand,
+   its core spinning; a pool's mana rising as it fills (none when empty, full in a creative
+   pool), the rainbow fabulous pool, a catalyst's overlay; the apothecary's water or lava and
+   the petals going round in its water.
 3. Burst particles drawn by the client (mod messages + `ParticleEngine::controlled` with colour
    and size) if the dust trail costs too much on phones or looks wrong.
 4. The wand's HUD and the bound-block outline (`native_hud`, `native_world_primitives`); mana
