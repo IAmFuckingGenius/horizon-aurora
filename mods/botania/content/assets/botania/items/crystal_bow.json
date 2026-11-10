@@ -1,0 +1,49 @@
+{
+  "model": {
+    "on_false": {
+      "model": "botania:item/crystal_bow",
+      "type": "minecraft:model"
+    },
+    "on_true": {
+      "entries": [
+        {
+          "model": {
+            "model": "botania:item/crystal_bow_pulling_2",
+            "type": "minecraft:model"
+          },
+          "threshold": 0.35
+        },
+        {
+          "model": {
+            "model": "botania:item/crystal_bow_pulling_3",
+            "type": "minecraft:model"
+          },
+          "threshold": 0.65
+        },
+        {
+          "model": {
+            "model": "botania:item/crystal_bow_pulling_4",
+            "type": "minecraft:model"
+          },
+          "threshold": 0.8
+        },
+        {
+          "model": {
+            "model": "botania:item/crystal_bow_pulling_5",
+            "type": "minecraft:model"
+          },
+          "threshold": 0.9
+        }
+      ],
+      "fallback": {
+        "model": "botania:item/crystal_bow_pulling_1",
+        "type": "minecraft:model"
+      },
+      "property": "minecraft:use_duration",
+      "scale": 0.1,
+      "type": "minecraft:range_dispatch"
+    },
+    "property": "minecraft:using_item",
+    "type": "minecraft:condition"
+  }
+}
