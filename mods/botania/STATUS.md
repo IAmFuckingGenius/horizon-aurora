@@ -50,7 +50,8 @@ see "In game" under Verified. It has not been played on a phone yet.
     `level_tick_post`, when the block entity is back in the world); mana infusion of the items
     in its cell (`native_recipes_of_type("botania:mana_infusion")`, catalyst = the block under
     it, output at `y + 1.5` flagged so it isn't infused again, craft sound at most every 6 ticks);
-    `outputting` toggled by the wand (nothing reads it until mana items are ported);
+    `outputting` toggled by the wand: an outputting pool charges the mana items lying in it,
+    any other drains them (see mana items below);
   - Endoflame: block entity `botania:endoflame` (`ticksExisted`, `mana`, `binding`, `burnTime`),
     Botania's tick through `botania-core`: item age from the item entity (`age`), furnace burn
     time from the game's fuel table, crafting remainders and spreaders skipped, sound
@@ -123,6 +124,36 @@ see "In game" under Verified. It has not been played on a phone yet.
       sha256 `6197a5db…`);
   - phase 1 crafting recipes (apothecary, pools, livingrock slab, spreader, wand, twig,
     livingwood, petals) given in 26.3's form under `recipe/botania:horizon/<name>`.
+- Mana items (`[[module]] botania_mana`, `bundle/mana.rs`; numbers in `botania-core`'s
+  `mana_item`, `mana_handler`, `mana_gear`; hooks `inventory_tick`, `item_damaged`, `item_bar`,
+  `tooltip`, `tooltip_component`, `tooltip_component_draw`, a second `use_item_on`,
+  `modify_default_components`):
+  - mana in `minecraft:custom_data` under Botania's keys (`mana`, `creative`, `oneUse`, the
+    mirror's `maxMana`, `manaBacklog`, `pos`); Mana Tablet 500 000 (×count; creative 501 000,
+    never drained, `oneUse` refuses pools), Band of Mana 500 000, Greater Band 2 000 000, Mana
+    Mirror (shows its bound pool: the pool takes what is spent from it, sneak-use on a pool binds
+    it, `botania:ding`), Terra Shatterer (`Integer.MAX_VALUE`, ranks at 10k/1M/10M/100M/1B, only
+    from pools, refuses `#botania:terra_pick_blacklist` senders); stack size 1; bar
+    `round(13·f)` wide in `hsvToRgb(f/3, 1, 1)` (none for the creative tablet), "Creative" and
+    the rank / "Get a Life" lines, a pulsing mana bar in the tooltip;
+  - pools: outputting charges, otherwise drains, 1000 a tick per item (`canSpare`/`canAccept`,
+    a mana void under it), the item entity updated; every 10 pool ticks a moving item gets a
+    dust arc (`0x00C6FF`) along Botania's charging-wisp parabola;
+  - `ManaItemHandler` over `Inventory.items` + off hand (armour only for the discount):
+    `requestMana(Exact)`, `…ForTool` (helmet with its full set: manasteel/elementium 10%,
+    terrasteel 20%, manaweave 40%; +5% per Unbreaking level), `dispatchMana(Exact)`;
+  - mana instead of durability: each point of wear the game deals (after vanilla's Unbreaking)
+    paid with `manaPerDamage` less the discount, while the mana lasts: manasteel and elementium
+    tools and swords and the Thundercaller 60, shears 30, Terra Shatterer/Truncator/Blade 100,
+    Starcaller 120, Vitreous Pickaxe 160, Livingwood Bow 40, Crystal Bow 200 (100 with Infinity),
+    all armour 70 (manaweave helmet 30); the Soulscribe never pays;
+  - mending each tick of a damaged stack anywhere in the inventory: tools 2×their cost with the
+    discount (pickaxes, the Terra Shatterer and the Vitreous Pickaxe 120, axes/shovels/hoes/
+    swords 120, shears 60, Terra Truncator/Blade 200, Starcaller 240, bows 80), armour 140
+    (manaweave helmet 60) with no discount;
+  - Terrasteel set worn: a heart every 80 ticks while hurt with food 1–17, 10 mana to the mana
+    items every 10 ticks; knockback resistance 0.15/0.4/0.3/0.15 per piece (full set 1.0);
+  - Band of Mana and Greater Band of Mana crafted as plain recipes (they start empty).
 - `content/`: 55 corrected block declarations and the 16 mystical flower patches with
   `minecraft:simple_block` for the content `.hmod` (see README). The local
   `.local/modports/botania/botania-1.20.1-456-content.hmod` has both applied (sha256
@@ -143,6 +174,10 @@ see "In game" under Verified. It has not been played on a phone yet.
   south → 270, north → 90, top → pitch -90), vanilla's view vector, `hsvToRgb`, the apothecary's
   right click (refill paid per item, creative free, forgotten after 400 ticks, buckets), items
   burning up on the sixth tick.
+- With the mana items: 60 passed, 0 failed. Expected values from Botania's code run in Java
+  (`hsvToRgb` bars, `encode/decodeRelativeItemPosition`, the charging parabola, the
+  `ManaItemImpl`s, `ManaItemHandlerImpl`'s loops, the pool's item transfer,
+  `discountManaForTool`, `damageItemIfPossible`).
 - All 25 bundle recipes unwrap into 26.3 form (scratch-only test, output checked by eye).
 - Engine runs (`android-native-engine.yml`, arm64-v8a, `publish=false`):
   - 42728593487, bundle 162df0be9c: failed in `plan`, `E_INVALID_HELPER` (helper `ticks`
@@ -171,6 +206,11 @@ see "In game" under Verified. It has not been played on a phone yet.
     Thundercaller, Starcaller, Terra Shatterer, elementium shovel and pickaxe, mana tools):
     **success**; 29 injections, 2 modules (`botania`, `botania_weapons`), 1 crate, 1 data
     folder; release library in 13 min 43 s, no warnings from the bundle. Not played yet.
+  - 42879206886 (x86_64, engine id `botania-mana`), bundle 3db3aa1e87 (branch `botania-mana`:
+    + mana items, `ManaItemHandler`, mana instead of durability, set bonuses): **success**; 22
+    injections, 2 modules, 1 crate, 1 data folder; no warnings from the bundle. An earlier
+    dispatch of it under engine id `botania` (42876970105) was cancelled while pending by
+    another `botania` dispatch: the workflow keeps one pending run per engine id.
 
 ### In game (Waydroid x86_64, 2026-11-10)
 
@@ -260,6 +300,21 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
     every tick while on;
   - not ported: Terra Truncator, axe beheading, hoes, the shears' area, the sword's pixies, the
     rings (Thor, temperance, Loki), set bonuses, Botania's armour models.
+- Botania's bows (Livingwood, Crystal) can't be drawn: the game knows a bow by the id
+  `minecraft:bow`, not by its components.
+- Weapon and tool abilities are code in Botania and not ported: the Terra Blade's beam, the
+  Thundercaller's chain lightning, the Starcaller's stars, the Terra Shatterer's area mining and
+  its enabled toggle, Botania's armour models.
+- Mana items, not ported: elementium armour's pixies (no pixie entity), manaweave's rod
+  proficiency (no rods), the manaweave boots' powder snow walking, accessories (Horizon has no
+  accessory inventory: a band works from the inventory only), bellows (pools charge at 1000), the
+  ring recipes carrying the tablet's mana (`botania:mana_upgrade`: the crafting grid isn't
+  reachable from a hook), the creative tablet's epic rarity, Botania's wisp sprites (dust instead),
+  the tooltip bar's rank letters for the Terra Shatterer.
+- Mana items, approximations: wear is heard after vanilla's Unbreaking, so each remaining point
+  is paid in full (Botania rolls its own Unbreaking first: the same mana on average for tools,
+  slightly more for armour); `stackInSlot == stack` is matched by value; a Mana Mirror bound to a
+  pool in another dimension or an unloaded chunk is left as it is (Botania loads the chunk).
 - Advancement toasts show no icon; the function `botania:ender_air_release` doesn't load (no
   `botania:ender_air` entity).
 - Trail and beam (engine gap G2): server-sent vanilla dust, not Botania's wisps and sparkles:
@@ -281,8 +336,15 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
   colour, not blended over neighbouring biomes; time is the level's game time, not
   `ticksInGame`; a spreader's lens, padding and scaffolding aren't drawn (not ported).
 - Not done in game yet: levelEvent 2001 when the daisy converts, floating flowers, Enchanted
-  Soil's double tick, mana items (tablet) in pools, pool colour with petals, lenses, other
-  generating flowers.
+  Soil's double tick, pool colour with petals, lenses, other generating flowers.
+- Mana items not played yet. To check: `/give @p botania:mana_tablet` thrown into an outputting
+  pool (wand sneak-click) fills at 1000/tick with a blue arc, into a normal pool drains;
+  `/give @p botania:mana_tablet[custom_data={creative:1b}]` (no bar, "Creative");
+  `/give @p botania:mana_ring[custom_data={mana:500000}]`; with a full tablet in the inventory,
+  `/give @p botania:manasteel_pick[damage=100]` mends a point a tick (120 mana each) and mining
+  doesn't wear it while mana lasts; full terrasteel armour + `/effect give @p instant_damage`
+  heals a heart every 4 s; `/give @p botania:mana_mirror`, sneak-use on a pool, then its bar
+  follows the pool and tools draw from the pool.
 - `native_blocks` can't fix the declarations from code: a block the content mod declares too is
   "declared twice" and the whole namespace is refused (`horizon_mods::Content::declare`).
 

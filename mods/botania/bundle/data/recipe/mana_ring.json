@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "I": {
+      "item": "botania:manasteel_ingot"
+    },
+    "T": {
+      "item": "botania:mana_tablet"
+    }
+  },
+  "pattern": [
+    "TI ",
+    "I I",
+    " I "
+  ],
+  "result": {
+    "item": "botania:mana_ring"
+  },
+  "show_notification": true
+}

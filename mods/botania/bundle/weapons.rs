@@ -94,60 +94,16 @@ fn random_below(n: usize) -> usize {
 
 // ---- mana -------------------------------------------------------------------------------------
 
-// STUB: replaced by the mana items branch
-// `ManaItemHandler.requestManaForTool`, `requestManaExactForTool` and
-// `ToolCommons.damageItemIfPossible` until the mana items (tablets, rings) come: a creative
-// player always has the mana, anyone else has none, so their tools wear as plain tools and the
-// crystal bow doesn't draw.
-
-// `requestManaForTool`: up to `cost` mana from `player`'s mana items for `stack`, taken when
-// `remove`; how much there was.
-#[allow(dead_code)]
-pub(super) fn request_mana_for_tool(
-    game: &mut Game<'_>,
-    player: u128,
-    stack: &ItemStack,
-    cost: i32,
-    remove: bool,
-) -> i32 {
-    let _ = (player, stack, remove);
-    if game.creative { cost } else { 0 }
-}
-
-// `requestManaExactForTool`: all of `cost` or nothing; whether there was.
-pub(super) fn request_mana_exact_for_tool(
+// `ManaItemHandler.requestManaExactForTool`, from the mana items module (`botania_mana`): the
+// player's mana tablets, rings and mirrors, with the armour's discount.
+fn request_mana_exact_for_tool(
     game: &mut Game<'_>,
     player: u128,
     stack: &ItemStack,
     cost: i32,
     remove: bool,
 ) -> bool {
-    let _ = (player, stack, cost, remove);
-    game.creative
-}
-
-// `ToolCommons.damageItemIfPossible`: pays for `amount` points of wear with `mana_per_damage`
-// each while there is mana, the mana taken only when Unbreaking's roll lets it; the points left
-// to wear the item.
-pub(super) fn damage_item_if_possible(
-    game: &mut Game<'_>,
-    player: u128,
-    stack: &ItemStack,
-    amount: i32,
-    mana_per_damage: i32,
-) -> i32 {
-    let unbreaking = stack.enchantment_level("minecraft:unbreaking") as usize;
-    let mut amount = amount;
-    while amount > 0 {
-        if !request_mana_exact_for_tool(game, player, stack, mana_per_damage, false) {
-            break;
-        }
-        if random_below(unbreaking + 1) == 0 {
-            request_mana_exact_for_tool(game, player, stack, mana_per_damage, true);
-        }
-        amount -= 1;
-    }
-    amount
+    super::botania_mana::request_mana_exact_for_tool(game, player, stack, cost, remove)
 }
 
 // ---- small things -----------------------------------------------------------------------------
@@ -462,43 +418,14 @@ pub(super) fn fov(game: &Game<'_>, player: &FovPlayer, base: f32, modifier: &mut
     *modifier *= bow / base;
 }
 
-// ---- mana for wear and mending ------------------------------------------------------------------
-
-// `CustomDamageItem.damageItem`: a mana tool's wear is paid with mana while the player has it.
-pub(super) fn item_damaged(
-    game: &mut Game<'_>,
-    player: u128,
-    item: &str,
-    amount: &mut i32,
-    cancel: bool,
-) {
-    if cancel || *amount <= 0 || weapons::mana_per_damage(item, false).is_none() {
-        return;
-    }
-    let held = [game.inventory.get(game.selected), Some(&game.offhand)]
-        .into_iter()
-        .flatten()
-        .flatten()
-        .find(|s| &*s.item == item)
-        .cloned();
-    let stack = held.unwrap_or_else(|| ItemStack::new(item, 1));
-    let infinity = stack.enchantment_level("minecraft:infinity") > 0;
-    let Some(rate) = weapons::mana_per_damage(item, infinity) else {
-        return;
-    };
-    *amount = damage_item_if_possible(game, player, &stack, *amount, rate);
-}
-
-// Each tick of a carried stack: the mana tools mend a point of wear with mana
-// (`inventoryTick`), the Starcaller starts its timer, the Terra Shatterer spends its mana while
-// its area is on.
+// Each tick of a carried stack: the Starcaller starts its timer, the Terra Shatterer spends its
+// mana while its area is on. Mending with mana is the mana module's (`botania_mana`).
 pub(super) fn inventory_tick(game: &mut Game<'_>, slot: i32) {
     let Some(item) = game.native_carried_stack(slot).map(|s| s.item.clone()) else {
         return;
     };
-    let repair = weapons::repair_cost(&item);
     let star = &*item == weapons::STAR_SWORD;
-    if repair.is_none() && !star {
+    if !star && &*item != weapons::TERRA_PICK {
         return;
     }
     if !game.native_authoritative() {
@@ -510,18 +437,6 @@ pub(super) fn inventory_tick(game: &mut Game<'_>, slot: i32) {
     if star {
         let now = game.world.game_time;
         state().last_star.entry(player.uuid).or_insert(now);
-    }
-    if let Some(cost) = repair {
-        let worn = game
-            .native_carried_stack(slot)
-            .filter(|s| s.damage > 0)
-            .cloned();
-        if let Some(stack) = worn
-            && request_mana_exact_for_tool(game, player.uuid, &stack, cost, true)
-            && let Some(s) = game.native_carried_stack(slot)
-        {
-            s.damage = s.damage.saturating_sub(1);
-        }
     }
     if &*item == weapons::TERRA_PICK {
         pick_tick(game, slot);
