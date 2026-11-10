@@ -38,7 +38,9 @@ compiled with the bundle in CI, not that it works in play.
   - mana pools (`mana_pool`, `diluted_pool`, `creative_pool`, `fabulous_pool`): block entity
     `botania:mana_pool`, `mana`/`manaCap` in its NBT, capacity per variant, sync every 10 ticks
     when the mana changed, comparator output (cached while the pool ticks; neighbours told in
-    `level_tick_post`, when the block entity is back in the world);
+    `level_tick_post`, when the block entity is back in the world); mana infusion of the items
+    in its cell (`native_recipes_of_type("botania:mana_infusion")`, catalyst = the block under
+    it, output at `y + 1.5` flagged so it isn't infused again, craft sound at most every 6 ticks);
   - Endoflame: block entity `botania:endoflame` (`ticksExisted`, `mana`, `binding`, `burnTime`),
     Botania's tick through `botania-core`: item age from the item entity (`age`), furnace burn
     time from the game's fuel table, crafting remainders and spreaders skipped, sound
@@ -77,7 +79,10 @@ compiled with the bundle in CI, not that it works in play.
     **success**. horizon-mixins applied 9 injections, 1 module, 1 crate, 1 data folder; the
     release library built in 18 min 11 s; `.hengine` packed (artifact
     `native-engine-botania-arm64-v8a`, 14 days).
-  - RUN3: apothecary, Pure Daisy, spreaders and bursts: RESULT PENDING.
+  - 42731705291, bundle d42992fccb (+ apothecary, Pure Daisy, spreaders, virtual bursts,
+    `block_entity_container`, `place_block`): **success**; 11 injections, 1 module, 1 crate,
+    1 data folder; release library in 15 min 31 s.
+  - RUN4: + mana infusion in the pool: RESULT PENDING.
 
 ## Not verified / known gaps
 
@@ -100,11 +105,11 @@ compiled with the bundle in CI, not that it works in play.
 
 ## Next
 
-1. Get the bundle with the apothecary, the Pure Daisy and the spreaders through an engine build.
+1. Get the bundle with mana infusion through an engine build (RUN4), then a device test.
 2. Bind generating flowers to spreaders as Botania does, once spreaders are seen working; burst
    particles on clients (spawn/death messages, `ParticleEngine::controlled`); the wand of the
    forest to aim spreaders (`use_item_on`, `aim_at`) and bind flowers.
-3. Mana infusion in the pool (`infusion_pick`, `ManaInfusionSpawned` flags), manasteel.
+3. Pool: mana items (tablet) charging, `outputting` with the wand, colour with petals.
 4. A device test: import the `.hengine`, the content `.hmod` with `content/` applied, and check
    the Botania row, a pool's comparator, an Endoflame filling a pool, an apothecary craft.
 

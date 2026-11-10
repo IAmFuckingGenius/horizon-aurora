@@ -13,7 +13,10 @@ use botania_core::consts::{PoolVariant, SpreaderVariant};
 use botania_core::daisy::PureDaisy;
 use botania_core::flower::{self, Collectors, Endoflame, Fuel, Generating};
 use botania_core::pool::{self, Pool};
-use botania_core::recipe::{BlockState as RecipeState, Ingredient, PetalRecipe, PureDaisyRecipe};
+use botania_core::recipe::{
+    BlockState as RecipeState, InfusionRecipe, Ingredient, PetalRecipe, PureDaisyRecipe,
+    infusion_pick,
+};
 use horizon_client::containers::{BlockEntity, ModBlockEntity, ModContainer};
 use horizon_client::items::ItemStack;
 use horizon_world::nbt::{Compound, JavaString, Tag};
@@ -24,7 +27,8 @@ pub(super) const ID: &str = "botania";
 pub(super) const NAME: &str = "Botania";
 pub(super) const VERSION: &str = "0.1.0";
 pub(super) const DESCRIPTION: &str = "A port of Vazkii's Botania 1.20.1 mechanics (work in progress): mana pools, \
-     the Endoflame, the Petal Apothecary, the Pure Daisy and mana spreaders shooting bursts. Needs the Botania content mod. Botania License; not made or endorsed by Vazkii.";
+     mana infusion, the Endoflame, the Petal Apothecary, the Pure Daisy and mana spreaders \
+     shooting bursts. Needs the Botania content mod. Botania License; not made or endorsed by Vazkii.";
 
 // Block entity ids, as Botania names its block entity types.
 const POOL: &str = "botania:mana_pool";
@@ -43,6 +47,8 @@ struct PoolTrack {
     sent: i32,
     // The comparator level last told (`native_update_output_neighbors`).
     level: i32,
+    // `soundTicks`: the craft sound plays at most every 6 ticks.
+    sound: i32,
 }
 
 #[derive(Default)]
@@ -54,6 +60,9 @@ struct State {
     outputs: Vec<(&'static str, [i32; 3])>,
     // Item entities an apothecary made or emptied (`ItemFlagsComponent.apothecarySpawned`).
     spawned: HashSet<u32>,
+    // Item entities a pool made (`ItemFlagsComponent.manaInfusionSpawned`).
+    infused: HashSet<u32>,
+    infusion_recipes: Option<((usize, usize), Arc<Vec<InfusionRecipe>>)>,
     // What each apothecary remembers of its last craft (`lastRecipe`, `lastReagent`,
     // `recipeKeepTicks`), which Botania doesn't save either.
     apothecaries: HashMap<(&'static str, [i32; 3]), Memory>,
@@ -307,17 +316,27 @@ fn mana_void_below(game: &Game<'_>, pos: [i32; 3]) -> bool {
 fn pool_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
     let dim = game.dim.id();
     let block = game.native_block(pos);
-    let p = pool_of(&entity.nbt, &block);
+    let mut p = pool_of(&entity.nbt, &block);
+    let crafted = infuse(game, pos, &mut p);
     set_int(entity, "mana", p.mana);
     set_int(entity, "manaCap", p.cap);
     let level = p.comparator();
-    let sync = {
+    let (sync, sound) = {
         let mut s = state();
         let track = s.pools.entry((dim, pos)).or_insert(PoolTrack {
             ticks: 0,
             sent: p.mana,
             level,
+            sound: 0,
         });
+        // `soundTicks--`, then `craftingEffect`: the sound when it has run down.
+        if track.sound > 0 {
+            track.sound -= 1;
+        }
+        let sound = crafted && track.sound == 0;
+        if sound {
+            track.sound = botania_core::consts::POOL_CRAFT_SOUND_TICKS;
+        }
         let sync = track.sent != p.mana && pool::pool_sync_tick(track.ticks);
         if sync {
             track.sent = p.mana;
@@ -328,11 +347,113 @@ fn pool_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
         if tell {
             s.outputs.push((dim, pos));
         }
-        sync
+        (sync, sound)
     };
+    if sound {
+        let at = [
+            f64::from(pos[0]) + 0.5,
+            f64::from(pos[1]) + 0.5,
+            f64::from(pos[2]) + 0.5,
+        ];
+        game.native_play_sound_in_place("botania:mana_pool_craft", at, 4, 1.0, 1.0);
+    }
     if sync {
         game.native_block_entity_sync(pos);
     }
+}
+
+fn infusion_recipes(game: &Game<'_>) -> Arc<Vec<InfusionRecipe>> {
+    let table = game.native_recipes_of_type("botania:mana_infusion");
+    let at = (table.as_ptr() as usize, table.len());
+    if let Some((k, r)) = &state().infusion_recipes
+        && *k == at
+    {
+        return r.clone();
+    }
+    let parsed: Arc<Vec<InfusionRecipe>> = Arc::new(
+        table
+            .iter()
+            .filter_map(|r| InfusionRecipe::parse(&r.id, &core_json(&r.json)?))
+            .collect(),
+    );
+    state().infusion_recipes = Some((at, parsed.clone()));
+    parsed
+}
+
+// Forgets flagged item entities that are gone, so the sets stay small.
+fn prune_flags(game: &Game<'_>) {
+    let mut s = state();
+    if s.spawned.len() + s.infused.len() < 4096 {
+        return;
+    }
+    let alive: HashSet<u32> = game.dropped.iter().map(|e| e.id).collect();
+    s.spawned.retain(|id| alive.contains(id));
+    s.infused.retain(|id| alive.contains(id));
+}
+
+// `ManaPoolBlockEntity.collideEntityItem` for the item entities in the pool's cell (what
+// `entityInside` hands it in 1.20.1): the recipe for the block under the pool, paid with mana;
+// one item of each entity a tick; the output flagged so it isn't infused again. Whether any
+// item was crafted (`craftingEffect`).
+fn infuse(game: &mut Game<'_>, pos: [i32; 3], pool: &mut Pool) -> bool {
+    let dim = game.dim.id();
+    let items = game.native_item_entities(
+        dim,
+        [f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])],
+        [
+            f64::from(pos[0] + 1),
+            f64::from(pos[1] + 1),
+            f64::from(pos[2] + 1),
+        ],
+    );
+    if items.is_empty() {
+        return false;
+    }
+    let Some(below) = recipe_state(game, [pos[0], pos[1] - 1, pos[2]]) else {
+        return false;
+    };
+    let recipes = infusion_recipes(game);
+    let infused = state().infused.clone();
+    let mut crafts = Vec::new();
+    {
+        let tags = game.items();
+        let item_tag = |t: &str, i: &str| tags.item_in_tag(t, i);
+        let block_tag = |t: &str, b: &str| tags.block_in_tag(t, b);
+        for e in &items {
+            if e.stack.count == 0 || infused.contains(&e.id) {
+                continue;
+            }
+            if let Some(r) = infusion_pick(&recipes, &e.stack.item, &below, &item_tag, &block_tag)
+                && pool.current() >= r.mana
+            {
+                pool.receive(-r.mana);
+                crafts.push((e.id, e.stack.clone(), r.output.clone()));
+            }
+        }
+    }
+    let at = [
+        f64::from(pos[0]) + 0.5,
+        f64::from(pos[1]) + 1.5,
+        f64::from(pos[2]) + 0.5,
+    ];
+    let crafted = !crafts.is_empty();
+    for (id, stack, output) in crafts {
+        let mut rest = stack;
+        rest.count -= 1;
+        game.native_set_item_entity(dim, id, rest);
+        if let Some(out) = game.native_summon(
+            dim,
+            "minecraft:item",
+            at,
+            item_nbt(&output.item, output.count),
+        ) {
+            state().infused.insert(out);
+        }
+    }
+    if crafted {
+        prune_flags(game);
+    }
+    crafted
 }
 
 // The comparator reads a pool (`ManaPoolBlock.hasAnalogOutputSignal`).
