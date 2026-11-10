@@ -14,10 +14,12 @@ and recipes come from a separate content `.hmod`; this folder is the code.
   module gives them to the server in 26.3's form (`native_data_pack_files`), because the content
   mod carries them in a form 26.3 can't read.
 - `content/`: files to copy over the carried content `.hmod`'s files of the same paths:
-  - corrected block declarations (`data/botania/horizon/block/*.json`, 55 files):
+  - corrected block declarations (`data/botania/horizon/block/*.json`, 56 files):
     `horizon-port-pack` put every flower, apothecary and pool on a stone template. Their
     templates, `fluid` property and shapes are Botania's own (`PetalApothecaryBlock`,
-    `ManaPoolBlock`, `ManaSpreaderBlock`, `FabricSpecialFlowerBlock`);
+    `ManaPoolBlock`, `ManaSpreaderBlock`, `FabricSpecialFlowerBlock`); the blaze block's item
+    is furnace fuel, its burn time `data/botania/context_int_provider/cooking/time_blaze_block.json`
+    (Botania gives it in a Forge event);
   - the 16 mystical flower patches (`data/botania/worldgen/configured_feature/`), placing the
     flower with `minecraft:simple_block` instead of Botania's own `botania:mystical_flower`
     feature type, which Horizon skips. Botania's 5% tall flowers are left out.

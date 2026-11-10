@@ -182,6 +182,19 @@ been played on a phone yet.
   `minecraft:simple_block` for the content `.hmod` (see README). The local
   `.local/modports/botania/botania-1.20.1-456-content.hmod` has both applied (sha256
   `4add364b…`; the copy before the flower patches is `….hmod.before-flowers`).
+- The blaze block is furnace fuel, as Botania's `FurnaceFuelBurnTimeEvent` makes it without the
+  Garden of Glass: its item has `minecraft:cooking_fuel` (`horizon/block/blaze_block.json`) with
+  the burn time `botania:cooking/time_blaze_block` (`context_int_provider/cooking/`), 24 000
+  ticks divided by vanilla's reduction factor (12 000 in a blast furnace or smoker, as 1.20's
+  `getBurnDuration / 2`), and the speed `minecraft:cooking/speed_default`; the Endoflame reads
+  the same time. It needs an engine that loads providers outside the `minecraft` namespace
+  (Aurora branch `engine-use-poses`). `dist/botania.hmod` carries it (`build_content.py
+  --overlay`, sha256 `50f9b09c…`).
+- Engine (Aurora branch `engine-use-poses`), for the livingwood and crystal bows, whose
+  `native_use_animation` answers `Bow`: a player seen in third person (another one, this one in
+  F5 or in the inventory) takes the bow pose while drawing one, as `AvatarRenderer.getArmPose`
+  goes by the use animation; on a touch screen in tap mode they aim through the crosshair and a
+  held finger draws them, as the vanilla bow.
 
 ## Verified
 
@@ -350,9 +363,10 @@ Found and fixed during the test:
 
 - Not played on a phone yet; the whole chain hasn't been crafted in survival (its recipes are
   registered: `/recipe give` unlocks each).
+- The third-person bow pose, the touch crosshair and hold for the bows, and the blaze block as
+  fuel haven't been played yet: engine run 42910291134 (x86_64, Aurora `engine-use-poses`
+  05b46ec689, bundle 8be0122234, `publish=false`) only built them.
 - Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`):
-  - engine-only: the third-person bow arm pose (`mobs/anim.rs` picks `ArmPose::Bow` by the id
-    `minecraft:bow`, not by the use animation) and the touch projectile crosshair;
   - the beam, stars and chain lightning hit mobs only (no PvP); a beam or star is dropped when
     its owner leaves; the Starcaller's
     timer is per player, not per sword; Unbreaking rolls twice when mana pays for wear;
@@ -360,8 +374,6 @@ Found and fixed during the test:
     every tick while on;
   - not ported: Terra Truncator, axe beheading, hoes, the shears' area, the sword's pixies, the
     rings (Thor, temperance, Loki).
-- The blaze block isn't furnace fuel (Botania gives it 24 000 ticks in a Forge event; the port's
-  items carry no fuel).
 - Mana items, not ported: elementium armour's pixies (no pixie entity), manaweave's rod
   proficiency (no rods), the manaweave boots' powder snow walking, accessories (Horizon has no
   accessory inventory: a band works from the inventory only), bellows (pools charge at 1000), the
