@@ -1,7 +1,8 @@
 {
   "template": "minecraft:stone",
   "properties": {
-    "occludes": false
+    "occludes": false,
+    "render_shape": "ENTITYBLOCK_ANIMATED"
   },
   "shapes": {
     "default": [
