@@ -402,7 +402,8 @@ been played on a phone yet.
 - All 25 bundle recipes unwrap into 26.3 form (scratch-only test, output checked by eye).
 - With the tool uses: 116 passed, 0 failed (5 of them `tool_uses`: Java's `TORCH_PATTERN` and
   `SAPLING_PATTERN` on vanilla ids, the torchflower and its seeds left out, camel case and
-  marks as Java reads them, description ids, which tool places what, the Shatterer's guard).
+  marks as Java reads them, description ids, which tool places what, the Shatterer's guard);
+  149 passed, 0 failed once merged with Ender Air, pixies and the trinkets.
 - `block_properties.py`: a second run writes nothing; checked by hand against Botania's table:
   livingrock (2/10, tool, stone sounds, map 36), livingwood (oak log, 2/2, wood sounds), glimmering
   livingwood (light 12), mana glass (glass, light 15, not occluding), the manasteel, terrasteel
@@ -552,6 +553,9 @@ Found and fixed during the test:
 - The third-person bow pose, the touch crosshair and hold for the bows, and the blaze block as
   fuel haven't been played yet: engine run 42910291134 (x86_64, Aurora `engine-use-poses`
   05b46ec689, bundle 8be0122234, `publish=false`) only built them.
+- The block properties, the tool uses, the advancements and players' heads haven't been played
+  yet: engine run 42921930985 (x86_64, Aurora `engine-botania-blocks` ef47e35f39, bundle
+  fdddf5376d, `publish=false`) only built them.
 - Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`):
   - the beam, stars and chain lightning hit mobs only (no PvP); a beam or star is dropped when
     its owner leaves;
