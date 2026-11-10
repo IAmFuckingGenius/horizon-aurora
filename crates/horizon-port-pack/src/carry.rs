@@ -463,9 +463,18 @@ pub fn renamed_assets(v: &mut Value) -> bool {
 /// player entered (Regions Unexplored's "Downer" on the first dive). A 1.20
 /// icon names its item as `item` (`id` since 1.20.5), which 26.3 skips, so
 /// the toast and the advancement screen showed no icon (Botania's); its
-/// `nbt` string has no 26.3 equivalent and goes.
+/// `nbt` string has no 26.3 equivalent and goes. A tab's `background` named
+/// its texture's file (`botania:textures/block/livingwood_log.png`) until
+/// 1.21.5 made it the texture's id (`botania:block/livingwood_log`), so the
+/// tab drew no background.
 pub fn upgrade_advancement(v: &mut Value) -> bool {
     let mut changed = false;
+    if let Some(background) = v.pointer_mut("/display/background")
+        && let Some(id) = background.as_str().and_then(texture_id_of_file)
+    {
+        *background = Value::String(id);
+        changed = true;
+    }
     if let Some(icon) = v
         .pointer_mut("/display/icon")
         .and_then(Value::as_object_mut)
@@ -491,6 +500,14 @@ pub fn upgrade_advancement(v: &mut Value) -> bool {
         }
     }
     changed
+}
+
+/// The texture id of a texture's file path: `ns:textures/<path>.png` is
+/// `ns:<path>`, the namespace `minecraft` when it has none. None for anything else.
+fn texture_id_of_file(file: &str) -> Option<String> {
+    let (namespace, path) = file.split_once(':').unwrap_or(("minecraft", file));
+    let path = path.strip_prefix("textures/")?.strip_suffix(".png")?;
+    Some(format!("{namespace}:{path}"))
 }
 
 /// A 1.21.1 loot table in 26.3's shape, in place: `conditions` lists become
@@ -2362,6 +2379,24 @@ mod tests {
         let mut new = json!({"display": {"icon": {"id": "m:gem", "count": 2}}});
         assert!(!upgrade_advancement(&mut new));
         assert_eq!(new["display"]["icon"], json!({"id": "m:gem", "count": 2}));
+    }
+
+    #[test]
+    fn a_1_20_tab_background_names_its_texture_id() {
+        let mut a = json!({"display": {"background": "botania:textures/block/livingwood_log.png"}});
+        assert!(upgrade_advancement(&mut a));
+        assert_eq!(a["display"]["background"], "botania:block/livingwood_log");
+        let mut bare =
+            json!({"display": {"background": "textures/gui/advancements/backgrounds/stone.png"}});
+        assert!(upgrade_advancement(&mut bare));
+        assert_eq!(
+            bare["display"]["background"],
+            "minecraft:gui/advancements/backgrounds/stone"
+        );
+        // A 1.21.5+ id stays.
+        let mut new = json!({"display": {"background": "m:block/gem_block"}});
+        assert!(!upgrade_advancement(&mut new));
+        assert_eq!(new["display"]["background"], "m:block/gem_block");
     }
 
     #[test]
