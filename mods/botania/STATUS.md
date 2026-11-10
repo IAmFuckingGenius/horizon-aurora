@@ -475,7 +475,10 @@ Found and fixed during the test:
   - a cloud is a marker, so `/summon botania:ender_air` doesn't exist and the cloud has no
     entity type of its own on the network; its particles come from the server;
   - the thrown bottle's ghast tears get no item particles; the `isClearFromDragonBreath` check
-    counts any area cloud without a potion as breath;
+    counts any area cloud without a potion as breath; a bottle saved in flight lands after a
+    reload as a plain thrown item (only `entity_join_level` tells of it, and that hook is quiet
+    in a game without trait mods, so clouds and stray pixies are looked for after each level
+    tick instead);
   - pixies are wandering traders underneath: a trader's shadow, and mobs that target traders
     (zombies) may go after them; a right click on one swings the hand; a client without the
     bundle draws a wandering trader;

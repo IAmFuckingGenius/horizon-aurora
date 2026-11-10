@@ -82,6 +82,9 @@ struct Server {
     spawning: bool,
     // Players hurt by an entity since their last tick (`PixieHandler.onDamageTaken`).
     hurts: Vec<Hurt>,
+    // Each level's entity counter when its clouds and pixies were last looked for: entities
+    // with higher ids are new.
+    seen: HashMap<&'static str, u32>,
     // The entity ids of the players seen ticking, for the damage hook, which has no game.
     players: HashSet<i32>,
     rng: u64,
@@ -406,6 +409,46 @@ pub(super) fn run_success_function(game: &mut Game<'_>, name: &str, at: [i32; 3]
     game.exec.commands = 0;
     for function in &functions {
         let _ = game.run_function(function, None, source);
+    }
+}
+
+// New Ender Air markers and pixies nobody summoned through `spawn_pixie` (a `/summon`, a loaded
+// chunk), looked for after each level tick among the entities with ids above the last look. The
+// join hook doesn't tell of them in a game without trait mods.
+fn notice_new(game: &Game<'_>, dim: &'static str) {
+    let mark = server().seen.get(dim).copied().unwrap_or(0);
+    if game.next_entity <= mark {
+        return;
+    }
+    let clouds: Vec<Cloud> = game
+        .others
+        .iter()
+        .filter(|o| o.id > mark && matches!(o.kind.as_str(), "minecraft:marker" | "marker"))
+        .filter_map(|o| {
+            Some(Cloud {
+                dim,
+                id: o.id,
+                age: cloud_age(game, o.id)?,
+            })
+        })
+        .collect();
+    let pixies: Vec<u32> = game
+        .mobs
+        .iter()
+        .filter(|m| m.id > mark && m.kind.id == rules::PIXIE)
+        .map(|m| m.id)
+        .collect();
+    let mut s = server();
+    s.seen.insert(dim, game.next_entity);
+    for c in clouds {
+        if !s.clouds.iter().any(|k| k.id == c.id) {
+            s.clouds.push(c);
+        }
+    }
+    for id in pixies {
+        if !s.pixies.contains_key(&id) && !s.strays.contains(&(dim, id)) {
+            s.strays.push((dim, id));
+        }
     }
 }
 
@@ -906,8 +949,9 @@ pub(super) fn dispense_item(
     }
 }
 
-// `native_entity_join_level`: an Ender Air marker starts ageing; a bottle in flight is heard
-// when it lands; a pixie that `spawn_pixie` didn't make is a stray.
+// `native_entity_join_level`: a bottle in flight is heard when it lands; a pixie that
+// `spawn_pixie` didn't make is a stray. Clouds are found by `notice_new`, so they age the same
+// with or without trait mods.
 pub(super) fn join_level(
     game: &mut Game<'_>,
     dimension: &str,
@@ -920,17 +964,6 @@ pub(super) fn join_level(
     }
     let dim = game.dim.id();
     match kind {
-        "minecraft:marker" => {
-            if let Some(age) = cloud_age(game, entity) {
-                let mut s = server();
-                s.clouds.retain(|c| c.id != entity);
-                s.clouds.push(Cloud {
-                    dim,
-                    id: entity,
-                    age,
-                });
-            }
-        }
         rules::ENDER_AIR_BOTTLE => track_bottle(dim, entity),
         rules::PIXIE => {
             let mut s = server();
@@ -949,6 +982,9 @@ pub(super) fn level_tick(game: &mut Game<'_>, dimension: &str) {
     }
     let dim = game.dim.id();
     tick_clouds(game, dim);
+    // After the ageing: a cloud summoned in this tick ages from the next, as an entity added
+    // after the entities' tick does.
+    notice_new(game, dim);
     strike(game, dim);
     let (strays, bottles, pixies) = {
         let mut s = server();
