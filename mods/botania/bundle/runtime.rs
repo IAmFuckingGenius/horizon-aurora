@@ -7,24 +7,31 @@
 // Inner attributes and `//!` comments are not allowed in a horizon-mixins module payload.
 
 use super::{Game, GameLevel};
+use botania_core::apothecary::{Apothecary, Collide, Fluid, Thrown};
+use botania_core::burst::{self, Aabb, Burst, BurstWorld};
 use botania_core::consts::{PoolVariant, SpreaderVariant};
+use botania_core::daisy::PureDaisy;
 use botania_core::flower::{self, Collectors, Endoflame, Fuel, Generating};
 use botania_core::pool::{self, Pool};
-use horizon_client::containers::{BlockEntity, ModBlockEntity};
+use botania_core::recipe::{BlockState as RecipeState, Ingredient, PetalRecipe, PureDaisyRecipe};
+use horizon_client::containers::{BlockEntity, ModBlockEntity, ModContainer};
 use horizon_client::items::ItemStack;
 use horizon_world::nbt::{Compound, JavaString, Tag};
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 pub(super) const ID: &str = "botania";
 pub(super) const NAME: &str = "Botania";
 pub(super) const VERSION: &str = "0.1.0";
-pub(super) const DESCRIPTION: &str = "A port of Vazkii's Botania 1.20.1 mechanics (work in progress): mana pools \
-     and the Endoflame. Needs the Botania content mod. Botania License; not made or endorsed by Vazkii.";
+pub(super) const DESCRIPTION: &str = "A port of Vazkii's Botania 1.20.1 mechanics (work in progress): mana pools, \
+     the Endoflame, the Petal Apothecary, the Pure Daisy and mana spreaders shooting bursts. Needs the Botania content mod. Botania License; not made or endorsed by Vazkii.";
 
 // Block entity ids, as Botania names its block entity types.
 const POOL: &str = "botania:mana_pool";
 const ENDOFLAME: &str = "botania:endoflame";
+const ALTAR: &str = "botania:altar";
+const DAISY: &str = "botania:pure_daisy";
+const SPREADER: &str = "botania:mana_spreader";
 
 // ---- state kept beside the block entities -----------------------------------------------------
 
@@ -45,6 +52,44 @@ struct State {
     pools: HashMap<(&'static str, [i32; 3]), PoolTrack>,
     // Comparators to tell once the level's block entities are back in the world.
     outputs: Vec<(&'static str, [i32; 3])>,
+    // Item entities an apothecary made or emptied (`ItemFlagsComponent.apothecarySpawned`).
+    spawned: HashSet<u32>,
+    // What each apothecary remembers of its last craft (`lastRecipe`, `lastReagent`,
+    // `recipeKeepTicks`), which Botania doesn't save either.
+    apothecaries: HashMap<(&'static str, [i32; 3]), Memory>,
+    // Parsed recipes, by the recipe table they came from (its address and length).
+    petal_recipes: Option<((usize, usize), Arc<Vec<PetalRecipe>>)>,
+    daisy_recipes: Option<((usize, usize, usize, usize), Arc<Vec<PureDaisyRecipe>>)>,
+    spreaders: HashMap<(&'static str, [i32; 3]), SpreaderTrack>,
+    bursts: Vec<Flying>,
+    // Rotations of spreaders just placed, for their first tick.
+    placed: HashMap<(&'static str, [i32; 3]), (f32, f32)>,
+}
+
+// What a spreader keeps outside its NBT: its receiver (the scan's result; Botania doesn't save
+// it either), the aim it was scanned for, its tick count and last redstone signal.
+#[derive(Clone, Copy, Debug)]
+struct SpreaderTrack {
+    receiver: Option<[i32; 3]>,
+    rotation: (f32, f32),
+    ticks: u32,
+    powered: bool,
+}
+
+// A burst in flight: a virtual one, not an entity (design 3.6, variant A).
+#[derive(Clone, Debug)]
+struct Flying {
+    dim: &'static str,
+    burst: Burst,
+    // Shot during this tick's block entity ticks: it first moves next tick.
+    fresh: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Memory {
+    last_recipe: Option<Vec<String>>,
+    last_reagent: Option<Ingredient>,
+    keep_ticks: i32,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
@@ -128,8 +173,29 @@ fn entity_id(block: &str) -> Option<&'static str> {
         Some(POOL)
     } else if block == "botania:endoflame" {
         Some(ENDOFLAME)
+    } else if is_apothecary(block) {
+        Some(ALTAR)
+    } else if block == "botania:pure_daisy" {
+        Some(DAISY)
+    } else if SpreaderVariant::of_block(block).is_some() {
+        Some(SPREADER)
     } else {
         None
+    }
+}
+
+fn is_apothecary(block: &str) -> bool {
+    block.starts_with("botania:apothecary_")
+}
+
+// `native_block_entity_container`: an apothecary's 16 slots (`SimpleInventoryBlockEntity`),
+// saved and dropped by the game; no face reaches them and no menu opens.
+pub(super) fn container(block: &str, container: &mut Option<ModContainer>) {
+    if container.is_none() && is_apothecary(block) {
+        *container = Some(ModContainer {
+            slots: botania_core::consts::APOTHECARY_SLOTS,
+            ..ModContainer::default()
+        });
     }
 }
 
@@ -160,6 +226,12 @@ pub(super) fn tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEnti
         pool_tick(game, pos, entity);
     } else if entity.id == ENDOFLAME {
         endoflame_tick(game, pos, entity);
+    } else if entity.id == ALTAR {
+        apothecary_tick(game, pos, entity);
+    } else if entity.id == DAISY {
+        daisy_tick(game, pos, entity);
+    } else if entity.id == SPREADER {
+        spreader_tick(game, pos, entity);
     }
 }
 
@@ -169,6 +241,13 @@ pub(super) fn update_tag(entity: &ModBlockEntity, tag: &mut Option<Compound>) {
     if entity.id == POOL {
         copy_int(&entity.nbt, &mut out, "mana");
         copy_int(&entity.nbt, &mut out, "manaCap");
+    } else if entity.id == SPREADER {
+        copy_int(&entity.nbt, &mut out, "mana");
+        for k in ["rotationX", "rotationY"] {
+            if let Some(v) = entity.nbt.get(&key(k)) {
+                out.insert(key(k), v.clone());
+            }
+        }
     } else if entity.id == ENDOFLAME {
         copy_int(&entity.nbt, &mut out, "mana");
         copy_int(&entity.nbt, &mut out, "burnTime");
@@ -183,6 +262,7 @@ pub(super) fn update_tag(entity: &ModBlockEntity, tag: &mut Option<Compound>) {
 
 // `native_level_tick_post`: tell the comparators of the pools whose level changed.
 pub(super) fn level_tick(game: &mut Game<'_>, dimension: &str) {
+    move_bursts(game, dimension);
     let due: Vec<[i32; 3]> = {
         let mut s = state();
         let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut s.outputs)
@@ -263,7 +343,7 @@ pub(super) fn has_output(
 ) {
     if level
         .native_state_block(state)
-        .is_some_and(|b| PoolVariant::of_block(b).is_some())
+        .is_some_and(|b| PoolVariant::of_block(b).is_some() || is_apothecary(b))
     {
         *output = true;
     }
@@ -279,6 +359,24 @@ pub(super) fn output(
     let Some(block) = level.native_state_block(state) else {
         return;
     };
+    if is_apothecary(block) {
+        // `PetalApothecaryBlock.getAnalogOutputSignal`: 15 with water.
+        let fluid = level
+            .registry
+            .state(state)
+            .and_then(|s| s.properties.get("fluid"))
+            .and_then(|f| Fluid::of_name(f));
+        let at = [pos.x, pos.y, pos.z];
+        let fluid =
+            fluid.or_else(
+                || match level.world.block_entities.get(&(at[0], at[1], at[2])) {
+                    Some(BlockEntity::Mod(m)) if m.id == ALTAR => nbt_fluid(&m.nbt),
+                    _ => None,
+                },
+            );
+        *output = if fluid == Some(Fluid::Water) { 15 } else { 0 };
+        return;
+    }
     if PoolVariant::of_block(block).is_none() {
         return;
     }
@@ -444,6 +542,571 @@ fn endoflame_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntit
     if result.lit.is_some() || result.rebound || was != (e.flower.binding, e.burn_time > 0) {
         game.native_block_entity_sync(pos);
     }
+}
+
+// ---- the petal apothecary -------------------------------------------------------------------
+
+fn get_str(nbt: &Compound, k: &str) -> Option<String> {
+    match nbt.get(&key(k))? {
+        Tag::String(s) => Some(s.to_string_lossy()),
+        _ => None,
+    }
+}
+
+// The fluid kept in the block entity, for an apothecary whose block has no `fluid` property
+// (a content mod that declares it on a plain template).
+fn nbt_fluid(nbt: &Compound) -> Option<Fluid> {
+    get_str(nbt, "fluid").and_then(|f| Fluid::of_name(&f))
+}
+
+fn is_air(name: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
+    )
+}
+
+// The fluid an item gives up into an empty apothecary (`extractFluidFromItemEntity`), and
+// whether it is a fluid container at all (`isFluidContainer`). Fish buckets count as water;
+// their fish isn't released yet.
+fn bucket_fluid(item: &str) -> (Option<Fluid>, bool) {
+    match item {
+        "minecraft:water_bucket" => (Some(Fluid::Water), true),
+        "minecraft:lava_bucket" => (Some(Fluid::Lava), true),
+        _ if item.ends_with("_bucket") && item.starts_with("minecraft:") => {
+            let fish = matches!(
+                item,
+                "minecraft:cod_bucket"
+                    | "minecraft:salmon_bucket"
+                    | "minecraft:pufferfish_bucket"
+                    | "minecraft:tropical_fish_bucket"
+                    | "minecraft:axolotl_bucket"
+                    | "minecraft:tadpole_bucket"
+            );
+            (fish.then_some(Fluid::Water), true)
+        }
+        "minecraft:bucket" => (None, true),
+        _ => (None, false),
+    }
+}
+
+// A recipe file as the content mod's data has it, read by `botania-core`.
+fn core_json(v: &serde_json::Value) -> Option<botania_core::json::Value> {
+    botania_core::json::parse(&serde_json::to_string(v).ok()?).ok()
+}
+
+fn petal_recipes(game: &Game<'_>) -> Arc<Vec<PetalRecipe>> {
+    let table = game.native_recipes_of_type("botania:petal_apothecary");
+    let at = (table.as_ptr() as usize, table.len());
+    if let Some((k, r)) = &state().petal_recipes
+        && *k == at
+    {
+        return r.clone();
+    }
+    let parsed: Arc<Vec<PetalRecipe>> = Arc::new(
+        table
+            .iter()
+            .filter_map(|r| PetalRecipe::parse(&r.id, &core_json(&r.json)?))
+            .collect(),
+    );
+    state().petal_recipes = Some((at, parsed.clone()));
+    parsed
+}
+
+fn set_fluid(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity, fluid: Fluid) {
+    if get_str(&entity.nbt, "fluid").as_deref() != Some(fluid.name()) {
+        entity
+            .nbt
+            .insert(key("fluid"), Tag::String(JavaString::from(fluid.name())));
+    }
+    game.native_set_block_property(pos, "fluid", fluid.name());
+}
+
+// An item stack entity's compound as `/summon minecraft:item ~ ~ ~ {Item: ...}` takes it.
+fn item_nbt(item: &str, count: i32) -> Compound {
+    let mut stack = Compound::new();
+    stack.insert(key("id"), Tag::String(JavaString::from(item)));
+    stack.insert(key("count"), Tag::Int(count));
+    let mut nbt = Compound::new();
+    nbt.insert(key("Item"), Tag::Compound(stack));
+    nbt
+}
+
+// `PetalApothecaryBlockEntity.serverTick`, with `entityInside`: every item entity in the block's
+// cell or the one above it goes through `collideEntityItem`, then the remembered recipe ages.
+fn apothecary_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
+    let dim = game.dim.id();
+    let state_id = game.world.block(pos[0], pos[1], pos[2]);
+    let has_property = game
+        .native_block_state_property(state_id, "fluid")
+        .is_some();
+    let fluid = game
+        .native_block_state_property(state_id, "fluid")
+        .and_then(Fluid::of_name)
+        .or_else(|| nbt_fluid(&entity.nbt))
+        .unwrap_or_default();
+    // The slots, read up to the first empty one as Botania's matching reads them.
+    let slots: Vec<ItemStack> = entity
+        .items
+        .iter()
+        .map_while(|s| s.clone().filter(|s| s.count > 0))
+        .collect();
+    let memory = state()
+        .apothecaries
+        .get(&(dim, pos))
+        .cloned()
+        .unwrap_or_default();
+    let mut a = Apothecary {
+        fluid,
+        slots: slots.iter().map(|s| s.item.to_string()).collect(),
+        last_recipe: memory.last_recipe,
+        last_reagent: memory.last_reagent,
+        keep_ticks: memory.keep_ticks,
+    };
+    let mut stacks = slots;
+    let items = game.native_item_entities(
+        dim,
+        [f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])],
+        [
+            f64::from(pos[0] + 1),
+            f64::from(pos[1] + 2),
+            f64::from(pos[2] + 1),
+        ],
+    );
+    let mut actions = Vec::new();
+    if !items.is_empty() {
+        let recipes = petal_recipes(game);
+        let spawned = state().spawned.clone();
+        let tags = game.items();
+        let in_tag = |t: &str, i: &str| tags.item_in_tag(t, i);
+        for (n, e) in items.iter().enumerate() {
+            let (holds, container) = bucket_fluid(&e.stack.item);
+            let thrown = Thrown {
+                item: &e.stack.item,
+                count: e.stack.count,
+                spawned: spawned.contains(&e.id),
+                holds,
+                container,
+            };
+            let c = a.collide(&thrown, &recipes, &in_tag);
+            if c != Collide::Nothing {
+                actions.push((n, c));
+            }
+        }
+    }
+    let center = [
+        f64::from(pos[0]) + 0.5,
+        f64::from(pos[1]) + 0.5,
+        f64::from(pos[2]) + 0.5,
+    ];
+    let mut changed = false;
+    for (n, c) in actions {
+        let e = &items[n];
+        match c {
+            Collide::Nothing | Collide::Ignite => {}
+            Collide::Fill(f) => {
+                game.native_set_item_entity(dim, e.id, ItemStack::new("minecraft:bucket", 1));
+                state().spawned.insert(e.id);
+                set_fluid(game, pos, entity, f);
+                changed = true;
+            }
+            Collide::Craft { output, .. } => {
+                let mut rest = e.stack.clone();
+                rest.count -= 1;
+                game.native_set_item_entity(dim, e.id, rest);
+                stacks.clear();
+                let at = [center[0], f64::from(pos[1]) + 1.5, center[2]];
+                if let Some(id) = game.native_summon(
+                    dim,
+                    "minecraft:item",
+                    at,
+                    item_nbt(&output.item, output.count),
+                ) {
+                    state().spawned.insert(id);
+                }
+                set_fluid(game, pos, entity, Fluid::Empty);
+                game.native_play_sound_in_place("botania:altar_craft", center, 4, 1.0, 1.0);
+                changed = true;
+            }
+            Collide::Take => {
+                let mut rest = e.stack.clone();
+                rest.count -= 1;
+                let mut one = e.stack.clone();
+                one.count = 1;
+                game.native_set_item_entity(dim, e.id, rest);
+                stacks.push(one);
+                // GENERIC_SPLASH at 0.1, pitch 10 (clamped to 2 as the client clamps it).
+                game.native_play_sound_in_place(
+                    "minecraft:entity.generic.splash",
+                    center,
+                    4,
+                    0.1,
+                    2.0,
+                );
+                changed = true;
+            }
+        }
+    }
+    a.tick_keep();
+    if !has_property {
+        let f = a.fluid;
+        if get_str(&entity.nbt, "fluid").as_deref() != Some(f.name()) {
+            entity
+                .nbt
+                .insert(key("fluid"), Tag::String(JavaString::from(f.name())));
+        }
+    }
+    if changed {
+        let size = entity.items.len();
+        let mut slots: Vec<Option<ItemStack>> = stacks.into_iter().map(Some).collect();
+        slots.resize(size, None);
+        slots.truncate(size);
+        if entity.items != slots {
+            entity.items = slots;
+        }
+        game.native_block_entity_sync(pos);
+    }
+    state().apothecaries.insert(
+        (dim, pos),
+        Memory {
+            last_recipe: a.last_recipe,
+            last_reagent: a.last_reagent,
+            keep_ticks: a.keep_ticks,
+        },
+    );
+}
+
+// ---- the Pure Daisy -----------------------------------------------------------------------------
+
+fn daisy_recipes(game: &Game<'_>) -> Arc<Vec<PureDaisyRecipe>> {
+    let plain = game.native_recipes_of_type("botania:pure_daisy");
+    let copying = game.native_recipes_of_type("botania:state_copying_pure_daisy");
+    let at = (
+        plain.as_ptr() as usize,
+        plain.len(),
+        copying.as_ptr() as usize,
+        copying.len(),
+    );
+    if let Some((k, r)) = &state().daisy_recipes
+        && *k == at
+    {
+        return r.clone();
+    }
+    let parsed: Arc<Vec<PureDaisyRecipe>> = Arc::new(
+        plain
+            .iter()
+            .chain(copying)
+            .filter_map(|r| PureDaisyRecipe::parse(&r.id, &core_json(&r.json)?))
+            .collect(),
+    );
+    state().daisy_recipes = Some((at, parsed.clone()));
+    parsed
+}
+
+// The block at `pos` as recipes see it.
+fn recipe_state(game: &Game<'_>, pos: [i32; 3]) -> Option<RecipeState> {
+    let id = game.world.block(pos[0], pos[1], pos[2]);
+    let s = game.pack.assets.registry.state(id)?;
+    let mut properties: Vec<(String, String)> = s
+        .properties
+        .keys()
+        .zip(s.properties.values())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    properties.sort();
+    Some(RecipeState {
+        name: s.name.clone(),
+        properties,
+    })
+}
+
+// `PureDaisyBlockEntity.tickFlower` on the server.
+fn daisy_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
+    let dim = game.dim.id();
+    let mut daisy = PureDaisy {
+        position: get_int(&entity.nbt, "position").map_or(0, |p| p.clamp(0, 7) as usize),
+        ticks_remaining: std::array::from_fn(|i| {
+            get_int(&entity.nbt, &format!("ticksRemaining{i}")).unwrap_or(-1)
+        }),
+    };
+    let ticks_existed = get_int(&entity.nbt, "ticksExisted").unwrap_or(0) + 1;
+    let recipes = daisy_recipes(game);
+    let mut found: Option<(usize, RecipeState)> = None;
+    let step = {
+        let g: &Game<'_> = game;
+        let tags = g.items();
+        let in_tag = |t: &str, b: &str| tags.block_in_tag(t, b);
+        daisy.tick(pos, |p| {
+            let s = recipe_state(g, p)?;
+            if is_air(&s.name) {
+                return None;
+            }
+            let i = recipes.iter().position(|r| r.matches(&s, &in_tag))?;
+            let time = recipes[i].time;
+            found = Some((i, s));
+            Some(time)
+        })
+    };
+    if let Some((_, at)) = step.convert
+        && let Some((i, s)) = found
+    {
+        let result = recipes[i].result(&s);
+        let registry = game.pack.assets.registry;
+        if let Some(mut id) = game.native_default_state(&result.name) {
+            for (k, v) in &result.properties {
+                if let Some(with) = super::native_world_edit::with_property(registry, id, k, v) {
+                    id = with;
+                }
+            }
+            game.native_set_block(dim, at, id, horizon_world::level::flags::UPDATE_ALL);
+        }
+    }
+    set_int(entity, "ticksExisted", ticks_existed);
+    set_int(entity, "position", daisy.position as i32);
+    for (i, t) in daisy.ticks_remaining.iter().enumerate() {
+        set_int(entity, &format!("ticksRemaining{i}"), *t);
+    }
+}
+
+// ---- the mana spreader and its bursts -------------------------------------------------------
+
+fn get_float(nbt: &Compound, k: &str) -> Option<f32> {
+    match nbt.get(&key(k))? {
+        Tag::Float(bits) => Some(f32::from_bits(*bits)),
+        Tag::Double(bits) => Some(f64::from_bits(*bits) as f32),
+        Tag::Int(v) => Some(*v as f32),
+        _ => None,
+    }
+}
+
+fn set_float(entity: &mut ModBlockEntity, k: &str, v: f32) {
+    if get_float(&entity.nbt, k) != Some(v) {
+        entity.nbt.insert(key(k), Tag::Float(v.to_bits()));
+    }
+}
+
+fn is_spreader(game: &Game<'_>, pos: [i32; 3]) -> bool {
+    game.native_mod_block_entity(pos)
+        .is_some_and(|m| m.id == SPREADER)
+}
+
+// What a burst meets in the level: a pool is the slab a burst hits (`*_SHAPE_INTERACT`), any
+// other block its collision shape; leaves are passed; pools take the mana.
+struct GameBursts<'a, 'g> {
+    game: &'a Game<'g>,
+}
+
+impl BurstWorld for GameBursts<'_, '_> {
+    fn boxes(&self, pos: [i32; 3]) -> Vec<Aabb> {
+        let block = self.game.native_block(pos);
+        match PoolVariant::of_block(&block) {
+            Some(v) => vec![[0.0, 0.0, 0.0, 1.0, v.burst_slab_height() / 16.0, 1.0]],
+            None => self.game.native_block_collision(pos),
+        }
+    }
+    fn passes(&self, pos: [i32; 3]) -> bool {
+        let block = self.game.native_block(pos);
+        self.game.items().block_in_tag("minecraft:leaves", &block)
+    }
+    fn receiver(&self, pos: [i32; 3]) -> bool {
+        is_pool(self.game, pos)
+    }
+}
+
+// `ManaSpreaderBlockEntity.commonTick` on the server, for the plain, redstone, elven and Gaia
+// spreaders without lenses: draw from the pools beside it, find its receiver, and shoot.
+fn spreader_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
+    let dim = game.dim.id();
+    let block = game.native_block(pos);
+    let Some(variant) = SpreaderVariant::of_block(&block) else {
+        return;
+    };
+    let stats = variant.stats();
+    let redstone = variant == SpreaderVariant::Redstone;
+    let mut mana = get_int(&entity.nbt, "mana")
+        .unwrap_or(0)
+        .clamp(0, stats.capacity);
+    // A rotation the placement hook left for it, else its own.
+    let placed = state().placed.remove(&(dim, pos));
+    let (rx, ry) = placed.unwrap_or((
+        get_float(&entity.nbt, "rotationX").unwrap_or(0.0),
+        get_float(&entity.nbt, "rotationY").unwrap_or(0.0),
+    ));
+    let mut can_shoot = get_int(&entity.nbt, "canShootBurst").unwrap_or(1) != 0;
+    let track = state().spreaders.get(&(dim, pos)).copied();
+    let in_network = track.is_some();
+    let receiver = track.and_then(|t| t.receiver);
+    // Draw from the pools beside it, all but its own receiver (any for a redstone spreader).
+    if in_network {
+        for d in botania_core::mth::Direction::ALL {
+            let at = d.offset(pos);
+            if (Some(at) == receiver && !redstone) || !is_pool(game, at) {
+                continue;
+            }
+            let pool_block = game.native_block(at);
+            let have = game
+                .native_mod_block_entity(at)
+                .map_or(0, |m| pool_of(&m.nbt, &pool_block).current());
+            let draw = pool::spreader_draw(have, mana, stats.capacity);
+            if draw > 0 {
+                game.native_with_mod_block_entity(at, |m| {
+                    let mut p = pool_of(&m.nbt, &pool_block);
+                    if p.receive(-draw) {
+                        set_int(m, "mana", p.mana);
+                    }
+                });
+                mana += draw;
+            }
+        }
+    }
+    let powered = game.native_neighbor_signal(dim, pos) > 0;
+    // The receiver scan: when the aim changed and every 10 ticks (Botania rescans whenever a
+    // block on the path changes).
+    let ticks = track.map_or(0, |t| t.ticks);
+    let rescan = track.is_none_or(|t| t.rotation != (rx, ry)) || ticks % 10 == 0;
+    let receiver = if rescan {
+        burst::scan_receiver(&GameBursts { game }, pos, rx, ry, &stats).0
+    } else {
+        receiver
+    };
+    // `getEntitiesOfClass` for its own burst, as the ping watchdog does: none left, it may shoot.
+    let flying = state()
+        .bursts
+        .iter()
+        .any(|b| b.dim == dim && b.burst.source == pos && b.burst.alive);
+    if !flying {
+        can_shoot = true;
+    }
+    let powered_last = track.is_some_and(|t| t.powered);
+    let should = if redstone {
+        powered && !powered_last
+    } else {
+        !powered
+    };
+    let receiver_full = receiver.is_some_and(|r| {
+        let b = game.native_block(r);
+        let void = mana_void_below(game, r);
+        game.native_mod_block_entity(r)
+            .is_some_and(|m| pool_of(&m.nbt, &b).is_full(void))
+    });
+    if should
+        && (receiver.is_some() || redstone)
+        && can_shoot
+        && (redstone || !receiver_full)
+        && mana >= stats.burst_mana
+    {
+        mana -= stats.burst_mana;
+        can_shoot = false;
+        state().bursts.push(Flying {
+            dim,
+            burst: Burst::from_spreader(pos, rx, ry, &stats, false),
+            fresh: true,
+        });
+        let at = [
+            f64::from(pos[0]) + 0.5,
+            f64::from(pos[1]) + 0.5,
+            f64::from(pos[2]) + 0.5,
+        ];
+        let pitch = 0.7 + 0.3 * ((ticks % 7) as f32 / 7.0);
+        game.native_play_sound_in_place("botania:spreaderfire", at, 4, 0.05, pitch);
+    }
+    set_int(entity, "mana", mana);
+    set_float(entity, "rotationX", rx);
+    set_float(entity, "rotationY", ry);
+    set_int(entity, "canShootBurst", i32::from(can_shoot));
+    let changed_receiver = track.is_none_or(|t| t.receiver != receiver || t.rotation != (rx, ry));
+    state().spreaders.insert(
+        (dim, pos),
+        SpreaderTrack {
+            receiver,
+            rotation: (rx, ry),
+            ticks: ticks.wrapping_add(1),
+            powered,
+        },
+    );
+    if changed_receiver {
+        game.native_block_entity_sync(pos);
+    }
+}
+
+// The bursts of `dimension` shot before this tick move: `ManaBurstEntity.tick` (an entity first
+// moves in the tick after it is added).
+fn move_bursts(game: &mut Game<'_>, dimension: &str) {
+    let mut mine: Vec<Flying> = {
+        let mut s = state();
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut s.bursts)
+            .into_iter()
+            .partition(|b| b.dim == dimension);
+        s.bursts = rest;
+        mine
+    };
+    let mut deliveries = Vec::new();
+    let mut ended = Vec::new();
+    {
+        let world = GameBursts { game: &*game };
+        for b in mine.iter_mut() {
+            if b.fresh {
+                b.fresh = false;
+                continue;
+            }
+            // A burst about to fly into an unloaded chunk is lost.
+            let next = botania_core::mth::block_of([
+                b.burst.pos[0] + b.burst.vel[0],
+                b.burst.pos[1] + b.burst.vel[1],
+                b.burst.pos[2] + b.burst.vel[2],
+            ]);
+            if !game.world.loaded(next[0], next[2]) {
+                b.burst.alive = false;
+            } else {
+                let r = b.burst.tick(&world);
+                if let Some(d) = r.delivered {
+                    deliveries.push(d);
+                }
+            }
+            if !b.burst.alive {
+                ended.push(b.burst.source);
+            }
+        }
+    }
+    for (at, mana) in deliveries {
+        let block = game.native_block(at);
+        game.native_with_mod_block_entity(at, |m| {
+            let mut p = pool_of(&m.nbt, &block);
+            if p.receive(mana) {
+                set_int(m, "mana", p.mana);
+            }
+        });
+    }
+    // `remove`: the spreader that shot it may shoot again.
+    for source in ended {
+        game.native_with_mod_block_entity(source, |m| {
+            if m.id == SPREADER {
+                set_int(m, "canShootBurst", 1);
+            }
+        });
+    }
+    mine.retain(|b| b.burst.alive);
+    state().bursts.extend(mine);
+}
+
+// `ManaSpreaderBlock.setPlacedBy`: a placed spreader faces the player who placed it.
+pub(super) fn placed(
+    game: &mut Game<'_>,
+    pos: [i32; 3],
+    state_id: horizon_world::registry::BlockStateId,
+) {
+    let Some(block) = game.native_state_block(state_id).map(str::to_owned) else {
+        return;
+    };
+    if SpreaderVariant::of_block(&block).is_none() {
+        return;
+    }
+    let Some(player) = game.native_acting_player() else {
+        return;
+    };
+    let rotation = burst::placed_rotation(player.yaw, player.pitch);
+    let dim = game.dim.id();
+    state().placed.insert((dim, pos), rotation);
 }
 
 // ---- data -----------------------------------------------------------------------------------

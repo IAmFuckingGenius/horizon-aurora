@@ -38,6 +38,17 @@ bindings = [
 ]
 
 [[injection]]
+id = "container"
+hook = "block_entity_container"
+hook_version = 1
+kind = "HEAD"
+helper = "container.rs"
+bindings = [
+  { name = "block", ty = "&str", value = "block" },
+  { name = "container", ty = "&mut Option<horizon_client::containers::ModContainer>", value = "&mut *container" },
+]
+
+[[injection]]
 id = "ticks"
 hook = "block_entity_ticks"
 hook_version = 1
@@ -115,4 +126,16 @@ kind = "HEAD"
 helper = "data.rs"
 bindings = [
   { name = "files", ty = "&mut Vec<(String, Vec<u8>)>", value = "&mut *files" },
+]
+
+[[injection]]
+id = "placed"
+hook = "place_block"
+hook_version = 1
+kind = "HEAD"
+helper = "placed.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "state", ty = "horizon_world::registry::BlockStateId", value = "state" },
 ]

@@ -1,0 +1,16 @@
+{
+  "template": "minecraft:stone",
+  "shapes": {
+    "default": [
+      [
+        0.125,
+        0.125,
+        0.125,
+        0.875,
+        0.875,
+        0.875
+      ]
+    ]
+  },
+  "occludes": false
+}
