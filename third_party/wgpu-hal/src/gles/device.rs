@@ -471,6 +471,9 @@ impl super::Device {
             naga::back::glsl::Version::Embedded { version, .. } => format!("{version} es"),
             naga::back::glsl::Version::Desktop(version) => format!("{version}"),
         };
+        // Aurora: how long the driver takes, logged below for slow programs.
+        #[cfg(native)]
+        let started = std::time::Instant::now();
         let program = unsafe { gl.create_program() }.unwrap();
         #[cfg(native)]
         if let Some(label) = label {
@@ -533,6 +536,18 @@ impl super::Device {
         log::debug!("\tLinked program {program:?}");
 
         let linked_ok = unsafe { gl.get_program_link_status(program) };
+        // Aurora: a first start waits for these compiles (seconds on PowerVR); the slow ones are
+        // named, with the pipeline's label, so a phone's log shows which shader to make lighter.
+        #[cfg(native)]
+        {
+            let ms = started.elapsed().as_millis();
+            if ms >= 100 {
+                log::info!(
+                    "wgpu GL: program {:?} ({has_stages:?}) compiled and linked in {ms} ms",
+                    label.unwrap_or("unlabelled"),
+                );
+            }
+        }
         let msg = unsafe { gl.get_program_info_log(program) };
         if !linked_ok {
             return Err(crate::PipelineError::Linkage(has_stages, msg));

@@ -56,6 +56,18 @@ size and the SHA-256, then installs the library read-only (Android 14 requires
 code an app loads from its own files to be read-only). An engine with the same id
 replaces the old one.
 
+## Engines with native mods
+
+Native mods (`.hnmod`, [native-mods.md](native-mods.md)) change the game's source before it is
+compiled, so on Android they come as an engine built with them. The manual workflow
+**Horizon Aurora native-mod engine** (`.github/workflows/android-native-engine.yml`) applies a
+bundle with horizon-mixins, at the launcher's `MIXINS_REV`, then builds and packs the engine as
+above for arm64-v8a and armeabi-v7a. Its `bundle` input is `smoke` (a one-hook test bundle),
+`github:OWNER/REPO@<commit>[:folder]`, or a `.hnmod` URL with its `#sha256=`. The engines are run
+artifacts; `publish` adds them to a rolling `engines` pre-release, which the launcher's list does
+not read yet, so they are imported by hand. A mod's content (`.hmod`) goes in the same instance's
+mods.
+
 ## Engines from Aurora's releases
 
 **Settings › Engines › Engines from Aurora › Check** reads the engine lists published
