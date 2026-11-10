@@ -1,5 +1,5 @@
 # Botania for Horizon Aurora: a modified port of Vazkii's Botania mechanics (Botania License, see
-# LICENSE and NOTICE.md). A horizon-mixins bundle: named hook points only (NATIVE_HOOKS_API 415 has
+# LICENSE and NOTICE.md). A horizon-mixins bundle: named hook points only (NATIVE_HOOKS_API 416 has
 # them all), the game-side module `botania` in game.rs, and the mechanics in the `core` crate.
 # Blocks, items, textures and recipes come from the Botania content mod (.hmod).
 [mod]
@@ -443,4 +443,33 @@ bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "context", ty = "&horizon_client::mod_api::NativeLootDrops<'_>", value = "context" },
   { name = "drops", ty = "&mut Vec<horizon_client::items::ItemStack>", value = "&mut *drops" },
+]
+
+# ---- Botania's armour on armour stands and the inventory's player (armour.rs) ---------------------
+# The same models where `native_mob_layer` doesn't reach: armour stands (`native_armor_stand_layer`)
+# and the player the inventory draws (`native_player_preview_layer`), hook points of API 416.
+
+[[injection]]
+id = "armour_stand"
+hook = "armor_stand_layer"
+hook_version = 1
+kind = "HEAD"
+helper = "armour_stand.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "stand", ty = "&crate::game::native_mob_draw::NativeArmorStandRender<'_>", value = "stand" },
+  { name = "parts", ty = "&crate::game::native_mob_draw::NativeModelParts<'_>", value = "parts" },
+  { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
+]
+
+[[injection]]
+id = "armour_preview"
+hook = "player_preview_layer"
+hook_version = 1
+kind = "HEAD"
+helper = "armour_preview.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "parts", ty = "&crate::game::native_mob_draw::NativeModelParts<'_>", value = "parts" },
+  { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
 ]
