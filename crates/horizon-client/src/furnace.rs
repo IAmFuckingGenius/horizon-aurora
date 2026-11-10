@@ -468,4 +468,56 @@ mod tests {
         assert_eq!(fuel_slot(&furnace), Some(("test:coal", 1)));
         assert!(drops.is_empty());
     }
+
+    /// A fuel's `cooking_fuel` may name a provider of another namespace than
+    /// vanilla's (a content mod's `data/<id>/context_int_provider/`). Divided
+    /// by the reduction factor as vanilla's times are, it burns half as long in
+    /// a blast furnace or smoker, which cook twice as fast.
+    #[test]
+    fn a_fuel_burns_for_a_provider_of_its_own_namespace() {
+        let root =
+            std::env::temp_dir().join(format!("horizon-furnace-provider-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let write = |path: &str, contents: &str| {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        };
+        let cooking = "data/minecraft/context_int_provider/cooking";
+        write(
+            &format!("{cooking}/normal_burn_time_reduction_factor.json"),
+            "1",
+        );
+        write(
+            &format!("{cooking}/fast_burn_time_reduction_factor.json"),
+            "2",
+        );
+        write(
+            "data/minecraft/context_float_provider/cooking/speed_default.json",
+            r#"{"type": "minecraft:conditional", "condition": "minecraft:block/fast_cooking",
+                "on_false": 1.0, "on_true": 2.0}"#,
+        );
+        write(
+            "data/test/context_int_provider/cooking/time_blaze_block.json",
+            r#"{"type": "minecraft:div", "left": 24000, "right": {
+                "type": "minecraft:conditional", "condition": "minecraft:block/fast_cooking",
+                "on_false": "minecraft:cooking/normal_burn_time_reduction_factor",
+                "on_true": "minecraft:cooking/fast_burn_time_reduction_factor"}}"#,
+        );
+        write(
+            "items.json",
+            r#"{"test:blaze_block": {"minecraft:cooking_fuel": {
+                "burn_time": "test:cooking/time_blaze_block",
+                "speed_multiplier": "minecraft:cooking/speed_default"}}}"#,
+        );
+        fs::create_dir_all(root.join("data/minecraft/loot_table")).unwrap();
+        let items = Items::catalog(&root, &PackOverlay::NONE).unwrap();
+        let providers = Providers::load(&root);
+        let _ = fs::remove_dir_all(&root);
+        let block = ItemStack::new("test:blaze_block", 1);
+        assert_eq!(providers.burn_time(&items, &block, false), 24000);
+        assert_eq!(providers.burn_time(&items, &block, true), 12000);
+        assert_eq!(providers.speed(&items, &block, false), 1.0);
+        assert_eq!(providers.speed(&items, &block, true), 2.0);
+    }
 }

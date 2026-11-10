@@ -300,6 +300,29 @@ have no `max_stack_size` or `rarity` keys, so those two go in `components` here
     "minecraft:damage_resistant": { "types": "#minecraft:is_fire" } } }
 ```
 
+Furnace fuel is the `minecraft:cooking_fuel` component, as in 26.3: its
+`burn_time` is a number of ticks or the name of a `context_int_provider`, its
+`speed_multiplier` a number or the name of a `context_float_provider`. A mod
+defines providers in its own namespace, `data/<id>/context_int_provider/<path>.json`
+(`context_float_provider/` for speeds), named `<id>:<path>`. Vanilla's fuels
+divide their time by `minecraft:cooking/normal_burn_time_reduction_factor`, or
+by the fast one in a blast furnace or smoker, which cook twice as fast; a
+provider that does the same burns half as long there, as vanilla's do:
+
+```json
+{ "type": "minecraft:div", "left": 24000,
+  "right": { "type": "minecraft:conditional", "condition": "minecraft:block/fast_cooking",
+    "on_false": "minecraft:cooking/normal_burn_time_reduction_factor",
+    "on_true": "minecraft:cooking/fast_burn_time_reduction_factor" } }
+```
+
+```json
+{ "template": "minecraft:stone",
+  "components": {
+    "minecraft:cooking_fuel": { "burn_time": "mymod:cooking/time_fuel_block",
+      "speed_multiplier": "minecraft:cooking/speed_default" } } }
+```
+
 A block that joins its neighbours in six directions (a cable, a pipe) copies
 `minecraft:chorus_plant`, vanilla's `PipeBlock`, and names the block tag it
 connects to besides itself:

@@ -9,7 +9,8 @@ pub struct Providers {
     ints: HashMap<String, Value>,
     floats: HashMap<String, Value>,
 }
-fn load_dir(dir: &Path, prefix: &str, out: &mut HashMap<String, Value>) {
+/// The providers of `namespace` under `dir`, keyed `<namespace>:<path>`.
+fn load_dir(dir: &Path, namespace: &str, prefix: &str, out: &mut HashMap<String, Value>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -21,28 +22,43 @@ fn load_dir(dir: &Path, prefix: &str, out: &mut HashMap<String, Value>) {
             .unwrap_or("")
             .to_owned();
         if p.is_dir() {
-            load_dir(&p, &format!("{prefix}{name}/"), out);
+            load_dir(&p, namespace, &format!("{prefix}{name}/"), out);
         } else if let Ok(bytes) = fs::read(&p)
             && let Ok(v) = serde_json::from_slice(&bytes)
         {
-            out.insert(format!("minecraft:{prefix}{name}"), v);
+            out.insert(format!("{namespace}:{prefix}{name}"), v);
         }
     }
 }
 impl Providers {
+    /// The providers of every namespace of `root`'s data, as the registries a
+    /// data pack adds to: vanilla's (`minecraft:cooking/time_coal`) and those
+    /// of a content mod's own namespace (`data/<id>/context_int_provider/`).
     pub fn load(root: &Path) -> Self {
         let mut ints = HashMap::new();
         let mut floats = HashMap::new();
-        load_dir(
-            &root.join("data/minecraft/context_int_provider"),
-            "",
-            &mut ints,
-        );
-        load_dir(
-            &root.join("data/minecraft/context_float_provider"),
-            "",
-            &mut floats,
-        );
+        for entry in fs::read_dir(root.join("data"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let Some(namespace) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let data = entry.path();
+            load_dir(
+                &data.join("context_int_provider"),
+                &namespace,
+                "",
+                &mut ints,
+            );
+            load_dir(
+                &data.join("context_float_provider"),
+                &namespace,
+                "",
+                &mut floats,
+            );
+        }
         Self { ints, floats }
     }
     fn eval(v: &Value, fast: bool, table: &HashMap<String, Value>, depth: u32) -> f64 {
