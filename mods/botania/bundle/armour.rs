@@ -7,6 +7,9 @@
 // the wearer's own head, body, arms and legs are drawn this frame, which is what Botania's
 // `ArmorModel` gets from the parent `HumanoidModel` (`copyPropertiesTo`, each part's `copyFrom`):
 // sneaking, swimming, flying with an elytra, riding, swinging and aiming all come with the pose.
+// Armour stands (`native_armor_stand_layer`) and the player the inventory draws
+// (`native_player_preview_layer`) get the same pieces, on the parts the game says they are drawn
+// at (`NativeModelParts`): the stand's armour model posed like the stand, the doll's body.
 // The content items carry an `equippable` without an equipment asset, so the vanilla armour layer
 // draws nothing for them.
 //
@@ -14,7 +17,9 @@
 
 use super::Game;
 use super::native_block_entity_draw::BlockEntityDraw;
-use super::native_mob_draw::{NativeMobRender, NativePlayerRender};
+use super::native_mob_draw::{
+    NativeArmorStandRender, NativeMobRender, NativeModelParts, NativePlayerRender,
+};
 use botania_core::armor_model::{self, HUMANOID_PARTS, Layer, Material, Slot};
 use glam::{DVec3, Mat4};
 use horizon_client::items::ItemStack;
@@ -78,6 +83,34 @@ pub(super) fn layer(
     ]
     .map(|(item, stack)| item.as_deref().map(|item| (item, stack.as_ref())));
     draw_worn(game, m, mob, worn, draw);
+}
+
+// `native_armor_stand_layer` (`ArmorStandRenderer`'s `HumanoidArmorLayer`): the pieces a stand
+// wears, on its armour model posed like the stand (`ArmorStandArmorModel`).
+pub(super) fn stand_layer(
+    game: &Game<'_>,
+    stand: &NativeArmorStandRender<'_>,
+    parts: &NativeModelParts<'_>,
+    draw: &mut BlockEntityDraw,
+) {
+    // `EquipmentSlot` order: main hand, off hand, feet, legs, chest, head.
+    let e = stand.equipment;
+    let worn = [5, 4, 3, 2].map(|i| e[i].as_ref().map(|s| (&*s.item, Some(s))));
+    draw_pieces(game, worn, draw, |name, draw| parts.place(name, draw));
+}
+
+// `native_player_preview_layer`: this window's player's pieces on the inventory's doll, as its
+// `HumanoidArmorLayer` draws them there.
+pub(super) fn preview_layer(
+    game: &Game<'_>,
+    parts: &NativeModelParts<'_>,
+    draw: &mut BlockEntityDraw,
+) {
+    let worn = game
+        .armor
+        .each_ref()
+        .map(|s| s.as_ref().map(|s| (&*s.item, Some(s))));
+    draw_pieces(game, worn, draw, |name, draw| parts.place(name, draw));
 }
 
 // ---- who wears what ------------------------------------------------------------------------------
@@ -144,9 +177,8 @@ fn humanoid_armour(m: &Mob) -> bool {
 
 // ---- drawing -------------------------------------------------------------------------------------
 
-// The pieces of `worn` (head to feet) Botania draws, each in its own slot only
-// (`HumanoidArmorLayer.renderArmorPiece`), under `draw` (the frame at the feet, turned with the
-// body).
+// The pieces of `worn` (head to feet) on the mob `m`, under `draw` (the frame at the feet, turned
+// with the body): each part where the wearer's own is drawn this frame.
 fn draw_worn(
     game: &Game<'_>,
     m: &Mob,
@@ -164,7 +196,33 @@ fn draw_worn(
     let data = game.res.mob_data();
     // Each part of the wearer's model where it is drawn now, from the feet, as it is asked for.
     let mut parts: [Option<Option<Mat4>>; HUMANOID_PARTS.len()] = [None; HUMANOID_PARTS.len()];
-    let mut turned = false;
+    draw_pieces(game, worn, draw, |name, draw| {
+        let Some(i) = HUMANOID_PARTS.iter().position(|n| *n == name) else {
+            return false;
+        };
+        let at = *parts[i].get_or_insert_with(|| {
+            horizon_client::mobs::render::part_transform(m, mob.partial, feet, data, name)
+        });
+        let Some(at) = at else {
+            return false;
+        };
+        // Back to the frame at the feet, unturned: the part's place comes with the turn.
+        draw.rotate_about([0.0, 1.0, 0.0], mob.body_yaw, [0.0; 3]);
+        place(draw, at);
+        true
+    });
+}
+
+// The pieces of `worn` (head to feet) Botania draws, each in its own slot only
+// (`HumanoidArmorLayer.renderArmorPiece`): each root part of a piece's model
+// (`ArmorModel.setPartVisibility`) where `to_part` moves `draw` from the hook's frame, false for a
+// part the wearer lacks.
+fn draw_pieces(
+    game: &Game<'_>,
+    worn: [Worn<'_>; 4],
+    draw: &mut BlockEntityDraw,
+    mut to_part: impl FnMut(&str, &mut BlockEntityDraw) -> bool,
+) {
     for (slot, worn) in Slot::ALL.into_iter().zip(worn) {
         let Some((item, stack)) = worn else {
             continue;
@@ -176,12 +234,6 @@ fn draw_worn(
         if own != slot || stack.is_some_and(phantom_ink) {
             continue;
         }
-        if !turned {
-            // Back to the frame at the feet, unturned: the parts' places come with the turn.
-            draw.push();
-            draw.rotate_about([0.0, 1.0, 0.0], mob.body_yaw, [0.0; 3]);
-            turned = true;
-        }
         let sprite = material.texture(holiday());
         let model = model(material, slot.layer());
         let start = draw.vertices_mut().len();
@@ -192,26 +244,15 @@ fn draw_worn(
             else {
                 continue;
             };
-            let Some(i) = HUMANOID_PARTS.iter().position(|n| *n == name) else {
-                continue;
-            };
-            let at = *parts[i].get_or_insert_with(|| {
-                horizon_client::mobs::render::part_transform(m, mob.partial, feet, data, name)
-            });
-            let Some(at) = at else {
-                continue;
-            };
             draw.push();
-            place(draw, at);
-            game.native_draw_model_part(draw, part, sprite, 0xFF_FFFF);
+            if to_part(name, draw) {
+                game.native_draw_model_part(draw, part, sprite, 0xFF_FFFF);
+            }
             draw.pop();
         }
         if foil(game, item, stack) {
             glint(game, draw, start, sprite);
         }
-    }
-    if turned {
-        draw.pop();
     }
 }
 
