@@ -75,6 +75,31 @@ fn result_before_1_20_5(recipe: &Value) -> bool {
     r.get("item").is_some() && r.get("id").is_none()
 }
 
+/// `check --old`: a 1.20 jar's vanilla recipe results take 26.3's key ([`upgrade_old_result`]).
+/// Off for a pack's import, which keeps a 1.20 recipe as it was.
+pub static UPGRADE_OLD_RESULTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// A vanilla recipe's result as before 1.20.5 (`{"item": id, "count": n}`) in 26.3's form
+/// (`{"id": id, "count": n}`), for a jar made for 1.20 or older; one with an `nbt` string has
+/// no plain equivalent and stays. Whether it changed.
+fn upgrade_old_result(recipe: &mut Value) -> bool {
+    let vanilla = recipe["type"]
+        .as_str()
+        .is_some_and(|t| t.starts_with("minecraft:"));
+    let Some(result) = recipe.get_mut("result").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    if !vanilla || result.contains_key("nbt") || result.contains_key("id") {
+        return false;
+    }
+    let Some(item) = result.remove("item") else {
+        return false;
+    };
+    result.insert("id".into(), item);
+    true
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Report {
     /// Made for 1.20 or older ([`old_layout`]): its data files were carried under 1.21's
@@ -1112,8 +1137,12 @@ pub fn carry(
                             .as_object_mut()
                             .map(|o| o.remove("neoforge:conditions"));
                     }
+                    // A 1.20 jar's vanilla results take 26.3's key first.
+                    let result_upgraded = old
+                        && UPGRADE_OLD_RESULTS.load(std::sync::atomic::Ordering::Relaxed)
+                        && upgrade_old_result(&mut recipe);
                     let old_result = result_before_1_20_5(&recipe);
-                    let upgraded = !old_result && upgrade_recipe(&mut recipe);
+                    let upgraded = !old_result && (upgrade_recipe(&mut recipe) || result_upgraded);
                     if upgraded {
                         report.recipes_upgraded += 1;
                     } else {
@@ -1823,6 +1852,31 @@ mod tests {
 
     /// 1.21 named every data folder in the singular, tags' too; a jar holding only
     /// the plural ones is made for 1.20 or older, whichever of them it ships.
+    #[test]
+    fn old_vanilla_results_take_the_id_key() {
+        let mut shaped = json!({
+            "type": "minecraft:crafting_shaped",
+            "pattern": ["#"],
+            "key": {"#": {"item": "minecraft:stone"}},
+            "result": {"item": "botania:livingrock", "count": 4}
+        });
+        assert!(upgrade_old_result(&mut shaped));
+        assert_eq!(
+            shaped["result"],
+            json!({"id": "botania:livingrock", "count": 4})
+        );
+        // A result with NBT has no plain 26.3 form, and a mod's own type is not vanilla's.
+        let mut nbt = json!({
+            "type": "minecraft:crafting_shapeless",
+            "result": {"item": "minecraft:stick", "nbt": "{a:1b}"}
+        });
+        assert!(!upgrade_old_result(&mut nbt));
+        let mut own =
+            json!({"type": "botania:mana_infusion", "result": {"item": "minecraft:stick"}});
+        assert!(!upgrade_old_result(&mut own));
+        assert_eq!(own["result"], json!({"item": "minecraft:stick"}));
+    }
+
     #[test]
     fn old_layout_reads_every_folder_1_21_renamed() {
         let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
