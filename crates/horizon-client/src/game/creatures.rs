@@ -4268,11 +4268,17 @@ impl Game<'_> {
         // DamageSource.scalesWithDifficulty: a mob (or its projectile's
         // owner) caused the hit, not a player.
         let living_cause = attacker.or(owner).is_some();
-        // The native damage hook's causing entity: the one given, or the
-        // owner of the projectile that hit (`projectile_owner` outlives a
-        // projectile's other hits), not the guessed melee attacker.
+        // The native damage hook's causing entity: the one given, the mob
+        // whose swing this is (`melee_mob`: a mob's attack names it, as its
+        // `DamageSource.getEntity`), or the owner of the projectile that hit
+        // (`projectile_owner` outlives a projectile's other hits), not the
+        // guessed melee attacker.
         let owner = owner.filter(|_| projectile);
-        let causing = known.flatten().or(owner).map_or(0, |id| id as i32);
+        let causing = known
+            .flatten()
+            .or(melee)
+            .or(owner)
+            .map_or(0, |id| id as i32);
         let mut outcome = horizon_client::health::BlockOutcome::default();
         // The hit's own push, held back until after the shield's (`hurtServer`
         // runs `applyItemBlocking` before `dealDefaultKnockback`).
