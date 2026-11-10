@@ -114,6 +114,16 @@ API, not executable particle data in a resource pack.
 Resource reload discards controlled particles and their pending instances, so
 their numeric sprite-set handles cannot refer to a different reloaded set.
 
+API 417 adds what a mod's own particle needs to look like the original's (Botania's wisps and
+sparkles): `set_additive(true)` draws it in the additive pass (source alpha, one, no depth
+writes, fog over its colour), the blend of a Polytone `additive_translucent` particle;
+`set_physics(false)` lets it move through blocks (`hasPhysics`); `set_box_size(width, height)`
+is `setSize`, its collision box (0.2 by 0.2 when created); `move_colliding(level, delta)` is
+vanilla's `Particle.move`: it moves against the blocks' collision shapes, sets `on_ground`, zeroes
+a horizontal velocity a block stopped, and leaves the particle where it is from the tick a block
+first stops its fall. Server-sent effects reach a mod's client half as mod messages (API 40), which
+spawns its controlled particles from `native_net_from_server`. Bundles need `"hooks": 417`.
+
 ## Pinned to a Nightly
 
 A native mod builds on one exact Horizon commit: `[compatibility] horizon_revision` in its `horizon-mixin.toml`,
@@ -1834,6 +1844,8 @@ letting go shows them all on one frame ([Holding the world's picture](#holding-t
 API 415 adds a world warp through `native_world_warp`: once a frame a client mod may give WGSL (`world_warp(pos, section) -> Warped`, and optionally `world_fragment(f) -> Painted` after a line `// [fragments]`) that every terrain vertex, far terrain's tiles included, and entity vertex goes through, with sixteen floats it reads as `warp.params`. While it is on the frame culls nothing by where it was. A frame without one costs nothing more ([World warps](#world-warps)). Bundles need "hooks": 415.
 
 API 416 adds `native_armor_stand_layer(stand, parts, draw)` and `native_player_preview_layer(player, parts, draw)`: a layer on every armour stand in view, which `native_mob_layer` never sees, and on the player the inventory draws, each after its model and layers, in a frame at its feet turned with its body. `NativeArmorStandRender` has the stand's id, `small`, `invisible`, the partial tick, `body_yaw` and its six `equipment` slots; the doll has its `NativeMobRender`, its faces show from both sides and are lit for the screen. `parts.place(name, draw)` (`NativeModelParts`) moves `draw` onto a humanoid part where it is drawn this frame, the stand's posed like it, so a layer's `ModelPart` follows as vanilla armour does ([Mobs drawn by a mod](#mobs-drawn-by-a-mod)). Bundles need "hooks": 416.
+
+API 417 adds `Particle::set_additive`, `set_physics`, `set_box_size` and `move_colliding` to compiled particle controllers: additive blending, moving through blocks or against them, and the collision box ([Compiled particle controllers](#compiled-particle-controllers)). Bundles need "hooks": 417.
 
 ## What the launcher does
 

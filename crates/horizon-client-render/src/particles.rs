@@ -930,6 +930,25 @@ impl Particle {
             Light::World
         };
     }
+    /// Drawn in the additive pass (source alpha, one, no depth writes), as a Polytone
+    /// `additive_translucent` particle and Botania's wisps and sparkles are. API 417.
+    pub fn set_additive(&mut self, additive: bool) {
+        self.additive = additive;
+    }
+    /// `Particle.hasPhysics`: false moves through blocks. True when created. API 417.
+    pub fn set_physics(&mut self, physics: bool) {
+        self.has_physics = physics;
+    }
+    /// `Particle.setSize`: the collision box, 0.2 by 0.2 when created, kept centred. API 417.
+    pub fn set_box_size(&mut self, width: f32, height: f32) {
+        self.set_size(width, height);
+    }
+    /// `Particle.move`: moves by `delta` against the blocks' collision shapes (unless physics is
+    /// off), sets `on_ground`, stops a horizontal velocity a block stopped, and stays put from
+    /// the tick a block first stops a fall. API 417.
+    pub fn move_colliding(&mut self, level: &ParticleLevel, delta: [f64; 3]) {
+        self.move_by(level, delta);
+    }
     /// `Particle(level, x, y, z, xa, ya, za)`: jittered, normalized initial velocity.
     fn moving(random: &mut LegacyRandom, ty: ParticleType, p: [f64; 3], v: [f64; 3]) -> Self {
         let mut particle = Self::base_moving(random, ty, p, v);
