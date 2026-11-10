@@ -208,6 +208,39 @@ been played on a phone yet.
   - for the rings: `botania_tools::area_rings` (what Thor and Temperance change, none yet),
     `botania_weapons::pick_break_other` (the Shatterer's area from a block and face) and
     `botania_tools::terra_axe_break_other` (a felling from a block, with its range).
+- Ender Air and pixies (`[[module]] botania_entities`, `bundle/entities.rs`; rules in
+  `botania-core` `entities`; hooks `use_item`, `dispense_item`, `entity_join_level`,
+  `level_tick_post`, `hears_projectile_impacts`, `projectile_impact`, `living_incoming_damage`,
+  `attack_entity`, `player_tick`, `entity_tick_listened`, `entity_tick_pre`, `interact_entity`,
+  `tick`, `mob_submit`; content `function/ender_air_release.mcfunction`,
+  `horizon/entity_type/ender_air_bottle.json` and `pixie.json`, the pixie textures):
+  - Ender Air (`EnderAirEntity`): Horizon has no plain entity type for content, so a cloud is a
+    `minecraft:marker` tagged `botania.ender_air`, which `botania:ender_air_release` summons. The
+    Pure Daisy runs a recipe's `success_function` at the turned block's bottom centre
+    (`PureDaisyRecipe.set`), so end stone leaves a cloud a block up. A cloud keeps its age in
+    `data.Age`, shows `entity_effect` particles (0x000008) on about half its ticks and is
+    discarded after 60 ticks;
+  - bottling (`EnderAirItem.onPlayerInteract`): a glass bottle used with a cloud inside the
+    player's box grown by 1, or in the End with no dragon's breath within 3.5 and no fluid in
+    reach, becomes a Bottle of Ender Air. The glass bottle is used up even in creative, with
+    `entity.item.pickup` and the `fluid_pickup` game event. Dispensers do the same in front of
+    them (`EnderAirBottlingBehavior`) and otherwise act as vanilla's;
+  - the thrown bottle (`EnderAirBottleEntity`, thrown type `botania:ender_air_bottle`): thrown at
+    1.5 with Botania's `ender_air_throw` sound, dispensed at 1.1 with spread 6. On a block it
+    splashes (2002, 0xFF000008, and 1053), and up to 64 shuffled `#botania:ender_air_convertable`
+    blocks within ±4 turn to end stone, a tenth of them with block-break particles. An Overworld
+    ghast it hits cries (the `botania:ghast_ender_air_crying` loot, thrown along its look);
+    another entity converts the blocks around its feet;
+  - pixies (`PixieEntity`, `PixieHandler`; living type `botania:pixie` on the wandering trader's
+    class, 2 health, no gravity, Botania's 1 x 1 box): a player hurt by a living entity gets
+    one 2 blocks up. The chance adds up the worn elementium pieces (0.11, 0.17, 0.15, 0.09), an
+    elementium sword in the main hand (0.05) and a Great Fairy Ring (0.25). A pixie deals 4
+    damage, or 6 with the sword in either hand, and with the full set adds blindness, wither,
+    slowness or weakness. It flies at its target as `customServerAiStep` steers it, strikes
+    within a block, is gone after 200 ticks, can't be hurt by its summoner, and trails Botania's
+    sparkles (4 a tick, 12 big ones as it goes). Drawn with `PixieModel` (32 x 32, flapping
+    wings), with the Halloween texture in October. `botania_entities::spawn_pixie` is there for
+    the rings and Gaia.
 - `content/`: 55 corrected block declarations and the 16 mystical flower patches with
   `minecraft:simple_block` for the content `.hmod` (see README). The local
   `.local/modports/botania/botania-1.20.1-456-content.hmod` has both applied (sha256
@@ -252,6 +285,14 @@ been played on a phone yet.
   sizes by age, sprite frames, the sparkle's wiggle, the trail's spacing, sizes and dark-colour
   lift, the death's four wisps, pool and flower chances, the charging parabola's ends, the beam's
   rainbow, the bolt's segments and its growing and fading window, the records' wire form).
+- With Ender Air and pixies: 126 passed, 0 failed (15 of them `entities`). Expected values
+  worked out by hand from `EnderAirItem`, `EnderAirBottleEntity`, `EnderAirEntity`,
+  `PixieEntity`, `PixieHandler`, `PixieModel` and `PixieRenderer`: the reach boxes, the End's
+  conditions, the throw's pitch, the 9 x 9 x 9 area in `BlockPos.betweenClosed` order,
+  `Collections.shuffle`'s swaps for fixed draws and the cut to 64, the ghast's dimension, the spawn chances by
+  piece, sword and ring, damage and the set's effects, the flight's speed near and far, the
+  strike distance, lifetimes, invulnerability, the wings' turns, the sparkles' sizes and
+  colours, the October texture.
 - With the remaining tools: 94 passed, 0 failed (8 of them `tools`). Expected values worked out
   by hand from Botania's code and `java.util.PriorityQueue`'s heap: the order candidates leave
   the queue, a 12-log trunk felled 9 then 3 blocks a tick and done on the third, leaves 3 steps
@@ -409,7 +450,7 @@ Found and fixed during the test:
     (`canReceiveManaFromPool`, `canExportManaToPool`, `mana_item`); `rank_ss_pick` isn't granted;
   - Unbreaking rolls once: the mana pays the wear left after vanilla's roll (see the mana items'
     approximations);
-  - not ported: the sword's pixies, the rings (Thor, temperance, Loki), the manasteel and
+  - not ported: the rings (Thor, temperance, Loki), the manasteel and
     elementium pickaxe and axe placing torches and saplings from the inventory (`useOn`).
 - The remaining tools (`bundle/tools.rs`), against Botania; none of it played yet:
   - beheading: a player killed with the axe drops no head (where its drops are heard, its killer
@@ -421,7 +462,7 @@ Found and fixed during the test:
     at the break; a dropped Truncator keeps the model it had when carried;
   - item models: the flags live in `minecraft:custom_model_data`, which a pack or `/give` with
     its own model data would override.
-- Mana items, not ported: elementium armour's pixies (no pixie entity), manaweave's rod
+- Mana items, not ported: manaweave's rod
   proficiency (no rods), the manaweave boots' powder snow walking, accessories (Horizon has no
   accessory inventory: a band works from the inventory only), bellows (pools charge at 1000), the
   ring recipes carrying the tablet's mana (`botania:mana_upgrade`: the crafting grid isn't
@@ -430,9 +471,21 @@ Found and fixed during the test:
   is paid in full (Botania rolls its own Unbreaking first: the same mana on average for tools,
   slightly more for armour); `stackInSlot == stack` is matched by value; a Mana Mirror bound to a
   pool in another dimension or an unloaded chunk is left as it is (Botania loads the chunk).
-- Ender air: the function `botania:ender_air_release` doesn't load (no `botania:ender_air`
-  entity, which the Pure Daisy leaves when it turns end stone and a glass bottle picks up), and
-  no ender air bottles outside the End.
+- Ender Air and pixies (`bundle/entities.rs`), not played yet; against Botania:
+  - a cloud is a marker, so `/summon botania:ender_air` doesn't exist and the cloud has no
+    entity type of its own on the network; its particles come from the server;
+  - the thrown bottle's ghast tears get no item particles; the `isClearFromDragonBreath` check
+    counts any area cloud without a potion as breath;
+  - pixies are wandering traders underneath: a trader's shadow, and mobs that target traders
+    (zombies) may go after them; a right click on one swings the hand; a client without the
+    bundle draws a wandering trader;
+  - a hit is noted at `living_incoming_damage`, so a hit absorbed by the hurt cooldown can bring
+    a pixie too; the Great Fairy Ring counts anywhere in the inventory (no accessory slots);
+  - a player summoner's own blows and shots are turned away where they start (melee and
+    projectiles), other damage they cause reaches the pixie;
+  - the item tooltips' "Pixie Spawn Chance" attribute line isn't shown; Gaia's and Bottled
+    Mana's pixies aren't ported (`spawn_pixie` is ready for them); the window doesn't know a
+    dark pixie from a plain one (only Gaia makes those).
 - Botania's own particles (`bundle/particles.rs`): not seen in game yet. They need an engine with
   hook points API 417 (branch `engine-tinted-particles`): on an older one the bundle doesn't
   build. Against Botania: the Thundercaller's bolt is a line of glowing wisp-sprite dots per

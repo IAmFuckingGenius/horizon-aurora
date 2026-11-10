@@ -5,6 +5,7 @@
 //! summoned, how it flies and strikes, how long it lives and how it is drawn.
 
 use crate::armor_model::{self, Cube, Part};
+use crate::fx::Sparkle;
 use crate::mth;
 
 pub const ENDER_AIR_BOTTLE: &str = "botania:ender_air_bottle";
@@ -277,25 +278,29 @@ pub fn pixie_invulnerable(dark: bool, from_summoner: bool, from_player: bool) ->
     if dark { !from_player } else { from_summoner }
 }
 
-/// The colour of a pixie's sparkles: pink, a dark pixie's nearly black.
-pub fn sparkle_rgb(dark: bool) -> [f32; 3] {
-    if dark {
+/// `PixieEntity.baseTick` on a client: four sparkles a tick.
+pub const SPARKLES_PER_TICK: usize = 4;
+/// `PixieEntity.remove` on a client: twelve sparkles where a summoned pixie goes.
+pub const SPARKLES_ON_REMOVAL: usize = 12;
+
+/// One of a pixie's sparkles from four `Math.random()` draws in Botania's order: its size, then
+/// its offsets on x, y and z. A sparkle of its trail (`baseTick`) is 0.1 to 0.35 big and lives 36
+/// ticks, pink or, for a dark pixie, nearly black; one of its parting burst (`remove`) is 1 to
+/// 1.25 big, pink, and lives 15. Both start within 0.125 of the point half a block over its feet.
+pub fn pixie_sparkle(feet: [f64; 3], dark: bool, parting: bool, r: [f64; 4]) -> Sparkle {
+    let (base, m) = if parting { (1.0, 5) } else { (0.1, 12) };
+    let rgb = if dark && !parting {
         [0.1, 0.025, 0.09]
     } else {
         [1.0, 0.25, 0.9]
-    }
-}
-
-/// `PixieEntity.baseTick` on a client: four sparkles a tick, 0.1 to 0.35 in size, half a block
-/// up, within 0.125 of the middle.
-pub const SPARKLES_PER_TICK: usize = 4;
-/// `PixieEntity.remove` on a client: twelve sparkles, 1 to 1.25 in size, where a pixie goes.
-pub const SPARKLES_ON_REMOVAL: usize = 12;
-
-/// A dust particle as big as a Botania sparkle of `size`: a sparkle's quad is `0.2 * size` (by
-/// the same random factor), a dust particle's `0.15 * scale`.
-pub fn sparkle_dust_scale(size: f32) -> f32 {
-    size / 0.75
+    };
+    let size = base + r[0] as f32 * 0.25;
+    let pos = [
+        feet[0] + (r[1] - 0.5) * 0.25,
+        feet[1] + 0.5 + (r[2] - 0.5) * 0.25,
+        feet[2] + (r[3] - 0.5) * 0.25,
+    ];
+    Sparkle::new(pos, size, rgb, m)
 }
 
 // ---- the pixie model ----------------------------------------------------------------------------
@@ -361,13 +366,13 @@ pub fn wing_turns(age: f32) -> [(&'static str, f32); 4] {
 }
 
 /// `PixieRenderer.getTextureLocation`: Botania's `textures/model/pixie.png`, which the content mod
-/// also carries under `textures/entity/` so the game's atlas packs it, by its atlas name; the
-/// Halloween one while `dootDoot`.
+/// also carries under `textures/entity/model/` so the game's atlas packs it, by its atlas name;
+/// the Halloween one while `dootDoot`.
 pub fn pixie_texture(halloween: bool) -> &'static str {
     if halloween {
-        "botania:entity/pixie_halloween"
+        "botania:entity/model/pixie_halloween"
     } else {
-        "botania:entity/pixie"
+        "botania:entity/model/pixie"
     }
 }
 
@@ -581,6 +586,17 @@ mod tests {
     }
 
     #[test]
+    fn a_pixie_trails_small_sparkles_and_parts_in_big_ones() {
+        let s = pixie_sparkle([0.0, 64.0, 0.0], false, false, [0.0, 0.0, 0.5, 1.0]);
+        assert_eq!(s.pos, [-0.125, 64.5, 0.125]);
+        assert_eq!((s.size, s.m, s.rgb), (0.1, 12, [1.0, 0.25, 0.9]));
+        let s = pixie_sparkle([0.0, 64.0, 0.0], true, false, [1.0, 0.5, 0.5, 0.5]);
+        assert_eq!((s.size, s.m, s.rgb), (0.35, 12, [0.1, 0.025, 0.09]));
+        let s = pixie_sparkle([0.0, 64.0, 0.0], true, true, [1.0, 0.5, 0.5, 0.5]);
+        assert_eq!((s.size, s.m, s.rgb), (1.25, 5, [1.0, 0.25, 0.9]));
+    }
+
+    #[test]
     fn the_throw_sound_is_pitched_by_the_players_random() {
         assert_eq!(throw_pitch(0.0), 0.5);
         assert_eq!(throw_pitch(0.5), 0.4000000059604645);
@@ -594,6 +610,6 @@ mod tests {
         assert!(doot_doot(20_757)); // 2026-10-31
         assert!(!doot_doot(20_758)); // 2026-11-01
         assert!(doot_doot(20_011)); // 2024-10-15
-        assert_eq!(pixie_texture(true), "botania:entity/pixie_halloween");
+        assert_eq!(pixie_texture(true), "botania:entity/model/pixie_halloween");
     }
 }
