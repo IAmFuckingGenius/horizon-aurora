@@ -269,7 +269,6 @@ pub(super) fn temperance_active(game: &Game<'_>) -> bool {
 
 // `RingOfThorItem.getThorRing`: the acting player carries a Ring of Thor bound to them. For the
 // Terra Shatterer's and the Terra Truncator's areas (the tools' module).
-#[allow(dead_code, reason = "for the tools' areas")]
 pub(super) fn thor_ring(game: &Game<'_>) -> bool {
     let Some(player) = game.native_acting_player() else {
         return false;
@@ -1179,8 +1178,12 @@ fn loki_place(game: &mut Game<'_>, uuid: u128, ring: &ItemStack, pos: [i32; 3], 
 }
 
 // `RingOfLokiItem.breakOnAllCursors`: a sneaking player who breaks the block they look at with the
-// Terra Shatterer or the Terra Truncator breaks the same on every cursor around it (the tool's own
-// area around each follows from its own hook).
+// Terra Shatterer or the Terra Truncator breaks the same on every cursor around it. Botania calls
+// the tool's `breakOtherBlock` on each cursor, then breaks the cursor's block: here breaking it
+// as the player runs the tools' own `destroy_block` hooks on it, which are that call
+// (`botania_weapons::pick_break_other` with the origin's face,
+// `botania_tools::terra_axe_break_other`, which a sneaking player never fells with), so calling
+// them here too would break each area twice.
 pub(super) fn destroy_block(
     game: &mut Game<'_>,
     pos: [i32; 3],
