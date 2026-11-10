@@ -6,6 +6,9 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 417 adds additive blending, physics, a collision box and colliding moves to compiled particle
+//! controllers (`Particle::set_additive`, `set_physics`, `set_box_size`, `move_colliding`).
+//!
 //! API 416 adds layers on armour stands and on the player drawn in the inventory (`native_armor_stand_layer`,
 //! `native_player_preview_layer`), with where their parts are drawn (`NativeModelParts`).
 //!
@@ -1088,7 +1091,7 @@ pub(super) use horizon_world::level::flags;
 
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
-pub(crate) const NATIVE_HOOKS_API: u32 = 416;
+pub(crate) const NATIVE_HOOKS_API: u32 = 417;
 
 impl GameLevel<'_> {
     /// A crop, stem, cactus, sugar cane, bamboo, mushroom or vine on an

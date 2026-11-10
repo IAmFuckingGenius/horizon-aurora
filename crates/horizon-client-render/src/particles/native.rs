@@ -164,6 +164,30 @@ mod tests {
         assert_eq!(p.position, [3.0, 0.0, 0.0]);
     }
     #[test]
+    fn an_additive_controlled_particle_draws_in_the_additive_pass() {
+        let mut e = engine();
+        let mut p = e
+            .controlled("example:orbit", [0.0; 3], true, Moving(0))
+            .unwrap();
+        p.size = 0.1;
+        p.set_additive(true);
+        e.particles.push(p);
+        let mut vertices = Vec::new();
+        e.render(DVec3::ZERO, 0.0, 0.0, 0.5, &|_| 0, &mut vertices);
+        assert!(vertices.is_empty());
+        let additive = e.take_additive();
+        assert_eq!(additive.len(), 4);
+        assert!(
+            additive
+                .iter()
+                .all(|v| v.layer & 0xffff == crate::gfx::ADDITIVE_PARTICLE_OVERLAY)
+        );
+        e.particles[0].set_additive(false);
+        e.render(DVec3::ZERO, 0.0, 0.0, 0.5, &|_| 0, &mut vertices);
+        assert_eq!(vertices.len(), 4);
+        assert!(e.take_additive().is_empty());
+    }
+    #[test]
     fn controlled_spawn_respects_distance_settings_and_declared_sprite_sets() {
         let mut e = engine();
         assert!(
