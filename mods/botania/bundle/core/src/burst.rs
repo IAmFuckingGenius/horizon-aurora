@@ -423,6 +423,15 @@ pub fn aim_at(spreader: [i32; 3], target: Aabb) -> (f32, f32) {
     (rotation_x, angle as f32)
 }
 
+/// The port's burst trail, which the server draws as vanilla dust because a mod particle carries
+/// no colour or size (engine gap G2): Botania's subtle mode, one wisp a tick where the burst is,
+/// sized by the mana it has left (`ManaBurstEntity.particles`: `size = mana / startingMana`). The
+/// dust's scale, within vanilla's `0.01..=4`.
+pub fn trail_scale(mana: i32, starting_mana: i32) -> f32 {
+    let left = (mana as f32 / starting_mana.max(1) as f32).clamp(0.0, 1.0);
+    0.35 + 0.65 * left
+}
+
 /// `ManaSpreaderBlock.setPlacedBy`: a placed spreader faces the player (the opposite of the side
 /// the player faces most), as `rotationX`/`rotationY`.
 pub fn placed_rotation(player_yaw: f32, player_pitch: f32) -> (f32, f32) {
@@ -624,6 +633,16 @@ mod tests {
             assert_eq!(fake.tick(&level).delivered, None);
         }
         assert_eq!(fake.collided, Some([1, 0, 0]));
+    }
+
+    #[test]
+    fn the_trail_shrinks_as_the_burst_loses_mana() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        assert!(near(trail_scale(160, 160), 1.0));
+        assert!(near(trail_scale(80, 160), 0.675));
+        assert!(near(trail_scale(0, 160), 0.35));
+        assert!(near(trail_scale(-4, 160), 0.35));
+        assert!(near(trail_scale(5, 0), 1.0));
     }
 
     #[test]

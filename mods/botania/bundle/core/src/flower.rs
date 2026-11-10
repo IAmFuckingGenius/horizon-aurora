@@ -270,6 +270,58 @@ mod tests {
         assert_eq!(h.binding, Some([4, 64, 0]));
     }
 
+    /// The six blocks `distance` away from `center` along the axes
+    /// (`BindingTest.placeAxialFlowers`).
+    fn axial(center: [i32; 3], distance: i32) -> Vec<[i32; 3]> {
+        let [x, y, z] = center;
+        vec![
+            [x, y - distance, z],
+            [x, y + distance, z],
+            [x, y, z - distance],
+            [x, y, z + distance],
+            [x - distance, y, z],
+            [x + distance, y, z],
+        ]
+    }
+
+    #[test]
+    fn botanias_binding_gametests() {
+        // BindingTest.generatingFlowerAutoBindTest: a spreader in the middle of the arena;
+        // generating flowers six blocks away along each axis bind to it on their first tick,
+        // seven away don't.
+        let middle = [16, 16, 16];
+        let mut t = Targets::default();
+        t.0.insert(middle, Pool::new(crate::consts::PoolVariant::Default));
+        for pos in axial(middle, GENERATING_LINK_RANGE) {
+            let mut f = Generating::default();
+            f.tick(pos, GENERATING_LINK_RANGE, &mut t);
+            assert_eq!(f.binding, Some(middle), "{pos:?}");
+        }
+        for pos in axial(middle, GENERATING_LINK_RANGE + 1) {
+            let mut f = Generating::default();
+            f.tick(pos, GENERATING_LINK_RANGE, &mut t);
+            assert_eq!(f.binding, None, "{pos:?}");
+        }
+        // generatingFlowerManualBindTest: flowers placed first don't bind; the wand binds the
+        // close ones (`bindTo` checks `wouldBeValidBinding`) and refuses the far ones.
+        for (distance, binds) in [(6, true), (7, false)] {
+            for pos in axial(middle, distance) {
+                assert_eq!(
+                    Generating::would_be_valid(pos, Some(middle), GENERATING_LINK_RANGE, &t),
+                    binds,
+                    "{pos:?}"
+                );
+            }
+        }
+        // Only a target there counts.
+        assert!(!Generating::would_be_valid(
+            [16, 16, 20],
+            Some([16, 16, 18]),
+            GENERATING_LINK_RANGE,
+            &t
+        ));
+    }
+
     #[test]
     fn mana_moves_to_the_target_each_tick_up_to_its_room() {
         let mut t = Targets::default();

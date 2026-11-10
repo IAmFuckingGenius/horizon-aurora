@@ -7,9 +7,9 @@
 // Inner attributes and `//!` comments are not allowed in a horizon-mixins module payload.
 
 use super::{Game, GameLevel};
-use botania_core::apothecary::{Apothecary, Collide, Fluid, Thrown};
+use botania_core::apothecary::{self, AltarUse, Apothecary, Collide, Fluid, Thrown};
 use botania_core::burst::{self, Aabb, Burst, BurstWorld};
-use botania_core::consts::{PoolVariant, SpreaderVariant};
+use botania_core::consts::{GENERATING_LINK_RANGE, PoolVariant, SpreaderVariant};
 use botania_core::daisy::PureDaisy;
 use botania_core::flower::{self, Collectors, Endoflame, Fuel, Generating};
 use botania_core::pool::{self, Pool};
@@ -17,8 +17,12 @@ use botania_core::recipe::{
     BlockState as RecipeState, InfusionRecipe, Ingredient, PetalRecipe, PureDaisyRecipe,
     infusion_pick,
 };
+use botania_core::wand::{self, UseOn, Wandable};
 use horizon_client::containers::{BlockEntity, ModBlockEntity, ModContainer};
+use horizon_client::first_person::Hand;
 use horizon_client::items::ItemStack;
+use horizon_client::particles::{ParticleOptions, ParticleType};
+use horizon_client::text::Text;
 use horizon_world::nbt::{Compound, JavaString, Tag};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
@@ -27,8 +31,9 @@ pub(super) const ID: &str = "botania";
 pub(super) const NAME: &str = "Botania";
 pub(super) const VERSION: &str = "0.1.0";
 pub(super) const DESCRIPTION: &str = "A port of Vazkii's Botania 1.20.1 mechanics (work in progress): mana pools, \
-     mana infusion, the Endoflame, the Petal Apothecary, the Pure Daisy and mana spreaders \
-     shooting bursts. Needs the Botania content mod. Botania License; not made or endorsed by Vazkii.";
+     mana infusion, the Endoflame feeding mana spreaders, spreaders shooting bursts into pools, \
+     the Wand of the Forest, the Petal Apothecary and the Pure Daisy. Needs the Botania content \
+     mod. Botania License; not made or endorsed by Vazkii.";
 
 // Block entity ids, as Botania names its block entity types.
 const POOL: &str = "botania:mana_pool";
@@ -73,6 +78,10 @@ struct State {
     bursts: Vec<Flying>,
     // Rotations of spreaders just placed, for their first tick.
     placed: HashMap<(&'static str, [i32; 3]), (f32, f32)>,
+    // Item entities burning in a lava apothecary: the ticks they have touched it.
+    burning: HashMap<u32, i32>,
+    // The particles' own random numbers (Botania's client draws them with `Math.random`).
+    rng: u64,
 }
 
 // What a spreader keeps outside its NBT: its receiver (the scan's result; Botania doesn't save
@@ -92,6 +101,8 @@ struct Flying {
     burst: Burst,
     // Shot during this tick's block entity ticks: it first moves next tick.
     fresh: bool,
+    // The trail's colour (`BurstProperties.color`), 0xRRGGBB.
+    color: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -383,12 +394,13 @@ fn infusion_recipes(game: &Game<'_>) -> Arc<Vec<InfusionRecipe>> {
 // Forgets flagged item entities that are gone, so the sets stay small.
 fn prune_flags(game: &Game<'_>) {
     let mut s = state();
-    if s.spawned.len() + s.infused.len() < 4096 {
+    if s.spawned.len() + s.infused.len() + s.burning.len() < 4096 {
         return;
     }
     let alive: HashSet<u32> = game.dropped.iter().map(|e| e.id).collect();
     s.spawned.retain(|id| alive.contains(id));
     s.infused.retain(|id| alive.contains(id));
+    s.burning.retain(|id, _| alive.contains(id));
 }
 
 // `ManaPoolBlockEntity.collideEntityItem` for the item entities in the pool's cell (what
@@ -519,50 +531,81 @@ fn state_level(at: [i32; 3]) -> Option<i32> {
 
 // ---- generating flowers -------------------------------------------------------------------------
 
-// What a generating flower binds to. Botania binds generating flowers to mana collectors (the
-// spreaders); until spreaders and bursts are ported, this port binds them to the nearest pool
-// in the same range (6), so their mana has somewhere to go. Marked in STATUS.md.
-struct PoolTargets<'a, 'g> {
-    game: &'a mut Game<'g>,
-    dim: &'static str,
+// A mana receiver that takes bursts at `pos`, a pool or a spreader (`ManaReceiver` with
+// `canReceiveManaFromBursts`): its current and maximum mana and whether it is full.
+fn receiver_status(game: &Game<'_>, pos: [i32; 3]) -> Option<(i32, i32, bool)> {
+    if !game.world.loaded(pos[0], pos[2]) {
+        return None;
+    }
+    let m = game.native_mod_block_entity(pos)?;
+    let block = game.native_block(pos);
+    if m.id == POOL {
+        let p = pool_of(&m.nbt, &block);
+        Some((p.current(), p.cap, p.is_full(mana_void_below(game, pos))))
+    } else if m.id == SPREADER {
+        let cap = SpreaderVariant::of_block(&block)?.stats().capacity;
+        let mana = get_int(&m.nbt, "mana").unwrap_or(0).clamp(0, cap);
+        Some((mana, cap, mana >= cap))
+    } else {
+        None
+    }
 }
 
-impl Collectors for PoolTargets<'_, '_> {
-    fn is_target(&self, pos: [i32; 3]) -> bool {
-        is_pool(self.game, pos)
-    }
-
-    fn closest(&self, pos: [i32; 3], radius: i32) -> Option<[i32; 3]> {
-        let mut known: Vec<[i32; 3]> = state()
-            .pools
-            .keys()
-            .filter(|(d, _)| *d == self.dim)
-            .map(|(_, p)| *p)
-            .collect();
-        known.sort();
-        let live: Vec<[i32; 3]> = known.into_iter().filter(|p| self.is_target(*p)).collect();
-        flower::closest(live, pos, radius)
-    }
-
-    fn status(&mut self, pos: [i32; 3]) -> Option<(i32, i32, bool)> {
-        let block = self.game.native_block(pos);
-        let void = mana_void_below(self.game, pos);
-        let m = self.game.native_mod_block_entity(pos)?;
-        if m.id != POOL {
-            return None;
-        }
-        let p = pool_of(&m.nbt, &block);
-        Some((p.current(), p.cap, p.is_full(void)))
-    }
-
-    fn give(&mut self, pos: [i32; 3], mana: i32) {
-        let block = self.game.native_block(pos);
-        self.game.native_with_mod_block_entity(pos, |m| {
+// `receiveMana` on the pool or spreader at `pos`; what doesn't fit is lost.
+fn receive_mana(game: &mut Game<'_>, pos: [i32; 3], mana: i32) {
+    let block = game.native_block(pos);
+    let spreader_cap = SpreaderVariant::of_block(&block).map(|v| v.stats().capacity);
+    game.native_with_mod_block_entity(pos, |m| {
+        if m.id == POOL {
             let mut p = pool_of(&m.nbt, &block);
             if p.receive(mana) {
                 set_int(m, "mana", p.mana);
             }
-        });
+        } else if m.id == SPREADER
+            && let Some(cap) = spreader_cap
+        {
+            let have = get_int(&m.nbt, "mana").unwrap_or(0);
+            set_int(m, "mana", have.saturating_add(mana).clamp(0, cap));
+        }
+    });
+}
+
+// What a generating flower binds to and empties its mana into: the mana collectors, which are
+// the spreaders (`GeneratingFlowerBlockEntity`, `ManaCollector`). Botania finds the nearest in
+// its mana network; the port looks at the block entities within the flower's range.
+struct SpreaderTargets<'a, 'g> {
+    game: &'a mut Game<'g>,
+}
+
+impl Collectors for SpreaderTargets<'_, '_> {
+    fn is_target(&self, pos: [i32; 3]) -> bool {
+        is_spreader(self.game, pos)
+    }
+
+    fn closest(&self, pos: [i32; 3], radius: i32) -> Option<[i32; 3]> {
+        let mut found = Vec::new();
+        for dx in -radius..=radius {
+            for dy in -radius..=radius {
+                for dz in -radius..=radius {
+                    let at = [pos[0] + dx, pos[1] + dy, pos[2] + dz];
+                    if is_spreader(self.game, at) {
+                        found.push(at);
+                    }
+                }
+            }
+        }
+        flower::closest(found, pos, radius)
+    }
+
+    fn status(&mut self, pos: [i32; 3]) -> Option<(i32, i32, bool)> {
+        if !is_spreader(self.game, pos) {
+            return None;
+        }
+        receiver_status(self.game, pos)
+    }
+
+    fn give(&mut self, pos: [i32; 3], mana: i32) {
+        receive_mana(self.game, pos, mana);
     }
 }
 
@@ -611,6 +654,13 @@ fn endoflame_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntit
         flower: generating_of(&entity.nbt),
         burn_time: get_int(&entity.nbt, "burnTime").unwrap_or(0),
     };
+    // A flower bound to a pool by this port before spreaders existed binds again, once.
+    if let Some(b) = e.flower.binding
+        && is_pool(game, b)
+    {
+        e.flower.binding = None;
+        e.flower.ticks_existed = 0;
+    }
     let soil = flower::soil_delay(&game.native_block([pos[0], pos[1] - 1, pos[2]]));
     // The 7×7×7 box around it (`AABB(pos - 3, pos + 4)`), only on ticks it may light something.
     let r = botania_core::consts::ENDOFLAME_RANGE;
@@ -643,11 +693,12 @@ fn endoflame_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntit
         .collect();
     let was = (e.flower.binding, e.burn_time > 0);
     let result = {
-        let mut targets = PoolTargets { game, dim };
+        let mut targets = SpreaderTargets { game };
         e.tick(pos, &mut targets, &fuels, soil)
     };
     save_generating(entity, &e.flower);
     set_int(entity, "burnTime", e.burn_time);
+    let mut fx = Vec::new();
     if let Some(i) = result.lit {
         let item = &items[i];
         let mut stack = item.stack.clone();
@@ -659,7 +710,30 @@ fn endoflame_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntit
             f64::from(pos[2]) + 0.5,
         ];
         game.native_play_sound_in_place("botania:endoflame", at, 4, 1.0, 1.0);
+        // `START_BURN_EVENT`: smoke and a flame where the item was.
+        let p = item.position;
+        fx.push((
+            ParticleOptions::simple(ParticleType::LargeSmoke),
+            [p[0], p[1] + 0.1, p[2]],
+            [0.0; 3],
+            1,
+        ));
+        fx.push((ParticleOptions::simple(ParticleType::Flame), p, [0.0; 3], 1));
+    } else if e.burn_time > 0 && random_below(10) == 0 {
+        // The client's flame while it burns, one tick in ten.
+        let at = [
+            f64::from(pos[0]) + 0.4 + random_unit() * 0.2,
+            f64::from(pos[1]) + 0.7,
+            f64::from(pos[2]) + 0.4 + random_unit() * 0.2,
+        ];
+        fx.push((
+            ParticleOptions::simple(ParticleType::Flame),
+            at,
+            [0.0; 3],
+            1,
+        ));
     }
+    send_particles(game, &fx);
     if result.lit.is_some() || result.rebound || was != (e.flower.binding, e.burn_time > 0) {
         game.native_block_entity_sync(pos);
     }
@@ -688,8 +762,8 @@ fn is_air(name: &str) -> bool {
 }
 
 // The fluid an item gives up into an empty apothecary (`extractFluidFromItemEntity`), and
-// whether it is a fluid container at all (`isFluidContainer`). Fish buckets count as water;
-// their fish isn't released yet.
+// whether it is a fluid container at all (`isFluidContainer`). Fish buckets count as water and
+// release their fish.
 fn bucket_fluid(item: &str) -> (Option<Fluid>, bool) {
     match item {
         "minecraft:water_bucket" => (Some(Fluid::Water), true),
@@ -821,11 +895,49 @@ fn apothecary_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEnti
         f64::from(pos[2]) + 0.5,
     ];
     let mut changed = false;
+    let mut burnt = Vec::new();
     for (n, c) in actions {
         let e = &items[n];
         match c {
-            Collide::Nothing | Collide::Ignite => {}
+            Collide::Nothing => {}
+            Collide::Ignite => {
+                // `setSecondsOnFire(100)`: the fire burns it up within a few ticks.
+                let ticks = {
+                    let mut s = state();
+                    let t = s.burning.entry(e.id).or_insert(0);
+                    *t += 1;
+                    *t
+                };
+                let resistant = game
+                    .items()
+                    .get(&e.stack.item)
+                    .is_some_and(|i| i.fire_resistant);
+                if apothecary::burnt_up(ticks, resistant) {
+                    game.native_set_item_entity(dim, e.id, ItemStack::new(&e.stack.item, 0));
+                    state().burning.remove(&e.id);
+                    burnt.push((
+                        ParticleOptions::simple(ParticleType::Smoke),
+                        e.position,
+                        [0.1; 3],
+                        4,
+                    ));
+                }
+            }
             Collide::Fill(f) => {
+                // A fish bucket releases its fish above (`MobBucketItem.checkExtraContent`).
+                if let Some(mob) = apothecary::bucket_mob(&e.stack.item) {
+                    let mut nbt = match e
+                        .stack
+                        .data()
+                        .and_then(|d| d.other("minecraft:bucket_entity_data"))
+                    {
+                        Some(Tag::Compound(c)) => c.clone(),
+                        _ => Compound::new(),
+                    };
+                    nbt.insert(key("FromBucket"), Tag::Byte(1));
+                    let at = [center[0], f64::from(pos[1]) + 1.0, center[2]];
+                    game.native_summon(dim, mob, at, nbt);
+                }
                 game.native_set_item_entity(dim, e.id, ItemStack::new("minecraft:bucket", 1));
                 state().spawned.insert(e.id);
                 set_fluid(game, pos, entity, f);
@@ -868,6 +980,7 @@ fn apothecary_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEnti
             }
         }
     }
+    send_particles(game, &burnt);
     a.tick_keep();
     if !has_property {
         let f = a.fluid;
@@ -1006,13 +1119,16 @@ fn set_float(entity: &mut ModBlockEntity, k: &str, v: f32) {
     }
 }
 
+// A spreader's block entity at `pos` (not the one ticking now, which is out of the world).
 fn is_spreader(game: &Game<'_>, pos: [i32; 3]) -> bool {
-    game.native_mod_block_entity(pos)
-        .is_some_and(|m| m.id == SPREADER)
+    matches!(
+        game.world.block_entities.get(&(pos[0], pos[1], pos[2])),
+        Some(BlockEntity::Mod(m)) if m.id == SPREADER
+    )
 }
 
 // What a burst meets in the level: a pool is the slab a burst hits (`*_SHAPE_INTERACT`), any
-// other block its collision shape; leaves are passed; pools take the mana.
+// other block its collision shape; leaves are passed; pools and spreaders take the mana.
 struct GameBursts<'a, 'g> {
     game: &'a Game<'g>,
 }
@@ -1030,7 +1146,7 @@ impl BurstWorld for GameBursts<'_, '_> {
         self.game.items().block_in_tag("minecraft:leaves", &block)
     }
     fn receiver(&self, pos: [i32; 3]) -> bool {
-        is_pool(self.game, pos)
+        is_pool(self.game, pos) || is_spreader(self.game, pos)
     }
 }
 
@@ -1104,12 +1220,9 @@ fn spreader_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity
     } else {
         !powered
     };
-    let receiver_full = receiver.is_some_and(|r| {
-        let b = game.native_block(r);
-        let void = mana_void_below(game, r);
-        game.native_mod_block_entity(r)
-            .is_some_and(|m| pool_of(&m.nbt, &b).is_full(void))
-    });
+    let receiver_full = receiver
+        .and_then(|r| receiver_status(game, r))
+        .is_some_and(|(_, _, full)| full);
     if should
         && (receiver.is_some() || redstone)
         && can_shoot
@@ -1122,14 +1235,21 @@ fn spreader_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity
             dim,
             burst: Burst::from_spreader(pos, rx, ry, &stats, false),
             fresh: true,
+            color: stats.color,
         });
         let at = [
             f64::from(pos[0]) + 0.5,
             f64::from(pos[1]) + 0.5,
             f64::from(pos[2]) + 0.5,
         ];
-        let pitch = 0.7 + 0.3 * ((ticks % 7) as f32 / 7.0);
-        game.native_play_sound_in_place("botania:spreaderfire", at, 4, 0.05, pitch);
+        let pitch = 0.7 + 0.3 * random_unit() as f32;
+        game.native_play_sound_in_place(
+            "botania:spreader_fire",
+            at,
+            4,
+            botania_core::consts::SPREADER_FIRE_VOLUME,
+            pitch,
+        );
     }
     set_int(entity, "mana", mana);
     set_float(entity, "rotationX", rx);
@@ -1163,6 +1283,7 @@ fn move_bursts(game: &mut Game<'_>, dimension: &str) {
     };
     let mut deliveries = Vec::new();
     let mut ended = Vec::new();
+    let mut fx = Vec::new();
     {
         let world = GameBursts { game: &*game };
         for b in mine.iter_mut() {
@@ -1184,20 +1305,23 @@ fn move_bursts(game: &mut Game<'_>, dimension: &str) {
                     deliveries.push(d);
                 }
             }
-            if !b.burst.alive {
+            let rgb = rgb_of(b.color);
+            if b.burst.alive {
+                // The trail: one dust a tick where the burst is (Botania's subtle mode), as big
+                // as the mana it has left.
+                let scale = burst::trail_scale(b.burst.mana, b.burst.starting_mana);
+                fx.push((ParticleOptions::dust(rgb, scale), b.burst.pos, [0.0; 3], 1));
+            } else {
                 ended.push(b.burst.source);
+                // Its end: a few wisps where it dies (`ManaBurstEntity.handleEntityEvent`).
+                fx.push((ParticleOptions::dust(rgb, 0.8), b.burst.pos, [0.08; 3], 4));
             }
         }
     }
     for (at, mana) in deliveries {
-        let block = game.native_block(at);
-        game.native_with_mod_block_entity(at, |m| {
-            let mut p = pool_of(&m.nbt, &block);
-            if p.receive(mana) {
-                set_int(m, "mana", p.mana);
-            }
-        });
+        receive_mana(game, at, mana);
     }
+    send_particles(game, &fx);
     // `remove`: the spreader that shot it may shoot again.
     for source in ended {
         game.native_with_mod_block_entity(source, |m| {
@@ -1228,6 +1352,480 @@ pub(super) fn placed(
     let rotation = burst::placed_rotation(player.yaw, player.pitch);
     let dim = game.dim.id();
     state().placed.insert((dim, pos), rotation);
+}
+
+// ---- particles ------------------------------------------------------------------------------
+
+// Botania draws its effects on the client; the port sends vanilla particles from the server,
+// which every client draws. `minecraft:dust` carries a colour and a size, which a mod's own
+// particle type can't (engine gap G2), so bursts and beams are coloured dust, not wisps.
+type Fx = (ParticleOptions, [f64; 3], [f64; 3], i32);
+
+// Sends `list` (options, where, spread, count) to the players near each, in one pass over the
+// level in place (`ServerLevel.sendParticles`).
+fn send_particles(game: &mut Game<'_>, list: &[Fx]) {
+    if list.is_empty() || !game.native_authoritative() {
+        return;
+    }
+    game.with_level(|_, level, _| {
+        for (options, at, spread, count) in list {
+            level.native_send_particles(options, None, *at, *spread, 0.0, *count);
+        }
+    });
+}
+
+fn rgb_of(color: u32) -> [f32; 3] {
+    [
+        ((color >> 16) & 0xFF) as f32 / 255.0,
+        ((color >> 8) & 0xFF) as f32 / 255.0,
+        (color & 0xFF) as f32 / 255.0,
+    ]
+}
+
+// A xorshift step of the module's own generator, for effects only.
+fn random_bits() -> u64 {
+    let mut s = state();
+    let mut x = if s.rng == 0 {
+        0x9E37_79B9_7F4A_7C15
+    } else {
+        s.rng
+    };
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    s.rng = x;
+    x
+}
+
+// `Math.random()`: 0 to 1.
+fn random_unit() -> f64 {
+    (random_bits() >> 11) as f64 / (1u64 << 53) as f64
+}
+
+fn random_below(n: u64) -> u64 {
+    random_bits() % n.max(1)
+}
+
+// ---- the wand of the forest -----------------------------------------------------------------
+
+fn is_wand(item: &str) -> bool {
+    matches!(item, "botania:twig_wand" | "botania:dreamwood_wand")
+}
+
+// What the wand keeps in its `minecraft:custom_data`, under Botania's NBT names: `bindMode`
+// (true unless absent) and the selected block `boundTileX/Y/Z` (none when Y is absent or
+// `Integer.MIN_VALUE`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WandData {
+    bind_mode: bool,
+    selected: Option<[i32; 3]>,
+}
+
+fn wand_of(stack: &ItemStack) -> WandData {
+    let data = stack.custom_data();
+    let int = |k: &str| data.and_then(|c| get_int(c, k));
+    let selected = match int("boundTileY") {
+        Some(y) if y != i32::MIN => Some([
+            int("boundTileX").unwrap_or(0),
+            y,
+            int("boundTileZ").unwrap_or(0),
+        ]),
+        _ => None,
+    };
+    WandData {
+        bind_mode: int("bindMode").is_none_or(|v| v != 0),
+        selected,
+    }
+}
+
+// Writes the wand's data into the stack in the acting hand.
+fn save_wand(game: &mut Game<'_>, w: WandData) {
+    let Some(stack) = game.held_mut().as_mut() else {
+        return;
+    };
+    if !is_wand(&stack.item) {
+        return;
+    }
+    let mut c = stack.custom_data().cloned().unwrap_or_else(Compound::new);
+    c.insert(key("bindMode"), Tag::Byte(if w.bind_mode { 1 } else { 0 }));
+    for (k, i) in [("boundTileX", 0), ("boundTileY", 1), ("boundTileZ", 2)] {
+        match w.selected {
+            Some(p) => {
+                c.insert(key(k), Tag::Int(p[i]));
+            }
+            None => {
+                c.remove(&key(k));
+            }
+        }
+    }
+    stack
+        .data_mut()
+        .set_other("minecraft:custom_data", Some(Tag::Compound(c)));
+    stack.tidy();
+}
+
+// A block entity the wand binds (`WandBindable`): a generating flower or a spreader.
+fn wand_bindable(m: Option<&ModBlockEntity>) -> bool {
+    m.is_some_and(|m| m.id == ENDOFLAME || m.id == SPREADER)
+}
+
+fn block_center(pos: [i32; 3]) -> [f64; 3] {
+    [
+        f64::from(pos[0]) + 0.5,
+        f64::from(pos[1]) + 0.5,
+        f64::from(pos[2]) + 0.5,
+    ]
+}
+
+// The bounds of the block's shape at `pos`, absolute: a pool's slab, else its collision
+// boxes, else the whole block (`getShape(...).bounds()`, `new AABB(pos)` when empty).
+fn shape_bounds(game: &Game<'_>, pos: [i32; 3]) -> Aabb {
+    let block = game.native_block(pos);
+    let boxes = match PoolVariant::of_block(&block) {
+        Some(v) => vec![[0.0, 0.0, 0.0, 1.0, v.burst_slab_height() / 16.0, 1.0]],
+        None => game.native_block_collision(pos),
+    };
+    let mut b = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    if let Some(first) = boxes.first() {
+        b = *first;
+        for x in &boxes {
+            for i in 0..3 {
+                b[i] = b[i].min(x[i]);
+                b[i + 3] = b[i + 3].max(x[i + 3]);
+            }
+        }
+    }
+    let o = [f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])];
+    [
+        b[0] + o[0],
+        b[1] + o[1],
+        b[2] + o[2],
+        b[3] + o[0],
+        b[4] + o[1],
+        b[5] + o[2],
+    ]
+}
+
+// A line over the acting player's hotbar: a translation key with its English text.
+fn tell_bar(game: &mut Game<'_>, uuid: u128, key_name: &str, fallback: &str, args: &[Text]) {
+    game.native_action_bar(
+        uuid,
+        Text::translate_with_fallback(key_name, fallback, args),
+    );
+}
+
+// `doParticleBeam`: a rainbow of dust from the centre of one block to the other's.
+fn particle_beam(game: &mut Game<'_>, from: [i32; 3], to: [i32; 3]) {
+    let fx: Vec<Fx> = wand::beam(
+        block_center(from),
+        block_center(to),
+        0.25,
+        64,
+        random_unit() as f32,
+    )
+    .into_iter()
+    .map(|(at, color)| (ParticleOptions::dust(rgb_of(color), 0.6), at, [0.0; 3], 1))
+    .collect();
+    send_particles(game, &fx);
+}
+
+// `native_use_item_on`: `WandOfTheForestItem.useOn`.
+pub(super) fn use_on(
+    game: &mut Game<'_>,
+    stack: &ItemStack,
+    pos: [i32; 3],
+    face: [i32; 3],
+    claimed: &mut bool,
+) {
+    if *claimed || !is_wand(&stack.item) || !game.native_authoritative() {
+        return;
+    }
+    let Some(player) = game.native_acting_player() else {
+        return;
+    };
+    let w = wand_of(stack);
+    let here = game.native_mod_block_entity(pos);
+    let click = wand::Click {
+        pos,
+        sneaking: game.native_sneaking(),
+        bind_mode: w.bind_mode,
+        selected: w.selected,
+        selected_bindable: w
+            .selected
+            .is_some_and(|p| wand_bindable(game.native_mod_block_entity(p).as_ref())),
+        bindable: wand_bindable(here.as_ref()),
+        wandable: match here.as_ref().map(|m| m.id.as_str()) {
+            Some(SPREADER) => Some(Wandable::Spreader),
+            Some(POOL) => Some(Wandable::Pool),
+            _ => None,
+        },
+    };
+    let out = wand::use_on(&click);
+    if let Some(selected) = out.selection {
+        save_wand(game, WandData { selected, ..w });
+    }
+    match out.action {
+        UseOn::Pass => return,
+        UseOn::Bind { from, to } => wand_bind(game, player.uuid, from, to),
+        UseOn::Select(selected) => {
+            game.native_play_sound_to(player.uuid, "botania:ding", "player", None, 0.11, 1.0);
+            if selected.is_some() {
+                tell_bar(
+                    game,
+                    player.uuid,
+                    "botania.horizon.wand.selected",
+                    "Selected. Sneak-click another block to bind it",
+                    &[],
+                );
+            }
+        }
+        UseOn::AimSpreader => {
+            let eye = [
+                player.position[0],
+                player.position[1] + f64::from(player.eye_height),
+                player.position[2],
+            ];
+            let hit = wand::face_hit(
+                eye,
+                wand::view_vector(player.yaw, player.pitch),
+                face,
+                shape_bounds(game, pos),
+            );
+            let dim = game.dim.id();
+            state().placed.remove(&(dim, pos));
+            game.native_with_mod_block_entity(pos, |m| {
+                let rx = get_float(&m.nbt, "rotationX").unwrap_or(0.0);
+                let (rx, ry) = wand::aim_from_click(pos, hit, face, rx);
+                set_float(m, "rotationX", rx);
+                set_float(m, "rotationY", ry);
+            });
+        }
+        UseOn::SyncSpreader => game.native_block_entity_sync(pos),
+        UseOn::TogglePool => {
+            game.native_with_mod_block_entity(pos, |m| {
+                let on = get_int(&m.nbt, "outputting").unwrap_or(0) != 0;
+                m.nbt
+                    .insert(key("outputting"), Tag::Byte(if on { 0 } else { 1 }));
+            });
+            game.native_block_entity_sync(pos);
+        }
+        UseOn::Used => {}
+    }
+    *claimed = true;
+}
+
+// `tryCompleteBinding` with the selected block's `bindTo`: a generating flower binds to a
+// spreader within its range; a spreader aims at the centre of any block's shape, however far.
+fn wand_bind(game: &mut Game<'_>, uuid: u128, from: [i32; 3], to: [i32; 3]) {
+    let Some(source) = game.native_mod_block_entity(from) else {
+        return;
+    };
+    if source.id == ENDOFLAME {
+        let valid = flower::dist_sqr(from, to)
+            <= i64::from(GENERATING_LINK_RANGE) * i64::from(GENERATING_LINK_RANGE)
+            && is_spreader(game, to);
+        if !valid {
+            tell_bar(
+                game,
+                uuid,
+                "botania.horizon.wand.flower_range",
+                "A generating flower binds only to a mana spreader within %s blocks",
+                &[Text::literal(GENERATING_LINK_RANGE.to_string())],
+            );
+            return;
+        }
+        game.native_with_mod_block_entity(from, |m| set_pos(m, "binding", Some(to)));
+        game.native_block_entity_sync(from);
+    } else if source.id == SPREADER {
+        let (rx, ry) = burst::aim_at(from, shape_bounds(game, to));
+        let dim = game.dim.id();
+        state().placed.remove(&(dim, from));
+        game.native_with_mod_block_entity(from, |m| {
+            set_float(m, "rotationX", rx);
+            set_float(m, "rotationY", ry);
+        });
+    } else {
+        return;
+    }
+    particle_beam(game, from, to);
+    tell_bar(game, uuid, "botania.horizon.wand.bound", "Bound", &[]);
+}
+
+// `native_use_item`: `WandOfTheForestItem.use`. A sneak-click in the air switches between
+// bind and function mode; any click with the wand succeeds (the hand swings).
+pub(super) fn use_item(game: &mut Game<'_>, stack: &ItemStack, claimed: &mut bool) {
+    if *claimed || !is_wand(&stack.item) || !game.native_authoritative() {
+        return;
+    }
+    if game.native_sneaking() {
+        let w = wand_of(stack);
+        let next = WandData {
+            bind_mode: !w.bind_mode,
+            ..w
+        };
+        save_wand(game, next);
+        if let Some(player) = game.native_acting_player() {
+            game.native_play_sound_to(player.uuid, "botania:ding", "player", None, 0.1, 1.0);
+            let mode = if next.bind_mode {
+                "botaniamisc.wandMode.bind"
+            } else {
+                "botaniamisc.wandMode.function"
+            };
+            game.native_action_bar(player.uuid, Text::translate(mode, &[]));
+        }
+    }
+    *claimed = true;
+}
+
+// ---- the apothecary's right click -----------------------------------------------------------
+
+// Gives `stack` to the acting player, throwing what doesn't fit (`placeItemBackInInventory`).
+fn give_or_drop(game: &mut Game<'_>, stack: ItemStack) {
+    if let Some(rest) = game.give(stack)
+        && let Some(eye) = game.eye_position()
+    {
+        game.throw_from_eyes(rest, eye, false);
+    }
+}
+
+fn set_altar_fluid(game: &mut Game<'_>, pos: [i32; 3], fluid: Fluid) {
+    game.native_with_mod_block_entity(pos, |m| {
+        m.nbt
+            .insert(key("fluid"), Tag::String(JavaString::from(fluid.name())));
+    });
+    game.native_set_block_property(pos, "fluid", fluid.name());
+}
+
+// `native_right_click_block`: `PetalApothecaryBlock.use`, in the main hand's turn. An empty hand
+// puts the last recipe back or takes the last item out, an empty bucket takes the fluid, a full
+// one fills an empty apothecary.
+pub(super) fn right_click(game: &mut Game<'_>, pos: [i32; 3], canceled: &mut bool) {
+    if *canceled || !game.native_authoritative() || game.hand != Hand::Main {
+        return;
+    }
+    if !is_apothecary(&game.native_block(pos)) {
+        return;
+    }
+    let Some(entity) = game.native_mod_block_entity(pos) else {
+        return;
+    };
+    if entity.id != ALTAR {
+        return;
+    }
+    let main = game
+        .inventory
+        .get(game.selected)
+        .and_then(|s| s.clone())
+        .filter(|s| s.count > 0);
+    // `isSecondaryUseActive`: sneaking with something in a hand skips the block's use.
+    let off = game.offhand.as_ref().is_some_and(|s| s.count > 0);
+    if game.native_sneaking() && (main.is_some() || off) {
+        return;
+    }
+    let Some(player) = game.native_acting_player() else {
+        return;
+    };
+    let creative = player.game_mode == 1;
+    let dim = game.dim.id();
+    let state_id = game.world.block(pos[0], pos[1], pos[2]);
+    let fluid = game
+        .native_block_state_property(state_id, "fluid")
+        .and_then(Fluid::of_name)
+        .or_else(|| nbt_fluid(&entity.nbt))
+        .unwrap_or_default();
+    let memory = state()
+        .apothecaries
+        .get(&(dim, pos))
+        .cloned()
+        .unwrap_or_default();
+    let a = Apothecary {
+        fluid,
+        slots: entity
+            .items
+            .iter()
+            .map_while(|s| {
+                s.as_ref()
+                    .filter(|s| s.count > 0)
+                    .map(|s| s.item.to_string())
+            })
+            .collect(),
+        last_recipe: memory.last_recipe,
+        last_reagent: memory.last_reagent,
+        keep_ticks: memory.keep_ticks,
+    };
+    let carried: HashMap<String, u32> = game.native_carried_items().into_iter().collect();
+    let count = |item: &str| carried.get(item).copied().unwrap_or(0);
+    let held = main.as_ref().map(|s| s.item.to_string());
+    let center = block_center(pos);
+    match a.on_use(held.as_deref(), &count, creative) {
+        AltarUse::Pass => return,
+        AltarUse::LastRecipe(items) => {
+            if !creative {
+                for item in &items {
+                    game.native_take_items(item, 1);
+                }
+            }
+            game.native_with_mod_block_entity(pos, |m| {
+                for (slot, item) in m.items.iter_mut().zip(&items) {
+                    *slot = Some(ItemStack::new(item, 1));
+                }
+            });
+            // GENERIC_SPLASH at 0.1, pitch 10 (clamped to 2 as the client clamps it).
+            game.native_play_sound_in_place(
+                "minecraft:entity.generic.splash",
+                player.position,
+                4,
+                0.1,
+                2.0,
+            );
+        }
+        AltarUse::Withdraw => {
+            let taken = game
+                .native_with_mod_block_entity(pos, |m| {
+                    let i = m
+                        .items
+                        .iter()
+                        .rposition(|s| s.as_ref().is_some_and(|s| s.count > 0))?;
+                    m.items[i].take()
+                })
+                .flatten();
+            if let Some(stack) = taken {
+                give_or_drop(game, stack);
+            }
+        }
+        AltarUse::TakeFluid(f) => {
+            let (filled, sound) = match f {
+                Fluid::Lava => ("minecraft:lava_bucket", "minecraft:item.bucket.fill_lava"),
+                _ => ("minecraft:water_bucket", "minecraft:item.bucket.fill"),
+            };
+            if !creative {
+                if game.held().is_some_and(|h| h.count <= 1) {
+                    *game.held_mut() = Some(ItemStack::new(filled, 1));
+                } else {
+                    if let Some(h) = game.held_mut().as_mut() {
+                        h.count -= 1;
+                    }
+                    give_or_drop(game, ItemStack::new(filled, 1));
+                }
+            }
+            set_altar_fluid(game, pos, Fluid::Empty);
+            game.native_play_sound_in_place(sound, center, 4, 1.0, 1.0);
+        }
+        AltarUse::PutFluid(f) => {
+            if !creative {
+                *game.held_mut() = Some(ItemStack::new("minecraft:bucket", 1));
+            }
+            set_altar_fluid(game, pos, f);
+            let sound = if f == Fluid::Lava {
+                "minecraft:item.bucket.empty_lava"
+            } else {
+                "minecraft:item.bucket.empty"
+            };
+            game.native_play_sound_in_place(sound, center, 4, 1.0, 1.0);
+        }
+    }
+    game.native_block_entity_sync(pos);
+    *canceled = true;
 }
 
 // ---- data -----------------------------------------------------------------------------------
