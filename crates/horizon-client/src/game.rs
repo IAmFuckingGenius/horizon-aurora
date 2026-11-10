@@ -594,7 +594,9 @@ pub use native_falling::NativeFalling;
 pub use native_hooks::{NativeClock, NativeItemEntity, NativePlayer, NativeShake};
 pub use native_inventories::{NativeInventoryError, NativeInventoryKind};
 pub use native_item_energy::ItemEnergyBuffer;
-pub use native_mob_draw::{NativeMobRender, NativePlayerRender};
+pub use native_mob_draw::{
+    NativeArmorStandRender, NativeMobRender, NativeModelParts, NativePlayerRender,
+};
 pub use native_player_state::{NativeAttributeModifier, NativeEffect, NativeEffectV2};
 pub use native_reload_listeners::NativeReloadListener;
 pub use native_server::NativeExperienceOrb;
@@ -12917,9 +12919,7 @@ pub fn run_with() -> Result<()> {
         let game_dir = horizon_client::logging::player_dir();
         horizon_hooks::engine::started(&horizon_hooks::Started::new(&version, &game_dir));
     }
-    mods::register_components(&vanilla_root)?;
-    mods::register_standalone_models();
-    mods::register_layer_definitions();
+    mods::register_native(&vanilla_root)?;
     let mut early_settings = Settings::load(&Game::options_path());
     // The player's Polytone pack options (#11486), before any pack is read.
     horizon_client::packs::set_polytone_choices(horizon_client::packs::load_polytone_choices(

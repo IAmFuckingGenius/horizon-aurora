@@ -33,10 +33,28 @@ pub(super) struct ModsState {
     pub(super) data_switched: bool,
 }
 
+/// What native mods register in code before the resources first load: their
+/// component types, standalone models and entity model layers. Every start
+/// asks it (the desktop's `run_with` and the Android launcher's
+/// `android_game`), and only the first registers: each is set once a process,
+/// and the Android launcher starts the game again in the same process.
+pub(super) fn register_native(root: &std::path::Path) -> horizon_client::Result<()> {
+    static REGISTERED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    REGISTERED
+        .get_or_init(|| {
+            register_components(root).map_err(|error| error.to_string())?;
+            register_standalone_models();
+            register_layer_definitions();
+            Ok(())
+        })
+        .clone()
+        .map_err(Into::into)
+}
+
 /// Freeze native component IDs before reading content or opening a connection.
 /// With no mod registering any, nothing is installed, which every reader
 /// treats as no custom components, and `registries.json` isn't read.
-pub(super) fn register_components(root: &std::path::Path) -> horizon_client::Result<()> {
+fn register_components(root: &std::path::Path) -> horizon_client::Result<()> {
     let mut names = Vec::new();
     Game::native_component_types(&mut names);
     if names.is_empty() {
@@ -74,14 +92,14 @@ fn native_declared() -> &'static (
 }
 /// The native mods' standalone models (`native_standalone_models`), set once
 /// before the resources first load.
-pub(super) fn register_standalone_models() {
+fn register_standalone_models() {
     let mut names = Vec::new();
     Game::native_standalone_models(&mut names);
     horizon_client::models::register_standalone(names);
 }
 /// The native mods' entity model layers (`native_layer_definitions`), kept
 /// once at start for `native_bake_layer`.
-pub(super) fn register_layer_definitions() {
+fn register_layer_definitions() {
     let mut layers = Vec::new();
     Game::native_layer_definitions(&mut layers);
     horizon_client::mobs::model_layers::register(layers);
