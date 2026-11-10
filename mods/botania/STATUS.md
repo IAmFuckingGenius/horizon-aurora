@@ -242,6 +242,10 @@ been played on a phone yet.
     injections, 2 modules, 1 crate, 1 data folder; no warnings from the bundle. An earlier
     dispatch of it under engine id `botania` (42876970105) was cancelled while pending by
     another `botania` dispatch: the workflow keeps one pending run per engine id.
+  - 42912044970 (x86_64, engine id `botania-px`, `aurora_ref=engine-tinted-particles`: hook
+    points API 417), bundle 998ead857f (branch `botania-particles`: Botania's own wisps and
+    sparkles, module `botania_particles`): **success**; 46 injections, 6 modules, 1 crate, 1 data
+    file; release library in 15 min 35 s, no warnings from the bundle. Not played yet.
 
 ### In game (Waydroid x86_64, 2026-11-10)
 
