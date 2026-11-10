@@ -1,7 +1,7 @@
 # Status
 
-Nothing here has run on a device or in a game yet: "builds" below means the Android engine
-compiled with the bundle in CI, not that it works in play.
+The port has been played in Waydroid (x86_64, Dev 25 APK, engine with the content packed in):
+see "In game" under Verified. It has not been played on a phone yet.
 
 ## Done
 
@@ -138,18 +138,48 @@ compiled with the bundle in CI, not that it works in play.
     from the bundle; `botania-arm64-v8a.hengine` 36.1 MB (artifact
     `native-engine-botania-arm64-v8a`, until 2026-11-24). This is the current bundle.
 
+### In game (Waydroid x86_64, 2026-11-10)
+
+Driven through horizon-ctl (`control.enable` in the app's private folder), engine run
+42850654648's library with `dist/botania.hmod` 9a1935e1. All of these work:
+
+- The engine puts `botania.hmod` into a new instance by itself; content loads with no warnings.
+- Weapons and tools, read with `/attribute` and checked against hits on an iron golem: manasteel
+  sword 6 damage / 1.6 speed, Terra Blade 8, Thundercaller speed 2.5, Soulscribe 6 / 2.75; the
+  manasteel pickaxe breaks obsidian (242 ticks) and drops it, the vitreous one gets no drop from
+  iron ore. Full terrasteel armour: armor 20, toughness 12.
+- Icons, held items and worn armour are drawn (vanilla looks: diamond, leather, iron, netherite).
+- Mana pool infusion: iron → manasteel, diamond → mana diamond, cookie → mana cookie, short grass
+  → grass seeds; an empty pool infuses nothing. Alchemy catalyst: acacia log → dark oak log,
+  short grass → fern. Conjuration catalyst: 1 leaf block → 2.
+- Petal Apothecary: a water bucket fills it; 4 white petals and seeds give a Pure Daisy and use
+  the water. The Pure Daisy turns 4 stone into livingrock and 4 oak logs into livingwood.
+- Wand of the Forest: function mode aims a spreader; bind mode selects a spreader and binds it to
+  a pool ("Selected", "Bound"); sneak-clicking a pool toggles `outputting`; sneak-clicking air
+  switches the mode. A placed spreader faces the player (rotationX 90 with the player to the
+  south), as `ManaSpreaderBlock.setPlacedBy`.
+- Endoflame binds to the nearest spreader on its first tick, burns thrown coal (burnTime 800),
+  the spreader shoots 160-mana bursts with a green dust trail into the pool.
+- A comparator on a pool lights a lamp for a filled or creative pool, not for an empty one.
+- Mystical flowers generate in new chunks (white and lime ones within 96 blocks of 4000 4000)
+  and `/place feature botania:mystical_flowers` places them.
+
+Found and fixed during the test: `dyed_color` made Horizon refuse the whole content
+(`equipment.py`), and recipes naming `minecraft:grass` never matched (port-pack now renames it to
+`minecraft:short_grass`, and `minecraft:scute` to `minecraft:turtle_scute`).
+
 ## How to test on a phone
 
-1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42740458235 ›
+1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42860962514 ›
    artifact `native-engine-botania-arm64-v8a` (a ZIP holding `botania-arm64-v8a.hengine`; kept
-   14 days). Or: `gh run download 42740458235 -R IAmFuckingGenius/horizon-aurora -n
-   native-engine-botania-arm64-v8a`. Unzip it and copy the `.hengine` to the phone.
+   14 days; `…-armeabi-v7a` for 32-bit phones). Or: `gh run download 42860962514 -R
+   IAmFuckingGenius/horizon-aurora -n native-engine-botania-arm64-v8a`. Unzip it and copy the
+   `.hengine` to the phone.
 2. In Horizon Aurora: **Settings › Engines › Import**, pick `botania-arm64-v8a.hengine`, then
    **Start** on "Aurora + Botania". The app restarts on that engine. Options › Mods should list
    "Botania 0.1.0".
-3. Copy `.local/modports/botania/botania-1.20.1-456-content.hmod` (sha256 `4add364b…`, the one
-   with `content/` applied) to the phone and add it in the same instance: **Mods › Import file**
-   (or Installed › Import beside Mods). It is for local testing only: it carries Botania's assets.
+3. Nothing else to add: the engine carries `dist/botania.hmod` (sha256 `9a1935e1…`) and puts it
+   into the instance it plays.
 4. Make a new world (mystical flowers are placed when chunks generate; old chunks have none).
    Survival checklist:
    - find mystical flowers (16 colours, on grass in the Overworld), pick them and craft each into
@@ -178,11 +208,15 @@ compiled with the bundle in CI, not that it works in play.
 
 ## Not verified / known gaps
 
-- Nothing ran in a game. In particular unchecked: that `native_item_entities` sees items in the
-  Endoflame's box, that `native_summon` makes the apothecary's output and fish, that the game
-  drops a mod container's slots when the apothecary breaks, the recipes' load under
-  `botania:horizon/`, that changing the held wand's `custom_data` reaches the client, that the
-  mystical flower patches load (Horizon logs the placed features it skips).
+- Not played on a phone yet. Unchecked in game: fish into the apothecary, the apothecary
+  dropping its items when broken, survival crafting of the whole chain.
+- Botania's bows (Livingwood, Crystal) can't be drawn: the game knows a bow by the id
+  `minecraft:bow`, not by its components.
+- Weapon and tool abilities are code in Botania and not ported: the Terra Blade's beam, the
+  Thundercaller's chain lightning, the Starcaller's stars, the Terra Shatterer's area mining, mana
+  repair, set bonuses, Botania's armour models.
+- Advancement toasts show no icon; the function `botania:ender_air_release` doesn't load (no
+  `botania:ender_air` entity).
 - Trail and beam (engine gap G2): server-sent vanilla dust, not Botania's wisps and sparkles:
   no additive blending, no wisp sprite, the dust's own motion; one particle packet per burst per
   tick to nearby players. Botania's full trail (2–5 wisps a tick) isn't offered.
@@ -206,7 +240,7 @@ compiled with the bundle in CI, not that it works in play.
 
 ## Next
 
-1. The device test above, on the run 42740458235 engine.
+1. The device test above, on the run 42860962514 engine.
 2. Block entity renderers: the spreader turned to its aim with its spinning core, the pool's
    mana, the apothecary's items (`native_block_entity_submit`, `draw.spin`, `keep`).
 3. Burst particles drawn by the client (mod messages + `ParticleEngine::controlled` with colour
