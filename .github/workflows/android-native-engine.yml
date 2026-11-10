@@ -33,7 +33,7 @@ on:
       abis:
         description: ABIs to build
         type: choice
-        options: [arm64-v8a and armeabi-v7a, arm64-v8a, armeabi-v7a]
+        options: [arm64-v8a and armeabi-v7a, arm64-v8a, armeabi-v7a, x86_64]
         default: arm64-v8a and armeabi-v7a
       mixins_rev:
         description: horizon-mixins commit (empty = MIXINS_REV in launcher/src/native_mods.rs)
@@ -292,7 +292,7 @@ jobs:
 
           label = re.sub(r'[^A-Za-z0-9._-]', '-', '.'.join(f'{r["id"]}.{r["version"]}' for r in records))[:40]
           abis = {'arm64-v8a and armeabi-v7a': ['arm64-v8a', 'armeabi-v7a'],
-                  'arm64-v8a': ['arm64-v8a'], 'armeabi-v7a': ['armeabi-v7a']}[os.environ['ABIS']]
+                  'arm64-v8a': ['arm64-v8a'], 'armeabi-v7a': ['armeabi-v7a'], 'x86_64': ['x86_64']}[os.environ['ABIS']]
           (out / 'bundle.json').write_text(json.dumps({
               'source': spec, 'aurora_commit': commit, 'upstream_merged': upstream, 'hooks_api': hooks_api,
               'mixins_rev': mixins_rev, 'engine_id': engine_id, 'engine_name': engine_name,
@@ -350,6 +350,7 @@ jobs:
           case "$ABI" in
             arm64-v8a) target=aarch64-linux-android ;;
             armeabi-v7a) target=armv7-linux-androideabi ;;
+            x86_64) target=x86_64-linux-android ;;
           esac
           rustup target add "$target"
       # The dev builds' crates, read only: a native engine never writes the shared cache. Keyed on the pristine
@@ -438,6 +439,7 @@ jobs:
           case "$ABI" in
             arm64-v8a) target=aarch64-linux-android ;;
             armeabi-v7a) target=armv7-linux-androideabi ;;
+            x86_64) target=x86_64-linux-android ;;
           esac
           grep -c -a 'aurora_smoke' "$CARGO_TARGET_DIR/$target/release/libhorizon_android.so"
       - name: Pack the .hengine and its records
