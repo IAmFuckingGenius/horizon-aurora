@@ -328,6 +328,9 @@ Found and fixed during the test:
 
 - Not played on a phone yet; the whole chain hasn't been crafted in survival (its recipes are
   registered: `/recipe give` unlocks each).
+- The third-person bow pose, the touch crosshair and hold for the bows, and the blaze block as
+  fuel haven't been played yet: engine run 42910291134 (x86_64, Aurora `engine-use-poses`
+  05b46ec689, bundle 8be0122234, `publish=false`) only built them.
 - Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`):
   - the beam, stars and chain lightning hit mobs only (no PvP), drawn as vanilla dust (G2): big
     green squares for the beam; a beam or star is dropped when its owner leaves; the Starcaller's
