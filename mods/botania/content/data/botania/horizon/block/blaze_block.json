@@ -1,0 +1,9 @@
+{
+  "template": "minecraft:stone",
+  "components": {
+    "minecraft:cooking_fuel": {
+      "burn_time": "botania:cooking/time_blaze_block",
+      "speed_multiplier": "minecraft:cooking/speed_default"
+    }
+  }
+}

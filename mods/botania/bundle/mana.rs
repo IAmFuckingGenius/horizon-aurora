@@ -11,15 +11,16 @@
 
 use super::Game;
 use botania_core::consts::PoolVariant;
+use botania_core::fx::Record;
 use botania_core::mana_gear::{self, ArmorSet};
 use botania_core::mana_handler::{self, Asker, DamagePayer};
 use botania_core::mana_item::{self, Bar, Kind, ManaStack, Nbt, PoolMode};
 use botania_core::pool::Pool;
+use botania_core::tools;
 use horizon_client::containers::BlockEntity;
 use horizon_client::effects::EffectAction;
 use horizon_client::hud::HudBatch;
 use horizon_client::items::ItemStack;
-use horizon_client::particles::ParticleOptions;
 use horizon_client::text::Text;
 use horizon_core::random::RandomSource;
 use horizon_world::nbt::{Compound, JavaString, Tag};
@@ -37,23 +38,17 @@ const GRAY: u32 = 0xAAAAAA;
 const RED: u32 = 0xFF5555;
 // The tooltip's mana bar: a 3 pixel bar in a 1 pixel black frame (`ManaBarTooltipComponent`).
 const BAR_HEIGHT: f32 = 5.0;
-// Dust drawn along a charging or draining wisp's path.
-const FLOW_POINTS: usize = 6;
-const FLOW_SCALE: f32 = 0.4;
+// The Terra Shatterer's rank letters, a line of text over its bar.
+const RANK_ROW: f32 = 10.0;
 
 // ---- state ------------------------------------------------------------------------------------
 
 struct State {
-    // The module's own generator, for effects only (the level's random keeps vanilla's draws).
-    rng: u64,
     // The widest line of the mana item tooltip last built, which the mana bar spans.
     tooltip_width: f32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State {
-    rng: 0,
-    tooltip_width: 0.0,
-});
+static STATE: Mutex<State> = Mutex::new(State { tooltip_width: 0.0 });
 
 // When the bar's pulse started (`ClientTickHandler.ticksInGame`).
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
@@ -61,20 +56,6 @@ static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 // Never held across a call into the game.
 fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn random_unit() -> f64 {
-    let mut s = state();
-    let mut x = if s.rng == 0 {
-        0x2545_F491_4F6C_DD1D
-    } else {
-        s.rng
-    };
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    s.rng = x;
-    (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
 // ---- the stack's NBT (`ItemNBTHelper` keys in `minecraft:custom_data`) -------------------------
@@ -653,8 +634,8 @@ pub(super) fn use_on(
 
 // `ManaPoolBlockEntity.serverTick`'s loop over the item entities in the pool's cell: an outputting
 // pool charges the mana items, any other drains them, 1000 a tick each (no bellows are ported).
-// Every 10 of the pool's ticks a moving item draws the charging animation's path in dust (a
-// server can't send Botania's wisps). Called by `botania::pool_tick` after the infusions.
+// Every 10 of the pool's ticks a moving item starts the charging animation's wisps on the clients
+// near it (`CHARGE_EFFECT_EVENT`). Called by `botania::pool_tick` after the infusions.
 pub(super) fn pool_items(
     game: &mut Game<'_>,
     pos: [i32; 3],
@@ -706,42 +687,17 @@ pub(super) fn pool_items(
     } else {
         0.0
     };
-    let rgb = {
-        let c = mana_item::POOL_PARTICLE_COLOR;
-        [
-            ((c >> 16) & 0xFF) as f32 / 255.0,
-            ((c >> 8) & 0xFF) as f32 / 255.0,
-            (c & 0xFF) as f32 / 255.0,
-        ]
-    };
-    let options = ParticleOptions::dust(rgb, FLOW_SCALE);
-    let origin = [f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])];
-    let mut points = Vec::new();
-    for param in paths {
-        let item = mana_item::randomize_item_pos(
-            mana_item::decode_item_position(param, relative),
-            [random_unit(), random_unit(), random_unit()],
-        );
-        let in_pool =
-            mana_item::pool_flow_pos(mode.outputting, relative, [random_unit(), random_unit()]);
-        let (start, end) = if mode.outputting {
-            (in_pool, item)
-        } else {
-            (item, in_pool)
-        };
-        let extra = 0.05 * random_unit();
-        for p in mana_item::flow_points(start, end, extra, FLOW_POINTS) {
-            points.push([origin[0] + p[0], origin[1] + p[1], origin[2] + p[2]]);
-        }
-    }
-    // One pass over the level in place (`ServerLevel.sendParticles`).
-    if game.native_authoritative() {
-        game.with_level(|_, level, _| {
-            for at in &points {
-                level.native_send_particles(&options, None, *at, [0.0; 3], 0.0, 1);
-            }
-        });
-    }
+    // The block event's parameter is the item's place, which fits in a byte.
+    let charging = mode.outputting;
+    super::botania_particles::send(
+        game,
+        paths.into_iter().map(|param| Record::Flow {
+            pool: pos,
+            param: param as u8,
+            relative,
+            charging,
+        }),
+    );
 }
 
 // ---- the client: bar, tooltip, the tooltip's mana bar ------------------------------------------
@@ -795,13 +751,19 @@ pub(super) fn tooltip(game: &Game<'_>, stack: &ItemStack, lines: &mut Vec<(Text,
     state().tooltip_width = width;
 }
 
-// `native_tooltip_component`: `ManaBarTooltip`, a bar as wide as the tooltip.
+// `native_tooltip_component`: `ManaBarTooltip`, a bar as wide as the tooltip; the Terra
+// Shatterer's with its rank letters over it.
 pub(super) fn tooltip_component(_game: &Game<'_>, stack: &ItemStack, size: &mut Option<[f32; 2]>) {
-    if mana_stack(stack).is_none() {
+    let Some(m) = mana_stack(stack) else {
         return;
-    }
+    };
     let width = state().tooltip_width.max(24.0);
-    *size = Some([width, BAR_HEIGHT]);
+    let height = if m.kind == Kind::TerraPick {
+        RANK_ROW + BAR_HEIGHT
+    } else {
+        BAR_HEIGHT
+    };
+    *size = Some([width, height]);
 }
 
 // `ManaBarTooltipComponent.renderImage`: the fill in a pulsing light blue
@@ -816,6 +778,10 @@ pub(super) fn tooltip_component_draw(
     let Some(m) = mana_stack(stack) else {
         return;
     };
+    if m.kind == Kind::TerraPick {
+        rank_bar(game, &m, batch, origin, size);
+        return;
+    }
     let [x, y] = origin;
     let w = size[0];
     let fraction = m.tooltip_fraction().clamp(0.0, 1.0);
@@ -834,5 +800,62 @@ pub(super) fn tooltip_component_draw(
             [x + 1.0 + filled, y + 1.0, inner - filled, 3.0],
             0xFF55_5555,
         );
+    }
+}
+
+// A rank's name as the lang file has it (`botania.rank0` is `§cD`), in its runs of colour.
+fn rank_runs(level: usize) -> Vec<(String, u32)> {
+    let name = horizon_client::lang::get(&format!("botania.rank{level}"));
+    tools::legacy_runs(&name, 0xFFFFFF)
+}
+
+fn runs_width(game: &Game<'_>, runs: &[(String, u32)]) -> f32 {
+    runs.iter().map(|(t, _)| game.native_text_width(t)).sum()
+}
+
+fn draw_runs(game: &Game<'_>, batch: &mut HudBatch, runs: &[(String, u32)], at: [f32; 2]) {
+    let [mut x, y] = at;
+    for (text, rgb) in runs {
+        game.native_text(batch, text, [x, y], *rgb, true);
+        x += game.native_text_width(text);
+    }
+}
+
+// `ManaBarTooltipComponent` for the Terra Shatterer: its rank's letter over the start of the bar
+// and the next rank's over its end (none at SS), and the bar filled toward the next rank with a
+// rainbow drifting along it (`hsvToRgb((ticks * 0.01 + column / width) % 1, 1, 1)`), one column
+// short of full below SS.
+fn rank_bar(
+    game: &Game<'_>,
+    m: &ManaStack,
+    batch: &mut HudBatch,
+    origin: [f32; 2],
+    size: [f32; 2],
+) {
+    let [x, y] = origin;
+    let w = size[0];
+    let level = mana_item::terra_pick_level(m.nbt.mana);
+    let last = tools::rank_is_last(level);
+    draw_runs(game, batch, &rank_runs(level), [x, y]);
+    if !last {
+        let next = rank_runs(level + 1);
+        let right = x + w - runs_width(game, &next);
+        draw_runs(game, batch, &next, [right, y]);
+    }
+    let bar_y = y + RANK_ROW;
+    let total = (w - 2.0).max(0.0) as i32;
+    let filled = tools::rank_bar_width(total, m.tooltip_fraction(), last).max(0);
+    let ticks = (START.elapsed().as_secs_f64() * 20.0) as f32;
+    game.native_fill(batch, [x, bar_y, w, BAR_HEIGHT], 0xFF00_0000);
+    for i in 0..filled {
+        let hue = tools::rank_bar_hue(i, total, ticks);
+        let rgb = botania_core::wand::hsv_to_rgb(hue, 1.0, 1.0);
+        let at = [x + 1.0 + i as f32, bar_y + 1.0, 1.0, 3.0];
+        game.native_fill(batch, at, 0xFF00_0000 | rgb);
+    }
+    let rest = total - filled;
+    if rest > 0 {
+        let at = [x + 1.0 + filled as f32, bar_y + 1.0, rest as f32, 3.0];
+        game.native_fill(batch, at, 0xFF55_5555);
     }
 }

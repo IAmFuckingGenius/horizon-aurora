@@ -36,6 +36,10 @@
           "speed": 6.199999809265137
         }
       ]
+    },
+    "minecraft:weapon": {
+      "disable_blocking_for_seconds": 5.0,
+      "item_damage_per_attack": 1
     }
   }
 }
