@@ -26,6 +26,7 @@ use horizon_client::text::Text;
 use horizon_world::nbt::{Compound, JavaString, Tag};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 pub(super) const ID: &str = "botania";
 pub(super) const NAME: &str = "Botania";
@@ -82,7 +83,14 @@ struct State {
     burning: HashMap<u32, i32>,
     // The particles' own random numbers (Botania's client draws them with `Math.random`).
     rng: u64,
+    // Block clicks this module answered, by player, and when. Botania answers them on the
+    // client too; here the client saw nothing happen, so it follows with the item's own use
+    // (`Minecraft.startUseItem` after a PASS), which must not act a second time.
+    answered: HashMap<u128, Instant>,
 }
+
+// How long after an answered block click the item use that follows it is swallowed.
+const CLICK_ECHO: Duration = Duration::from_millis(250);
 
 // What a spreader keeps outside its NBT: its receiver (the scan's result; Botania doesn't save
 // it either), the aim it was scanned for, its tick count and last redstone signal.
@@ -1611,6 +1619,7 @@ pub(super) fn use_on(
         }
         UseOn::Used => {}
     }
+    state().answered.insert(player.uuid, Instant::now());
     *claimed = true;
 }
 
@@ -1652,9 +1661,28 @@ fn wand_bind(game: &mut Game<'_>, uuid: u128, from: [i32; 3], to: [i32; 3]) {
 }
 
 // `native_use_item`: `WandOfTheForestItem.use`. A sneak-click in the air switches between
-// bind and function mode; any click with the wand succeeds (the hand swings).
+// bind and function mode; any click with the wand succeeds (the hand swings). The use a client
+// sends right after a block click this module answered does nothing.
 pub(super) fn use_item(game: &mut Game<'_>, stack: &ItemStack, claimed: &mut bool) {
-    if *claimed || !is_wand(&stack.item) || !game.native_authoritative() {
+    if *claimed || !game.native_authoritative() {
+        return;
+    }
+    let wand = is_wand(&stack.item);
+    if !wand && state().answered.is_empty() {
+        return;
+    }
+    let Some(player) = game.native_acting_player() else {
+        return;
+    };
+    let echo = state()
+        .answered
+        .remove(&player.uuid)
+        .is_some_and(|t| t.elapsed() < CLICK_ECHO);
+    if echo {
+        *claimed = true;
+        return;
+    }
+    if !wand {
         return;
     }
     if game.native_sneaking() {
@@ -1664,15 +1692,13 @@ pub(super) fn use_item(game: &mut Game<'_>, stack: &ItemStack, claimed: &mut boo
             ..w
         };
         save_wand(game, next);
-        if let Some(player) = game.native_acting_player() {
-            game.native_play_sound_to(player.uuid, "botania:ding", "player", None, 0.1, 1.0);
-            let mode = if next.bind_mode {
-                "botaniamisc.wandMode.bind"
-            } else {
-                "botaniamisc.wandMode.function"
-            };
-            game.native_action_bar(player.uuid, Text::translate(mode, &[]));
-        }
+        game.native_play_sound_to(player.uuid, "botania:ding", "player", None, 0.1, 1.0);
+        let mode = if next.bind_mode {
+            "botaniamisc.wandMode.bind"
+        } else {
+            "botaniamisc.wandMode.function"
+        };
+        game.native_action_bar(player.uuid, Text::translate(mode, &[]));
     }
     *claimed = true;
 }
@@ -1825,6 +1851,7 @@ pub(super) fn right_click(game: &mut Game<'_>, pos: [i32; 3], canceled: &mut boo
         }
     }
     game.native_block_entity_sync(pos);
+    state().answered.insert(player.uuid, Instant::now());
     *canceled = true;
 }
 

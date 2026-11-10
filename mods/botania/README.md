@@ -13,11 +13,14 @@ and recipes come from a separate content `.hmod`; this folder is the code.
 - `bundle/data/recipe/`: Botania's phase 1 crafting recipes as its jar has them (1.20 form). The
   module gives them to the server in 26.3's form (`native_data_pack_files`), because the content
   mod carries them in a form 26.3 can't read.
-- `content/`: corrected block declarations for the content `.hmod`
-  (`data/botania/horizon/block/*.json`, 55 files): `horizon-port-pack` put every flower,
-  apothecary and pool on a stone template. Copy them over the carried `.hmod`'s files of the same
-  names. Their templates, `fluid` property and shapes are Botania's own (`PetalApothecaryBlock`,
-  `ManaPoolBlock`, `ManaSpreaderBlock`, `FabricSpecialFlowerBlock`).
+- `content/`: files to copy over the carried content `.hmod`'s files of the same paths:
+  - corrected block declarations (`data/botania/horizon/block/*.json`, 55 files):
+    `horizon-port-pack` put every flower, apothecary and pool on a stone template. Their
+    templates, `fluid` property and shapes are Botania's own (`PetalApothecaryBlock`,
+    `ManaPoolBlock`, `ManaSpreaderBlock`, `FabricSpecialFlowerBlock`);
+  - the 16 mystical flower patches (`data/botania/worldgen/configured_feature/`), placing the
+    flower with `minecraft:simple_block` instead of Botania's own `botania:mystical_flower`
+    feature type, which Horizon skips. Botania's 5% tall flowers are left out.
 - `STATUS.md`: what is done, verified and next.
 
 Design: `.local/modports/botania/design-mechanics.md` (sections 2, 3.1–3.8, 6, appendices A, B).
