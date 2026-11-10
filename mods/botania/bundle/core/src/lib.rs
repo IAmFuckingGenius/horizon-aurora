@@ -10,6 +10,7 @@ pub mod burst;
 pub mod consts;
 pub mod daisy;
 pub mod flower;
+pub mod fx;
 pub mod json;
 pub mod mana_gear;
 pub mod mana_handler;

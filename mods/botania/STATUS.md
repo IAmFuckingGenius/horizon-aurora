@@ -81,16 +81,17 @@ been played on a phone yet.
     spreaders), clamped to their capacity;
   - virtual bursts (design 3.6 variant A): kept in the module, moved in `level_tick_post` from
     the tick after they are shot, delivering to pools and spreaders with
-    `native_with_mod_block_entity`, lost over an unloaded chunk; the trail is one
-    `minecraft:dust` particle a tick per burst in the spreader's colour (`0x20FF20`, elven
-    `0xFF45C4`, redstone `0xFF2020`), scale 0.35–1 by the mana left, and four where it dies,
-    sent by the server in one `with_level` pass per level tick (design §7's subtle mode);
+    `native_with_mod_block_entity`, lost over an unloaded chunk; the trail is Botania's own
+    (`ManaBurstEntity.particles`, not the subtle mode): wisps every 0.095 blocks back along the
+    tick's flight in the spreader's colour (`0x20FF20`, elven `0xFF45C4`, redstone `0xFF2020`),
+    as big as the mana left, and four wisps and a sparkle where it dies (see "Botania's own
+    particles" below);
   - Wand of the Forest (`botania:twig_wand`, `botania:dreamwood_wand`): state in the stack's
     `minecraft:custom_data` under Botania's names (`bindMode`, `boundTileX/Y/Z`); in bind mode a
     sneak-click on an Endoflame or a spreader selects it (`botania:ding` to the player, a line
     on the action bar), a sneak-click on another block completes the binding: a flower binds to
     a spreader within 6 blocks (else a line says so), a spreader aims at the centre of the
-    clicked block's shape at any range; a rainbow beam of dust and "Bound" on success. In function
+    clicked block's shape at any range; a rainbow beam of sparkles and "Bound" on success. In function
     mode a sneak-click on a spreader turns it away from the point clicked (the look ray met with
     the face's plane). A sneak-click on a pool toggles `outputting`. A sneak-click in the air
     switches mode (`botaniamisc.wandMode.*` on the action bar). Every wand click in the air is
@@ -138,8 +139,8 @@ been played on a phone yet.
     `round(13·f)` wide in `hsvToRgb(f/3, 1, 1)` (none for the creative tablet), "Creative" and
     the rank / "Get a Life" lines, a pulsing mana bar in the tooltip;
   - pools: outputting charges, otherwise drains, 1000 a tick per item (`canSpare`/`canAccept`,
-    a mana void under it), the item entity updated; every 10 pool ticks a moving item gets a
-    dust arc (`0x00C6FF`) along Botania's charging-wisp parabola;
+    a mana void under it), the item entity updated; every 10 pool ticks a moving item starts
+    Botania's charging wisps (`0x00C6FF`, 15 ticks, one every second tick) along its parabola;
   - `ManaItemHandler` over `Inventory.items` + off hand (armour only for the discount):
     `requestMana(Exact)`, `…ForTool` (helmet with its full set: manasteel/elementium 10%,
     terrasteel 20%, manaweave 40%; +5% per Unbreaking level), `dispatchMana(Exact)`;
@@ -155,6 +156,28 @@ been played on a phone yet.
   - Terrasteel set worn: a heart every 80 ticks while hurt with food 1–17, 10 mana to the mana
     items every 10 ticks; knockback resistance 0.15/0.4/0.3/0.15 per piece (full set 1.0);
   - Band of Mana and Greater Band of Mana crafted as plain recipes (they start empty).
+- Botania's own particles (`bundle/particles.rs`, module `botania_particles`, rules in
+  `botania-core` `fx`; engine hook points API 417): wisps and sparkles (`FXWisp`, `FXSparkle`)
+  with Botania's sprites (`botania:wisp`, `botania:sparkle` in the content mod), colours, sizes,
+  lifetimes and motion, additive and (wisps) full bright, drawn by compiled particle controllers
+  in place of every `minecraft:dust` the bundle sent:
+  - the server queues what happened (`fx::Record`: a burst's tick or death, a wisp, a sparkle, an
+    infusion, a pool's charging, the wand's beam, a falling star, a bolt, the Pure Daisy) and at
+    the end of each level tick sends each Horizon player in that level one `botania:fx` mod
+    message (at most 4 a tick, 29 000 bytes each) with the records within 36 blocks of them;
+    the client half spawns the particles Botania's client adds for each;
+  - bursts: `ManaBurstEntity.particles` (wisps every 0.095 blocks back along the tick's flight,
+    size `0.2·(mana/start + wobble)`, a dark colour lightened) and `handleEntityEvent`'s death;
+    the Terra Blade's beam the same; Starcaller stars: `FallingStarEntity`'s sparkles;
+    Thundercaller: `BoltParticleOptions`' bolt (segments `√(100·d)`, sine spread, gaussian
+    noise, grows over 15 ticks and fades from its start) in `0x00C6FF`;
+  - pools: a rising wisp with a chance of a tenth of how full the pool is, an infusion's 25
+    sparkles, the mana items' charging and draining wisps; the Endoflame's sparkles by how full
+    it is; the Pure Daisy's sparkles over the blocks it turns and wisps where it turned one (with
+    levelEvent 2001 of the new block); the apothecary's petal-coloured sparkles, splashes and a
+    craft's sparkles; the wand's rainbow beam of sparkles every twentieth of a block;
+  - vanilla clients get no mod messages; Botania's own vanilla particles (the Endoflame's flames
+    and smoke, the apothecary's burning items) stay vanilla particles.
 - `content/`: 55 corrected block declarations and the 16 mystical flower patches with
   `minecraft:simple_block` for the content `.hmod` (see README). The local
   `.local/modports/botania/botania-1.20.1-456-content.hmod` has both applied (sha256
@@ -179,6 +202,13 @@ been played on a phone yet.
   (`hsvToRgb` bars, `encode/decodeRelativeItemPosition`, the charging parabola, the
   `ManaItemImpl`s, `ManaItemHandlerImpl`'s loops, the pool's item transfer,
   `discountManaForTool`, `damageItemIfPossible`).
+- With the particles: 103 passed, 0 failed (17 of them `fx`, expected values worked out by hand
+  from Botania's `FXWisp`, `FXSparkle`, `ManaBurstEntity`, `ManaPoolBlockEntity`,
+  `GeneratingFlowerBlockEntity`, `PetalApothecaryBlockEntity`, `PureDaisyBlockEntity`,
+  `ItemTwigWand`, `FallingStarEntity` and `BoltParticleOptions`/`BoltRenderer`: lifetimes and
+  sizes by age, sprite frames, the sparkle's wiggle, the trail's spacing, sizes and dark-colour
+  lift, the death's four wisps, pool and flower chances, the charging parabola's ends, the beam's
+  rainbow, the bolt's segments and its growing and fading window, the records' wire form).
 - All 25 bundle recipes unwrap into 26.3 form (scratch-only test, output checked by eye).
 - Engine runs (`android-native-engine.yml`, arm64-v8a, `publish=false`):
   - 42728593487, bundle 162df0be9c: failed in `plan`, `E_INVALID_HELPER` (helper `ticks`
@@ -235,7 +265,8 @@ Driven through horizon-ctl (`control.enable` in the app's private folder), engin
   switches the mode. A placed spreader faces the player (rotationX 90 with the player to the
   south), as `ManaSpreaderBlock.setPlacedBy`.
 - Endoflame binds to the nearest spreader on its first tick, burns thrown coal (burnTime 800),
-  the spreader shoots 160-mana bursts with a green dust trail into the pool.
+  the spreader shoots 160-mana bursts with a green dust trail into the pool (before the
+  particles branch: now a wisp trail).
 - A comparator on a pool lights a lamp for a filled or creative pool, not for an empty one.
 - Mystical flowers generate in new chunks (white and lime ones within 96 blocks of 4000 4000)
   and `/place feature botania:mystical_flowers` places them.
@@ -302,7 +333,7 @@ Found and fixed during the test:
      spreader aims at the pool;
    - place the Endoflame within 6 blocks of the spreader: it binds by itself (or sneak-click it,
      then the spreader). Throw coal near it (within 3 blocks): flames, mana goes to the spreader,
-     a green dust trail flies to the pool every ~107 ticks; a comparator on the pool rises;
+     a green wisp trail flies to the pool every ~107 ticks; a comparator on the pool rises;
    - throw an iron ingot into the pool with 3000+ mana: a manasteel ingot comes out on top.
    - also worth a look: sneak-click in the air switches the wand's mode (action bar); in function
      mode a sneak-click on a spreader's side turns it away from the click; a fish bucket into an
@@ -318,8 +349,8 @@ Found and fixed during the test:
 - Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`):
   - engine-only: the third-person bow arm pose (`mobs/anim.rs` picks `ArmPose::Bow` by the id
     `minecraft:bow`, not by the use animation) and the touch projectile crosshair;
-  - the beam, stars and chain lightning hit mobs only (no PvP), drawn as vanilla dust (G2): big
-    green squares for the beam; a beam or star is dropped when its owner leaves; the Starcaller's
+  - the beam, stars and chain lightning hit mobs only (no PvP); a beam or star is dropped when
+    its owner leaves; the Starcaller's
     timer is per player, not per sword; Unbreaking rolls twice when mana pays for wear;
   - Terra Shatterer: no pool charging, no rank in the tooltip, no enabled model; its NBT changes
     every tick while on;
@@ -331,8 +362,8 @@ Found and fixed during the test:
   proficiency (no rods), the manaweave boots' powder snow walking, accessories (Horizon has no
   accessory inventory: a band works from the inventory only), bellows (pools charge at 1000), the
   ring recipes carrying the tablet's mana (`botania:mana_upgrade`: the crafting grid isn't
-  reachable from a hook), the creative tablet's epic rarity, Botania's wisp sprites (dust instead),
-  the tooltip bar's rank letters for the Terra Shatterer.
+  reachable from a hook), the creative tablet's epic rarity, the tooltip bar's rank letters for
+  the Terra Shatterer.
 - Mana items, approximations: wear is heard after vanilla's Unbreaking, so each remaining point
   is paid in full (Botania rolls its own Unbreaking first: the same mana on average for tools,
   slightly more for armour); `stackInSlot == stack` is matched by value; a Mana Mirror bound to a
@@ -340,9 +371,13 @@ Found and fixed during the test:
 - Ender air: the function `botania:ender_air_release` doesn't load (no `botania:ender_air`
   entity, which the Pure Daisy leaves when it turns end stone and a glass bottle picks up), and
   no ender air bottles outside the End.
-- Trail and beam (engine gap G2): server-sent vanilla dust, not Botania's wisps and sparkles:
-  no additive blending, no wisp sprite, the dust's own motion; one particle packet per burst per
-  tick to nearby players. Botania's full trail (2–5 wisps a tick) isn't offered.
+- Botania's own particles (`bundle/particles.rs`): not seen in game yet. They need an engine with
+  hook points API 417 (branch `engine-tinted-particles`): on an older one the bundle doesn't
+  build. Against Botania: the Thundercaller's bolt is a line of glowing wisp-sprite dots per
+  segment, not `BoltRenderer`'s quads; no particle ignores depth (Botania's do only with the
+  Manaseer Monocle); the apothecary's lava smoke and pops, a flower's block offset and bellows
+  aren't drawn; several infusions in one pool tick give one burst of 25 sparkles; a client
+  without the bundle (or a vanilla one) sees none of them.
 - Client prediction: Botania answers clicks on both sides; the port answers on the server only.
   The 250 ms window after an answered click is a heuristic.
 - Wand: no rotation of other blocks on a sneak-click (`manipulateBlockstate`), no HUD, no outline
@@ -358,7 +393,7 @@ Found and fixed during the test:
   the sprite placed in a nominal 2048 atlas for its bands; the apothecary's water is its biome's
   colour, not blended over neighbouring biomes; time is the level's game time, not
   `ticksInGame`; a spreader's lens, padding and scaffolding aren't drawn (not ported).
-- Not done in game yet: levelEvent 2001 when the daisy converts, floating flowers, Enchanted
+- Not done in game yet: floating flowers, Enchanted
   Soil's double tick, pool colour with petals, lenses, other generating flowers.
 - Mana items not played yet: the creative tablet, the bands, the Mana Mirror.
 - `native_blocks` can't fix the declarations from code: a block the content mod declares too is
@@ -369,8 +404,8 @@ Found and fixed during the test:
 1. The device test above, on the run 42895670428 engine.
 2. Block entity renderers on a phone: a spreader turning with the wand, its core spinning, the
    fabulous pool's rainbow, a catalyst's overlay; the apothecary's lava.
-3. Burst particles drawn by the client (mod messages + `ParticleEngine::controlled` with colour
-   and size) if the dust trail costs too much on phones or looks wrong.
+3. Botania's own particles on a phone: bursts, the wand's beam, pools charging, the Pure Daisy,
+   the Terra Blade, Starcaller and Thundercaller; their cost with many spreaders.
 4. The wand's HUD and the bound-block outline (`native_hud`, `native_world_primitives`); mana
    tablet and the pool's `outputting`.
 5. Phase 2 flowers (Hydroangeas, Daybloom) on the same spreader binding.

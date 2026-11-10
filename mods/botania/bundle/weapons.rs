@@ -8,12 +8,12 @@
 
 use super::Game;
 use botania_core::burst::{self, Burst};
+use botania_core::fx::Record;
 use botania_core::mth;
 use botania_core::weapons::{self, Bow, Link, Star, StarWorld};
 use horizon_client::camera::{FovPlayer, UseItem};
 use horizon_client::first_person::Hand;
 use horizon_client::items::ItemStack;
-use horizon_client::particles::ParticleOptions;
 use horizon_core::geometry::Vec3;
 use horizon_core::random::RandomSource;
 use horizon_world::consumable::UseAnimation;
@@ -51,6 +51,8 @@ struct Blade {
     dim: &'static str,
     burst: Burst,
     owner: u32,
+    // Its trail's own part of the size (`botania_particles::wobble`).
+    wobble: f32,
 }
 
 // A falling star in flight, and the entity id of the player who called it.
@@ -107,50 +109,6 @@ fn request_mana_exact_for_tool(
 }
 
 // ---- small things -----------------------------------------------------------------------------
-
-type Fx = (ParticleOptions, [f64; 3], [f64; 3], i32);
-
-// Sends `list` (options, where, spread, count) to the players near each, in one pass over the
-// level in place (`ServerLevel.sendParticles`). Botania's wisps and sparkles are client
-// particles with a colour and a size; a mod's particle type has neither (engine gap G2), so
-// they are coloured dust.
-fn send_particles(game: &mut Game<'_>, list: &[Fx]) {
-    if list.is_empty() || !game.native_authoritative() {
-        return;
-    }
-    game.with_level(|_, level, _| {
-        for (options, at, spread, count) in list {
-            level.native_send_particles(options, None, *at, *spread, 0.0, *count);
-        }
-    });
-}
-
-fn rgb_of(color: u32) -> [f32; 3] {
-    [
-        ((color >> 16) & 0xFF) as f32 / 255.0,
-        ((color >> 8) & 0xFF) as f32 / 255.0,
-        (color & 0xFF) as f32 / 255.0,
-    ]
-}
-
-fn lerp3(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
-}
-
-// Dust every `spacing` blocks from `from` to `to`.
-fn dust_line(fx: &mut Vec<Fx>, options: &ParticleOptions, from: [f64; 3], to: [f64; 3]) {
-    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-    let steps = ((len / 0.4).ceil() as i32).clamp(1, 64);
-    for i in 0..=steps {
-        let at = lerp3(from, to, f64::from(i) / f64::from(steps));
-        fx.push((options.clone(), at, [0.0; 3], 1));
-    }
-}
 
 fn aabb(b: horizon_core::geometry::Aabb) -> burst::Aabb {
     let (lo, hi) = (b.min_position(), b.max_position());
@@ -452,7 +410,13 @@ fn spawn_blade(game: &mut Game<'_>, owner: u32) {
     };
     let burst = weapons::blade_burst(at[0], eye[1], at[2], game.yaw, game.pitch);
     let dim = game.dim.id();
-    state().blades.push(Blade { dim, burst, owner });
+    let wobble = super::botania_particles::wobble();
+    state().blades.push(Blade {
+        dim,
+        burst,
+        owner,
+        wobble,
+    });
     game.with_hand(Hand::Main, |g| g.damage_held(1));
     game.native_play_sound_in_place("botania:terrablade", at, PLAYERS, 1.0, 1.0);
 }
@@ -562,17 +526,13 @@ fn thunder(game: &mut Game<'_>, attacker: u32, first: u32) {
         p.position.y + f64::from(p.dimensions.height) / 2.0,
         p.position.z,
     ];
-    let options = ParticleOptions::dust_transition(
-        rgb_of(weapons::THUNDER_OUTER),
-        rgb_of(weapons::THUNDER_INNER),
-        1.0,
-    );
+    // `THUNDERCALLER_EFFECT`: Botania's bolt from one to the next (`botania_particles`).
     let mut fx = Vec::new();
     for to in centres {
-        dust_line(&mut fx, &options, from, to);
+        fx.push(Record::Bolt { from, to });
         from = to;
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
 }
 
 // `StarcallerItem.inventoryTick` on a swing: more than 12 ticks after the last, a star falls on
@@ -745,7 +705,6 @@ fn move_blades(game: &mut Game<'_>, dimension: &str, blades: &mut [Blade]) {
     let mut strikes: Vec<(u32, u32)> = Vec::new();
     let mut deliveries = Vec::new();
     let mut fx = Vec::new();
-    let rgb = rgb_of(weapons::BLADE_COLOR);
     {
         let world = super::botania::GameBursts { game: &*game };
         for b in blades.iter_mut() {
@@ -775,14 +734,24 @@ fn move_blades(game: &mut Game<'_>, dimension: &str, blades: &mut [Blade]) {
             if let Some(d) = r.delivered {
                 deliveries.push(d);
             }
-            // The trail along this tick's flight, as big as the mana left.
-            let scale = burst::trail_scale(b.burst.mana.max(0), b.burst.starting_mana);
-            for i in 1..=4 {
-                let at = lerp3(p, b.burst.pos, f64::from(i) / 4.0);
-                fx.push((ParticleOptions::dust(rgb, scale), at, [0.0; 3], 1));
-            }
-            if !b.burst.alive {
-                fx.push((ParticleOptions::dust(rgb, 0.8), b.burst.pos, [0.08; 3], 4));
+            // A mana burst's particles (`ManaBurstEntity.particles`, its death): the trail along
+            // this tick's flight, as big as the mana left.
+            let size = b.burst.mana.max(0) as f32 / b.burst.starting_mana.max(1) as f32;
+            if b.burst.alive {
+                fx.push(Record::Burst {
+                    pos: b.burst.pos,
+                    prev: p,
+                    motion: v.map(|c| c as f32),
+                    color: weapons::BLADE_COLOR,
+                    size,
+                    wobble: b.wobble,
+                });
+            } else {
+                fx.push(Record::BurstDeath {
+                    pos: b.burst.pos,
+                    color: weapons::BLADE_COLOR,
+                    size,
+                });
             }
         }
     }
@@ -798,7 +767,7 @@ fn move_blades(game: &mut Game<'_>, dimension: &str, blades: &mut [Blade]) {
             Some(owner),
         );
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
 }
 
 // `FallingStarEntity.tick`: the star falls; on the ground (once it has been in the air) it breaks
@@ -834,12 +803,7 @@ fn move_stars(game: &mut Game<'_>, dimension: &str, stars: &mut [Falling]) {
             if let Some(at) = step.broke {
                 broken.push(at);
             }
-            fx.push((
-                ParticleOptions::dust(weapons::STAR_RGB, 1.5),
-                f.star.pos,
-                [0.4; 3],
-                6,
-            ));
+            fx.push(Record::Star { pos: f.star.pos });
             let reach = weapons::star_reach(f.star.pos, step.old);
             let mut met = false;
             for (id, bounds, hurt, villager, alive) in mobs.iter_mut() {
@@ -874,7 +838,7 @@ fn move_stars(game: &mut Game<'_>, dimension: &str, stars: &mut [Falling]) {
             Some(owner),
         );
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
 }
 
 // ---- the Terra Shatterer ------------------------------------------------------------------------

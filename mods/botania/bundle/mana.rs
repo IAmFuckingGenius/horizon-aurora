@@ -11,6 +11,7 @@
 
 use super::Game;
 use botania_core::consts::PoolVariant;
+use botania_core::fx::Record;
 use botania_core::mana_gear::{self, ArmorSet};
 use botania_core::mana_handler::{self, Asker, DamagePayer};
 use botania_core::mana_item::{self, Bar, Kind, ManaStack, Nbt, PoolMode};
@@ -19,7 +20,6 @@ use horizon_client::containers::BlockEntity;
 use horizon_client::effects::EffectAction;
 use horizon_client::hud::HudBatch;
 use horizon_client::items::ItemStack;
-use horizon_client::particles::ParticleOptions;
 use horizon_client::text::Text;
 use horizon_core::random::RandomSource;
 use horizon_world::nbt::{Compound, JavaString, Tag};
@@ -37,23 +37,15 @@ const GRAY: u32 = 0xAAAAAA;
 const RED: u32 = 0xFF5555;
 // The tooltip's mana bar: a 3 pixel bar in a 1 pixel black frame (`ManaBarTooltipComponent`).
 const BAR_HEIGHT: f32 = 5.0;
-// Dust drawn along a charging or draining wisp's path.
-const FLOW_POINTS: usize = 6;
-const FLOW_SCALE: f32 = 0.4;
 
 // ---- state ------------------------------------------------------------------------------------
 
 struct State {
-    // The module's own generator, for effects only (the level's random keeps vanilla's draws).
-    rng: u64,
     // The widest line of the mana item tooltip last built, which the mana bar spans.
     tooltip_width: f32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State {
-    rng: 0,
-    tooltip_width: 0.0,
-});
+static STATE: Mutex<State> = Mutex::new(State { tooltip_width: 0.0 });
 
 // When the bar's pulse started (`ClientTickHandler.ticksInGame`).
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
@@ -61,20 +53,6 @@ static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 // Never held across a call into the game.
 fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn random_unit() -> f64 {
-    let mut s = state();
-    let mut x = if s.rng == 0 {
-        0x2545_F491_4F6C_DD1D
-    } else {
-        s.rng
-    };
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    s.rng = x;
-    (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
 // ---- the stack's NBT (`ItemNBTHelper` keys in `minecraft:custom_data`) -------------------------
@@ -653,8 +631,8 @@ pub(super) fn use_on(
 
 // `ManaPoolBlockEntity.serverTick`'s loop over the item entities in the pool's cell: an outputting
 // pool charges the mana items, any other drains them, 1000 a tick each (no bellows are ported).
-// Every 10 of the pool's ticks a moving item draws the charging animation's path in dust (a
-// server can't send Botania's wisps). Called by `botania::pool_tick` after the infusions.
+// Every 10 of the pool's ticks a moving item starts the charging animation's wisps on the clients
+// near it (`CHARGE_EFFECT_EVENT`). Called by `botania::pool_tick` after the infusions.
 pub(super) fn pool_items(
     game: &mut Game<'_>,
     pos: [i32; 3],
@@ -706,42 +684,17 @@ pub(super) fn pool_items(
     } else {
         0.0
     };
-    let rgb = {
-        let c = mana_item::POOL_PARTICLE_COLOR;
-        [
-            ((c >> 16) & 0xFF) as f32 / 255.0,
-            ((c >> 8) & 0xFF) as f32 / 255.0,
-            (c & 0xFF) as f32 / 255.0,
-        ]
-    };
-    let options = ParticleOptions::dust(rgb, FLOW_SCALE);
-    let origin = [f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])];
-    let mut points = Vec::new();
-    for param in paths {
-        let item = mana_item::randomize_item_pos(
-            mana_item::decode_item_position(param, relative),
-            [random_unit(), random_unit(), random_unit()],
-        );
-        let in_pool =
-            mana_item::pool_flow_pos(mode.outputting, relative, [random_unit(), random_unit()]);
-        let (start, end) = if mode.outputting {
-            (in_pool, item)
-        } else {
-            (item, in_pool)
-        };
-        let extra = 0.05 * random_unit();
-        for p in mana_item::flow_points(start, end, extra, FLOW_POINTS) {
-            points.push([origin[0] + p[0], origin[1] + p[1], origin[2] + p[2]]);
-        }
-    }
-    // One pass over the level in place (`ServerLevel.sendParticles`).
-    if game.native_authoritative() {
-        game.with_level(|_, level, _| {
-            for at in &points {
-                level.native_send_particles(&options, None, *at, [0.0; 3], 0.0, 1);
-            }
-        });
-    }
+    // The block event's parameter is the item's place, which fits in a byte.
+    let charging = mode.outputting;
+    super::botania_particles::send(
+        game,
+        paths.into_iter().map(|param| Record::Flow {
+            pool: pos,
+            param: param as u8,
+            relative,
+            charging,
+        }),
+    );
 }
 
 // ---- the client: bar, tooltip, the tooltip's mana bar ------------------------------------------

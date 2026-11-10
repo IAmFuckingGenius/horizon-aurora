@@ -1,6 +1,7 @@
 # Botania for Horizon Aurora: a modified port of Vazkii's Botania mechanics (Botania License, see
 # LICENSE and NOTICE.md). A horizon-mixins bundle: named hook points only (NATIVE_HOOKS_API 416 has
-# them all), the game-side module `botania` in game.rs, and the mechanics in the `core` crate.
+# them all; the particles' controllers need API 417), the game-side module `botania` in game.rs, and
+# the mechanics in the `core` crate.
 # Blocks, items, textures and recipes come from the Botania content mod (.hmod).
 [mod]
 id = "botania"
@@ -567,4 +568,48 @@ bindings = [
   { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
   { name = "parts", ty = "&crate::game::native_mob_draw::NativeModelParts<'_>", value = "parts" },
   { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
+]
+
+# ---- Botania's own particles (particles.rs): the module `botania_particles` beside `botania` ------
+# Wisps and sparkles drawn on the client by compiled particle controllers with additive blending
+# (API 417). The server queues what its bursts, pools, flowers, beams and stars show, and sends
+# each nearby Horizon player one `botania:fx` mod message per level tick.
+
+[[module]]
+id = "particles"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_particles"
+source = "particles.rs"
+
+[[injection]]
+id = "zz_fx_flush"
+hook = "level_tick_post"
+hook_version = 1
+kind = "HEAD"
+helper = "fx_flush.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "dimension", ty = "&str", value = "dimension" },
+]
+
+[[injection]]
+id = "fx_from_server"
+hook = "net_from_server"
+hook_version = 1
+kind = "HEAD"
+helper = "fx_from_server.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "channel", ty = "&str", value = "channel" },
+  { name = "data", ty = "&[u8]", value = "data" },
+]
+
+[[injection]]
+id = "fx_tick"
+hook = "tick"
+hook_version = 1
+kind = "HEAD"
+helper = "fx_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]
