@@ -373,11 +373,17 @@ pub fn upgrade_recipe(recipe: &mut Value) -> bool {
     true
 }
 
-/// Block and item ids vanilla renamed after 1.21.1, as its datafixers
-/// rename them in worlds (DataVersion 4541: the chain became the iron chain
-/// when copper chains came in). A data file naming the old id fails to load
-/// in 26.3: a recipe, a loot entry, a processor's block match.
-const RENAMED_IDS: [(&str, &str); 1] = [("minecraft:chain", "minecraft:iron_chain")];
+/// Block and item ids vanilla renamed after 1.20.1, as its datafixers
+/// rename them in worlds (DataVersion 3692: grass became short grass; 3800:
+/// the scute became the turtle scute when armadillos came in; 4541: the chain
+/// became the iron chain when copper chains came in). A data file naming the
+/// old id fails to load in 26.3: a recipe, a loot entry, a processor's block
+/// match.
+const RENAMED_IDS: [(&str, &str); 3] = [
+    ("minecraft:grass", "minecraft:short_grass"),
+    ("minecraft:scute", "minecraft:turtle_scute"),
+    ("minecraft:chain", "minecraft:iron_chain"),
+];
 
 /// Every string of a data file that is a renamed id ([`RENAMED_IDS`]) set to
 /// the new one, in place; whether any was.
@@ -2384,11 +2390,18 @@ mod tests {
         assert!(renamed_ids(&mut rule));
         assert_eq!(rule["input_predicate"]["block"], "minecraft:iron_chain");
         assert_eq!(rule["output_state"]["id"], "minecraft:iron_chain");
+        // A 1.20.1 mod's mana infusion: grass became short grass in 1.20.3.
+        let mut infusion = json!({"input": {"item": "minecraft:grass"},
+            "output": {"item": "minecraft:wheat_seeds"}});
+        assert!(renamed_ids(&mut infusion));
+        assert_eq!(infusion["input"]["item"], "minecraft:short_grass");
         // Only whole ids: other blocks and mods' own chains stay.
         let mut other = json!([
             "minecraft:chain_command_block",
             "m:chain",
-            "minecraft:iron_chain"
+            "minecraft:iron_chain",
+            "minecraft:grass_block",
+            "minecraft:short_grass"
         ]);
         assert!(!renamed_ids(&mut other));
     }
