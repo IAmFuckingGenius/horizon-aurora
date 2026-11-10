@@ -152,8 +152,9 @@ Driven through horizon-ctl (`control.enable` in the app's private folder), engin
 - Mana pool infusion: iron → manasteel, diamond → mana diamond, cookie → mana cookie, short grass
   → grass seeds; an empty pool infuses nothing. Alchemy catalyst: acacia log → dark oak log,
   short grass → fern. Conjuration catalyst: 1 leaf block → 2.
-- Petal Apothecary: a water bucket fills it; 4 white petals and seeds give a Pure Daisy and use
-  the water. The Pure Daisy turns 4 stone into livingrock and 4 oak logs into livingwood.
+- Petal Apothecary: a water bucket fills it (the empty bucket comes back), a cod bucket fills it
+  and lets the cod out; 4 white petals and seeds give a Pure Daisy and use the water; broken, it
+  drops the petals it holds. The Pure Daisy turns 4 stone into livingrock and 4 oak logs into livingwood.
 - Wand of the Forest: function mode aims a spreader; bind mode selects a spreader and binds it to
   a pool ("Selected", "Bound"); sneak-clicking a pool toggles `outputting`; sneak-clicking air
   switches the mode. A placed spreader faces the player (rotationX 90 with the player to the
@@ -208,8 +209,8 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 
 ## Not verified / known gaps
 
-- Not played on a phone yet. Unchecked in game: fish into the apothecary, the apothecary
-  dropping its items when broken, survival crafting of the whole chain.
+- Not played on a phone yet; the whole chain hasn't been crafted in survival (its recipes are
+  registered: `/recipe give` unlocks each).
 - Botania's bows (Livingwood, Crystal) can't be drawn: the game knows a bow by the id
   `minecraft:bow`, not by its components.
 - Weapon and tool abilities are code in Botania and not ported: the Terra Blade's beam, the
