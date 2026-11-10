@@ -208,7 +208,7 @@ been played on a phone yet.
   - for the rings: `botania_tools::area_rings` (what Thor and Temperance change, none yet),
     `botania_weapons::pick_break_other` (the Shatterer's area from a block and face) and
     `botania_tools::terra_axe_break_other` (a felling from a block, with its range).
-- `content/`: 55 corrected block declarations and the 16 mystical flower patches with
+- `content/`: every block declaration (676) and the 16 mystical flower patches with
   `minecraft:simple_block` for the content `.hmod` (see README). The local
   `.local/modports/botania/botania-1.20.1-456-content.hmod` has both applied (sha256
   `4add364b…`; the copy before the flower patches is `….hmod.before-flowers`).
@@ -220,6 +220,36 @@ been played on a phone yet.
   the same time. It needs an engine that loads providers outside the `minecraft` namespace
   (Aurora branch `engine-use-poses`). `dist/botania.hmod` carries it (`build_content.py
   --overlay`, sha256 `50f9b09c…`).
+- Every block has Botania's own properties instead of the port-pack's stone: `block_properties.py`
+  reads `BotaniaBlocks.java` and `BotaniaFlowerBlocks.java` (pinned commit), follows each
+  block's `BlockBehaviour.Properties` through its `copy(...)` chain and writes hardness,
+  explosion resistance, light, `requiresCorrectToolForDrops`, map colour, the vanilla block whose
+  sounds match its `SoundType`, occlusion and random ticks into every declaration; the 56
+  hand-written ones only gain the `properties` they lacked. Templates of the right kind where the
+  stand-in was wrong: flowers on the poppy (Botania's outlines, no collision), glass on glass,
+  panes on the glass pane, slabs, stairs, walls, fences and pillars on vanilla ones that burn
+  only for wood, the spectral rail on a straight rail, the detectors on stone with a `powered`
+  state; Botania's outlines for the pylons, runic altar, pump, incense plate, Gaia heads and the
+  rest (`SHAPES`). `dist/botania.hmod` carries them (sha256 `ff62bdd7…`).
+- Tool uses (`[[module]] botania_tool_uses`, `bundle/tool_uses.rs`; rules in `botania-core`
+  `tool_uses`; hooks `use_item_on`, `use_item`, `right_click_block`, `loot_drops`,
+  `level_tick_post`):
+  - the manasteel, elementium and vitreous pickaxes and the Terra Shatterer use the first stack
+    whose description id names a torch (`TORCH_PATTERN`, Java's regex replayed) on the clicked
+    face, as the player would place it (used up, its sound, the clicked point), then wait 5
+    ticks; the manasteel and elementium axes and the Terra Truncator do the same with a sapling
+    (`SAPLING_PATTERN`), and strip as axes when none placed. The main hand passes while the off
+    hand holds a block item (the Shatterer: anything), and a sneaking Shatterer with a rank
+    passes to its area switch;
+  - advancements from Botania's code: `challenge/rank_ss_pick` when the Terra Shatterer breaks
+    an area at rank SS, `main/tiny_potato_pet` when an empty hand pets a tiny potato (with a
+    heart), `main/lexicon_use` (`botania:use_item_success`) when the Lexica Botania is used,
+    with its opening sound;
+  - a player killed by a player holding an elementium axe drops their head (`fill_player_head`:
+    their profile) at 0.0909 + 0.0909 per Looting level. It needs the engine below.
+- Engine (Aurora branch `engine-botania-blocks`): `native_loot_drops` hears a dying player's own
+  loot table (`minecraft:entities/player`, with `mob_drops` on, before the inventory), naming
+  the player credited with the kill. Vanilla's table is empty, so nothing else changes.
 - Engine (Aurora branch `engine-use-poses`), for the livingwood and crystal bows, whose
   `native_use_animation` answers `Bow`: a player seen in third person (another one, this one in
   F5 or in the inventory) takes the bow pose while drawing one, as `AvatarRenderer.getArmPose`
@@ -258,6 +288,15 @@ been played on a phone yet.
   deep at most, a leaf bridge to a second trunk, the beheading chances, the shears' ticks and box,
   the rings' areas, the rank letters' colour runs and the bar's width and hue.
 - All 25 bundle recipes unwrap into 26.3 form (scratch-only test, output checked by eye).
+- With the tool uses: 116 passed, 0 failed (5 of them `tool_uses`: Java's `TORCH_PATTERN` and
+  `SAPLING_PATTERN` on vanilla ids, the torchflower and its seeds left out, camel case and
+  marks as Java reads them, description ids, which tool places what, the Shatterer's guard).
+- `block_properties.py`: a second run writes nothing; checked by hand against Botania's table:
+  livingrock (2/10, tool, stone sounds, map 36), livingwood (oak log, 2/2, wood sounds), glimmering
+  livingwood (light 12), mana glass (glass, light 15, not occluding), the manasteel, terrasteel
+  and elementium blocks (3/10, metal sounds, tool), bifrost (unbreakable, light 15), the pane,
+  slab, stairs and spectral rail templates, a flower's outline without collision, the pool and
+  spreader gaining hardness and the right tool.
 - Engine runs (`android-native-engine.yml`, arm64-v8a, `publish=false`):
   - 42728593487, bundle 162df0be9c: failed in `plan`, `E_INVALID_HELPER` (helper `ticks`
     shadowed the parameter `ticks`); fixed by prefixing every helper with `botania_`.
@@ -406,14 +445,29 @@ Found and fixed during the test:
     its owner leaves;
   - Terra Shatterer: its mana changes every tick while on, as in Botania (`addMana(-level)` in
     `inventoryTick`), so its NBT does too; pools charge it and it never empties into one
-    (`canReceiveManaFromPool`, `canExportManaToPool`, `mana_item`); `rank_ss_pick` isn't granted;
+    (`canReceiveManaFromPool`, `canExportManaToPool`, `mana_item`);
   - Unbreaking rolls once: the mana pays the wear left after vanilla's roll (see the mana items'
     approximations);
-  - not ported: the sword's pixies, the rings (Thor, temperance, Loki), the manasteel and
-    elementium pickaxe and axe placing torches and saplings from the inventory (`useOn`).
+  - not ported: the sword's pixies, the rings (Thor, temperance, Loki).
+- Tool uses (`bundle/tool_uses.rs`), against Botania; none of it played yet:
+  - the torch or sapling is used through the game's whole right click, so the clicked block has
+    its own use first as if it were in hand (a composter takes the sapling, a flower pot pots
+    it), where Botania calls only the item's `useOn`; the right-click hooks hear it a second time;
+  - the inventory's first 36 slots are searched (Botania: armour and off hand too); the count
+    of torches or saplings left isn't shown (`ItemsRemainingRenderHandler`); the server places
+    it, the client doesn't predict it;
+  - a player's head: the killer is the player the death credits (`getKillCredit`, 100 ticks),
+    not Botania's `lastHurtByPlayer`, and their main hand is read after the level's tick; it
+    needs the engine branch `engine-botania-blocks`;
+  - tiny potato: only the empty-hand pet; its items, jump, names and birthday aren't ported. The
+    Lexica Botania opens no book (no Patchouli) and its trigger's location test is ignored;
+  - advancements whose triggers live in unported code stay ungranted (the enchanter, baubles,
+    the luminizer, relics, the Gaia Guardian, corporea, the spawner mover, the mana blaster).
+- Block properties: the red string blocks and the metamorphic swamp bricks stay on the carved
+  pumpkin, so they face the four horizontal ways only (Botania: six); the potted flowers are
+  stone with the pot's outline; `alfheim_portal` isn't in the content `.hmod`.
 - The remaining tools (`bundle/tools.rs`), against Botania; none of it played yet:
-  - beheading: a player killed with the axe drops no head (where its drops are heard, its killer
-    isn't known); in 26.3 Looting goes on `#enchantable/melee_weapon` only, so an axe gets it
+  - beheading: in 26.3 Looting goes on `#enchantable/melee_weapon` only, so an axe gets it
     from `/give … [enchantments={…}]` or an anvil with a book, not the enchanting table;
   - shears: a leashed mob is skipped (the shears the server shears with would cut its lead);
     the shearing is done by a fake player, so the drops and the game event aren't the user's;
