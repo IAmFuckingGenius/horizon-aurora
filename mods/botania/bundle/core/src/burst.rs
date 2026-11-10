@@ -304,7 +304,18 @@ impl Burst {
     /// `ManaBurstEntity.tick` (with `ThrowableProjectile.tick`): leave the source, cast the ray to
     /// where it moves, hit, move, lose mana.
     pub fn tick(&mut self, world: &impl BurstWorld) -> BurstTick {
+        self.tick_with(world, |_, _| {})
+    }
+
+    /// `tick` with the lens's `updateBurst` (`LensEffectItem`), which `ManaBurstEntity.tick` runs
+    /// after the move and before the mana loss: `update` gets the burst and where it was.
+    pub fn tick_with(
+        &mut self,
+        world: &impl BurstWorld,
+        mut update: impl FnMut(&mut Burst, [f64; 3]),
+    ) -> BurstTick {
         let mut out = BurstTick::default();
+        let old = self.pos;
         self.ticks_existed += 1;
         if !self.left_source && mth::block_of(self.pos) != self.source {
             self.left_source = true;
@@ -319,6 +330,7 @@ impl Burst {
         }
         // No drag (ThrowableProjectileMixin) and no gravity: a full step.
         self.pos = to;
+        update(self, old);
         if self.ticks_existed >= self.min_mana_loss {
             self.accumulated_loss += self.mana_loss_per_tick;
             let loss = self.accumulated_loss as i32;
