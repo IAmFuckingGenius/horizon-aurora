@@ -12847,15 +12847,12 @@ fn new_event_loop() -> std::result::Result<EventLoop<()>, winit::error::EventLoo
 }
 pub use launch_api::{UsageError, exit_code};
 
-pub fn run_with() -> Result<()> {
-    let Some(mut options) = Options::read()? else {
-        return Ok(());
-    };
-    if options.execution_role == execution_role::ExecutionRole::DedicatedServer
-        && !dedicated::preflight(&mut options)?
-    {
-        return Ok(());
-    }
+/// The native hooks the library's server code calls through a slot it can't fill itself (the
+/// damage, knockback, block contact, player movement and packet code lies below gameplay). Every
+/// start installs them before a world opens: `run_with`, and the Android launcher's
+/// `android_game`, which never runs `run_with`. Without them on Android no mod heard a hit on a
+/// player or a mob (`native_living_incoming_damage`), a knockback or a block contact.
+pub(crate) fn install_server_hooks() {
     // The packets the server sends its players reach the mods that ask (native_packets.rs).
     let _ = horizon_client::lan::conn::SERVER_PACKET.set(Game::native_server_packet);
     let _ = horizon_client::lan::conn::ENTITY_DATA_TO.set(Game::native_entity_data_to);
@@ -12867,6 +12864,17 @@ pub fn run_with() -> Result<()> {
     let _ = horizon_client::lan::hub::PLAYER_MOVE.set(Game::native_player_move);
     let _ = horizon_client::lan::hub::PLAYER_TELEPORT.set(Game::native_player_teleport);
     let _ = horizon_client::block_contact::TRAMPLE.set(Game::native_trample);
+}
+pub fn run_with() -> Result<()> {
+    let Some(mut options) = Options::read()? else {
+        return Ok(());
+    };
+    if options.execution_role == execution_role::ExecutionRole::DedicatedServer
+        && !dedicated::preflight(&mut options)?
+    {
+        return Ok(());
+    }
+    install_server_hooks();
     // Before any worker starts: on Linux they go behind the server thread
     // and the render thread.
     horizon_threads::put_helpers_behind();

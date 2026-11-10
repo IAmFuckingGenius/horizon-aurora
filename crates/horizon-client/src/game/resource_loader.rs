@@ -312,6 +312,8 @@ fn loading_app(
 pub(crate) fn android_game(arguments: Vec<String>) -> Result<Box<dyn ApplicationHandler>> {
     horizon_client::auth::clear_current();
     let mut options = Options::read_arguments(arguments)?.ok_or("missing Android options")?;
+    // As `run_with` does: the damage, knockback and contact hooks reach the native mods.
+    super::install_server_hooks();
     if crate::performance::active() {
         options.spikes = Some(50.0);
     }
