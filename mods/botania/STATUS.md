@@ -172,6 +172,11 @@ see "In game" under Verified. It has not been played on a phone yet.
     injections, 1 module, 1 crate, 1 data folder; release library in 16 min 55 s, no warnings
     from the bundle; `botania-arm64-v8a.hengine` 36.1 MB (artifact
     `native-engine-botania-arm64-v8a`, until 2026-11-24). This is the current bundle.
+  - 42879206886 (x86_64, engine id `botania-mana`), bundle 3db3aa1e87 (branch `botania-mana`:
+    + mana items, `ManaItemHandler`, mana instead of durability, set bonuses): **success**; 22
+    injections, 2 modules, 1 crate, 1 data folder; no warnings from the bundle. An earlier
+    dispatch of it under engine id `botania` (42876970105) was cancelled while pending by
+    another `botania` dispatch: the workflow keeps one pending run per engine id.
 
 ### In game (Waydroid x86_64, 2026-11-10)
 
