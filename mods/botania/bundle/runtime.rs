@@ -12,6 +12,7 @@ use botania_core::burst::{self, Aabb, Burst, BurstWorld};
 use botania_core::consts::{GENERATING_LINK_RANGE, PoolVariant, SpreaderVariant};
 use botania_core::daisy::PureDaisy;
 use botania_core::flower::{self, Collectors, Endoflame, Fuel, Generating};
+use botania_core::fx::Record;
 use botania_core::pool::{self, Pool};
 use botania_core::recipe::{
     BlockState as RecipeState, InfusionRecipe, Ingredient, PetalRecipe, PureDaisyRecipe,
@@ -111,6 +112,8 @@ struct Flying {
     fresh: bool,
     // The trail's colour (`BurstProperties.color`), 0xRRGGBB.
     color: u32,
+    // Its trail's own part of the size (`botania_particles::wobble`).
+    wobble: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -338,6 +341,8 @@ fn pool_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
     let block = game.native_block(pos);
     let mut p = pool_of(&entity.nbt, &block);
     let crafted = infuse(game, pos, &mut p);
+    // Its wisps now and then, an infusion's sparkles (particles.rs).
+    super::botania_particles::pool(game, pos, p.current(), p.cap, crafted);
     // The mana items lying in it, charged or drained (mana.rs).
     let ticks = state().pools.get(&(dim, pos)).map_or(0, |t| t.ticks);
     super::botania_mana::pool_items(game, pos, &mut p, &entity.nbt, ticks);
@@ -710,6 +715,13 @@ fn endoflame_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntit
     };
     save_generating(entity, &e.flower);
     set_int(entity, "burnTime", e.burn_time);
+    super::botania_particles::generating(
+        game,
+        pos,
+        e.flower.mana,
+        botania_core::consts::ENDOFLAME_MAX_MANA,
+        botania_core::consts::ENDOFLAME_COLOR,
+    );
     let mut fx = Vec::new();
     if let Some(i) = result.lit {
         let item = &items[i];
@@ -907,6 +919,7 @@ fn apothecary_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEnti
         f64::from(pos[2]) + 0.5,
     ];
     let mut changed = false;
+    let mut crafted = false;
     let mut burnt = Vec::new();
     for (n, c) in actions {
         let e = &items[n];
@@ -972,6 +985,7 @@ fn apothecary_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEnti
                 set_fluid(game, pos, entity, Fluid::Empty);
                 game.native_play_sound_in_place("botania:altar_craft", center, 4, 1.0, 1.0);
                 changed = true;
+                crafted = true;
             }
             Collide::Take => {
                 let mut rest = e.stack.clone();
@@ -993,6 +1007,8 @@ fn apothecary_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEnti
         }
     }
     send_particles(game, &burnt);
+    // Sparkles of the petals in it, a craft's sparkles (particles.rs).
+    super::botania_particles::apothecary(game, pos, stacks.iter().map(|s| &*s.item), crafted);
     a.tick_keep();
     if !has_property {
         let f = a.fluid;
@@ -1093,6 +1109,7 @@ fn daisy_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
             Some(time)
         })
     };
+    let mut turned = None;
     if let Some((_, at)) = step.convert
         && let Some((i, s)) = found
     {
@@ -1105,8 +1122,12 @@ fn daisy_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity) {
                 }
             }
             game.native_set_block(dim, at, id, horizon_world::level::flags::UPDATE_ALL);
+            // `PARTICLES_DESTROY_BLOCK` of the new block, then `RECIPE_COMPLETE_EVENT`'s wisps.
+            game.level_event_at(2001, at, id.0 as i32);
+            turned = Some(at);
         }
     }
+    super::botania_particles::daisy(game, pos, &daisy.ticks_remaining, turned);
     set_int(entity, "ticksExisted", ticks_existed);
     set_int(entity, "position", daisy.position as i32);
     for (i, t) in daisy.ticks_remaining.iter().enumerate() {
@@ -1249,6 +1270,7 @@ fn spreader_tick(game: &mut Game<'_>, pos: [i32; 3], entity: &mut ModBlockEntity
             burst: Burst::from_spreader(pos, rx, ry, &stats, false),
             fresh: true,
             color: stats.color,
+            wobble: super::botania_particles::wobble(),
         });
         let at = [
             f64::from(pos[0]) + 0.5,
@@ -1304,6 +1326,7 @@ fn move_bursts(game: &mut Game<'_>, dimension: &str) {
                 b.fresh = false;
                 continue;
             }
+            let prev = b.burst.pos;
             // A burst about to fly into an unloaded chunk is lost.
             let next = botania_core::mth::block_of([
                 b.burst.pos[0] + b.burst.vel[0],
@@ -1318,23 +1341,32 @@ fn move_bursts(game: &mut Game<'_>, dimension: &str) {
                     deliveries.push(d);
                 }
             }
-            let rgb = rgb_of(b.color);
+            // `ManaBurstEntity.particles`: its trail along this tick's flight, as big as the mana
+            // it has left; its death (`handleEntityEvent`) where it dies (particles.rs).
+            let size = b.burst.mana.max(0) as f32 / b.burst.starting_mana.max(1) as f32;
             if b.burst.alive {
-                // The trail: one dust a tick where the burst is (Botania's subtle mode), as big
-                // as the mana it has left.
-                let scale = burst::trail_scale(b.burst.mana, b.burst.starting_mana);
-                fx.push((ParticleOptions::dust(rgb, scale), b.burst.pos, [0.0; 3], 1));
+                fx.push(Record::Burst {
+                    pos: b.burst.pos,
+                    prev,
+                    motion: b.burst.vel.map(|v| v as f32),
+                    color: b.color,
+                    size,
+                    wobble: b.wobble,
+                });
             } else {
                 ended.push(b.burst.source);
-                // Its end: a few wisps where it dies (`ManaBurstEntity.handleEntityEvent`).
-                fx.push((ParticleOptions::dust(rgb, 0.8), b.burst.pos, [0.08; 3], 4));
+                fx.push(Record::BurstDeath {
+                    pos: b.burst.pos,
+                    color: b.color,
+                    size,
+                });
             }
         }
     }
     for (at, mana) in deliveries {
         receive_mana(game, at, mana);
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
     // `remove`: the spreader that shot it may shoot again.
     for source in ended {
         game.native_with_mod_block_entity(source, |m| {
@@ -1369,9 +1401,8 @@ pub(super) fn placed(
 
 // ---- particles ------------------------------------------------------------------------------
 
-// Botania draws its effects on the client; the port sends vanilla particles from the server,
-// which every client draws. `minecraft:dust` carries a colour and a size, which a mod's own
-// particle type can't (engine gap G2), so bursts and beams are coloured dust, not wisps.
+// Vanilla particles Botania adds too (the Endoflame's flames and smoke, an apothecary's burning
+// items), sent by the server; Botania's own wisps and sparkles go through particles.rs.
 type Fx = (ParticleOptions, [f64; 3], [f64; 3], i32);
 
 // Sends `list` (options, where, spread, count) to the players near each, in one pass over the
@@ -1385,14 +1416,6 @@ fn send_particles(game: &mut Game<'_>, list: &[Fx]) {
             level.native_send_particles(options, None, *at, *spread, 0.0, *count);
         }
     });
-}
-
-fn rgb_of(color: u32) -> [f32; 3] {
-    [
-        ((color >> 16) & 0xFF) as f32 / 255.0,
-        ((color >> 8) & 0xFF) as f32 / 255.0,
-        (color & 0xFF) as f32 / 255.0,
-    ]
 }
 
 // A xorshift step of the module's own generator, for effects only.
@@ -1527,19 +1550,14 @@ fn tell_bar(game: &mut Game<'_>, uuid: u128, key_name: &str, fallback: &str, arg
     );
 }
 
-// `doParticleBeam`: a rainbow of dust from the centre of one block to the other's.
+// `doParticleBeam`: a rainbow of sparkles from the centre of one block to the other's
+// (particles.rs).
 fn particle_beam(game: &mut Game<'_>, from: [i32; 3], to: [i32; 3]) {
-    let fx: Vec<Fx> = wand::beam(
-        block_center(from),
-        block_center(to),
-        0.25,
-        64,
-        random_unit() as f32,
-    )
-    .into_iter()
-    .map(|(at, color)| (ParticleOptions::dust(rgb_of(color), 0.6), at, [0.0; 3], 1))
-    .collect();
-    send_particles(game, &fx);
+    let beam = Record::Beam {
+        from: block_center(from),
+        to: block_center(to),
+    };
+    super::botania_particles::send(game, [beam]);
 }
 
 // `native_use_item_on`: `WandOfTheForestItem.useOn`.

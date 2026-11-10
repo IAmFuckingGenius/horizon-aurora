@@ -8,12 +8,12 @@
 
 use super::Game;
 use botania_core::burst::{self, Burst};
+use botania_core::fx::Record;
 use botania_core::mth;
 use botania_core::weapons::{self, Bow, Link, Star, StarWorld};
 use horizon_client::camera::{FovPlayer, UseItem};
 use horizon_client::first_person::Hand;
 use horizon_client::items::ItemStack;
-use horizon_client::particles::ParticleOptions;
 use horizon_core::geometry::Vec3;
 use horizon_core::random::RandomSource;
 use horizon_world::consumable::UseAnimation;
@@ -24,6 +24,8 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 // The `SoundSource` ordinal of `PLAYERS`.
 const PLAYERS: usize = 7;
+// `StarcallerItem.TAG_LAST_TRIGGER`.
+const LAST_TRIGGER: &str = "lastTriggerTime";
 
 #[derive(Default)]
 struct State {
@@ -36,8 +38,6 @@ struct State {
     strength: HashMap<u128, f32>,
     // Thundercaller hits for their player's tick: (player, entity hit).
     chains: Vec<(u128, u32)>,
-    // Each player's last star (`lastTriggerTime`, kept per player rather than per sword).
-    last_star: HashMap<u128, i64>,
     blades: Vec<Blade>,
     stars: Vec<Falling>,
     // An area break is running: the breaks it makes don't start another (`ToolCommons.recCall`).
@@ -51,6 +51,8 @@ struct Blade {
     dim: &'static str,
     burst: Burst,
     owner: u32,
+    // Its trail's own part of the size (`botania_particles::wobble`).
+    wobble: f32,
 }
 
 // A falling star in flight, and the entity id of the player who called it.
@@ -108,50 +110,6 @@ fn request_mana_exact_for_tool(
 
 // ---- small things -----------------------------------------------------------------------------
 
-type Fx = (ParticleOptions, [f64; 3], [f64; 3], i32);
-
-// Sends `list` (options, where, spread, count) to the players near each, in one pass over the
-// level in place (`ServerLevel.sendParticles`). Botania's wisps and sparkles are client
-// particles with a colour and a size; a mod's particle type has neither (engine gap G2), so
-// they are coloured dust.
-fn send_particles(game: &mut Game<'_>, list: &[Fx]) {
-    if list.is_empty() || !game.native_authoritative() {
-        return;
-    }
-    game.with_level(|_, level, _| {
-        for (options, at, spread, count) in list {
-            level.native_send_particles(options, None, *at, *spread, 0.0, *count);
-        }
-    });
-}
-
-fn rgb_of(color: u32) -> [f32; 3] {
-    [
-        ((color >> 16) & 0xFF) as f32 / 255.0,
-        ((color >> 8) & 0xFF) as f32 / 255.0,
-        (color & 0xFF) as f32 / 255.0,
-    ]
-}
-
-fn lerp3(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
-}
-
-// Dust every `spacing` blocks from `from` to `to`.
-fn dust_line(fx: &mut Vec<Fx>, options: &ParticleOptions, from: [f64; 3], to: [f64; 3]) {
-    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-    let steps = ((len / 0.4).ceil() as i32).clamp(1, 64);
-    for i in 0..=steps {
-        let at = lerp3(from, to, f64::from(i) / f64::from(steps));
-        fx.push((options.clone(), at, [0.0; 3], 1));
-    }
-}
-
 fn aabb(b: horizon_core::geometry::Aabb) -> burst::Aabb {
     let (lo, hi) = (b.min_position(), b.max_position());
     [lo.x, lo.y, lo.z, hi.x, hi.y, hi.z]
@@ -159,6 +117,17 @@ fn aabb(b: horizon_core::geometry::Aabb) -> burst::Aabb {
 
 fn key(k: &str) -> JavaString {
     JavaString::from(k)
+}
+
+// A long in the stack's `minecraft:custom_data` (`ItemNBTHelper.getLong`), if it has one.
+fn custom_long(stack: &ItemStack, k: &str) -> Option<i64> {
+    match stack.custom_data()?.get(&key(k))? {
+        Tag::Long(v) => Some(*v),
+        Tag::Int(v) => Some(i64::from(*v)),
+        Tag::Short(v) => Some(i64::from(*v)),
+        Tag::Byte(v) => Some(i64::from(*v)),
+        _ => None,
+    }
 }
 
 fn custom_int(stack: &ItemStack, k: &str) -> i32 {
@@ -418,8 +387,9 @@ pub(super) fn fov(game: &Game<'_>, player: &FovPlayer, base: f32, modifier: &mut
     *modifier *= bow / base;
 }
 
-// Each tick of a carried stack: the Starcaller starts its timer, the Terra Shatterer spends its
-// mana while its area is on. Mending with mana is the mana module's (`botania_mana`).
+// Each tick of a carried stack: a Starcaller without a timer starts one (`lastTriggerTime`, the
+// game time, in its own NBT), the Terra Shatterer spends its mana while its area is on. Mending
+// with mana is the mana module's (`botania_mana`).
 pub(super) fn inventory_tick(game: &mut Game<'_>, slot: i32) {
     let Some(item) = game.native_carried_stack(slot).map(|s| s.item.clone()) else {
         return;
@@ -431,12 +401,18 @@ pub(super) fn inventory_tick(game: &mut Game<'_>, slot: i32) {
     if !game.native_authoritative() {
         return;
     }
-    let Some(player) = game.native_acting_player() else {
+    if game.native_acting_player().is_none() {
         return;
-    };
+    }
     if star {
         let now = game.world.game_time;
-        state().last_star.entry(player.uuid).or_insert(now);
+        if let Some(stack) = game.native_carried_stack(slot)
+            && custom_long(stack, LAST_TRIGGER).is_none()
+        {
+            edit_custom(stack, |c| {
+                c.insert(key(LAST_TRIGGER), Tag::Long(now));
+            });
+        }
     }
     if &*item == weapons::TERRA_PICK {
         pick_tick(game, slot);
@@ -452,7 +428,13 @@ fn spawn_blade(game: &mut Game<'_>, owner: u32) {
     };
     let burst = weapons::blade_burst(at[0], eye[1], at[2], game.yaw, game.pitch);
     let dim = game.dim.id();
-    state().blades.push(Blade { dim, burst, owner });
+    let wobble = super::botania_particles::wobble();
+    state().blades.push(Blade {
+        dim,
+        burst,
+        owner,
+        wobble,
+    });
     game.with_hand(Hand::Main, |g| g.damage_held(1));
     game.native_play_sound_in_place("botania:terrablade", at, PLAYERS, 1.0, 1.0);
 }
@@ -562,31 +544,30 @@ fn thunder(game: &mut Game<'_>, attacker: u32, first: u32) {
         p.position.y + f64::from(p.dimensions.height) / 2.0,
         p.position.z,
     ];
-    let options = ParticleOptions::dust_transition(
-        rgb_of(weapons::THUNDER_OUTER),
-        rgb_of(weapons::THUNDER_INNER),
-        1.0,
-    );
+    // `THUNDERCALLER_EFFECT`: Botania's bolt from one to the next (`botania_particles`).
     let mut fx = Vec::new();
     for to in centres {
-        dust_line(&mut fx, &options, from, to);
+        fx.push(Record::Bolt { from, to });
         from = to;
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
 }
 
-// `StarcallerItem.inventoryTick` on a swing: more than 12 ticks after the last, a star falls on
-// the block the player looks at within 48 blocks, two on some nights.
-fn starcaller(game: &mut Game<'_>, uuid: u128, owner: u32, now: i64) {
+// `StarcallerItem.inventoryTick` on a swing: more than 12 ticks after the sword's last
+// (`lastTriggerTime` in its NBT, now when it has none), a star falls on the block the player looks
+// at within 48 blocks, two on some nights.
+fn starcaller(game: &mut Game<'_>, owner: u32, now: i64) {
     {
-        let mut s = state();
-        if s.last_star
-            .get(&uuid)
-            .is_some_and(|&last| !weapons::star_ready(now, last))
-        {
+        let Some(sword) = game.held_mut().as_mut() else {
+            return;
+        };
+        let last = custom_long(sword, LAST_TRIGGER).unwrap_or(now);
+        if !weapons::star_ready(now, last) {
             return;
         }
-        s.last_star.insert(uuid, now);
+        edit_custom(sword, |c| {
+            c.insert(key(LAST_TRIGGER), Tag::Long(now));
+        });
     }
     let Some(eye) = game.eye_position() else {
         return;
@@ -662,7 +643,7 @@ pub(super) fn player_tick(game: &mut Game<'_>) {
             {
                 spawn_blade(game, me);
             }
-            Some(weapons::STAR_SWORD) => starcaller(game, uuid, me, now),
+            Some(weapons::STAR_SWORD) => game.with_hand(Hand::Main, |g| starcaller(g, me, now)),
             _ => {}
         }
     }
@@ -745,7 +726,6 @@ fn move_blades(game: &mut Game<'_>, dimension: &str, blades: &mut [Blade]) {
     let mut strikes: Vec<(u32, u32)> = Vec::new();
     let mut deliveries = Vec::new();
     let mut fx = Vec::new();
-    let rgb = rgb_of(weapons::BLADE_COLOR);
     {
         let world = super::botania::GameBursts { game: &*game };
         for b in blades.iter_mut() {
@@ -775,14 +755,24 @@ fn move_blades(game: &mut Game<'_>, dimension: &str, blades: &mut [Blade]) {
             if let Some(d) = r.delivered {
                 deliveries.push(d);
             }
-            // The trail along this tick's flight, as big as the mana left.
-            let scale = burst::trail_scale(b.burst.mana.max(0), b.burst.starting_mana);
-            for i in 1..=4 {
-                let at = lerp3(p, b.burst.pos, f64::from(i) / 4.0);
-                fx.push((ParticleOptions::dust(rgb, scale), at, [0.0; 3], 1));
-            }
-            if !b.burst.alive {
-                fx.push((ParticleOptions::dust(rgb, 0.8), b.burst.pos, [0.08; 3], 4));
+            // A mana burst's particles (`ManaBurstEntity.particles`, its death): the trail along
+            // this tick's flight, as big as the mana left.
+            let size = b.burst.mana.max(0) as f32 / b.burst.starting_mana.max(1) as f32;
+            if b.burst.alive {
+                fx.push(Record::Burst {
+                    pos: b.burst.pos,
+                    prev: p,
+                    motion: v.map(|c| c as f32),
+                    color: weapons::BLADE_COLOR,
+                    size,
+                    wobble: b.wobble,
+                });
+            } else {
+                fx.push(Record::BurstDeath {
+                    pos: b.burst.pos,
+                    color: weapons::BLADE_COLOR,
+                    size,
+                });
             }
         }
     }
@@ -798,7 +788,7 @@ fn move_blades(game: &mut Game<'_>, dimension: &str, blades: &mut [Blade]) {
             Some(owner),
         );
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
 }
 
 // `FallingStarEntity.tick`: the star falls; on the ground (once it has been in the air) it breaks
@@ -834,12 +824,7 @@ fn move_stars(game: &mut Game<'_>, dimension: &str, stars: &mut [Falling]) {
             if let Some(at) = step.broke {
                 broken.push(at);
             }
-            fx.push((
-                ParticleOptions::dust(weapons::STAR_RGB, 1.5),
-                f.star.pos,
-                [0.4; 3],
-                6,
-            ));
+            fx.push(Record::Star { pos: f.star.pos });
             let reach = weapons::star_reach(f.star.pos, step.old);
             let mut met = false;
             for (id, bounds, hurt, villager, alive) in mobs.iter_mut() {
@@ -874,7 +859,7 @@ fn move_stars(game: &mut Game<'_>, dimension: &str, stars: &mut [Falling]) {
             Some(owner),
         );
     }
-    send_particles(game, &fx);
+    super::botania_particles::send(game, fx);
 }
 
 // ---- the Terra Shatterer ------------------------------------------------------------------------
@@ -995,18 +980,15 @@ fn break_area(
         {
             continue;
         }
+        super::botania_tools::seen_breaking(game, player.uuid, p, s);
         game.native_player_break_block(player.uuid, p, false);
     }
     state().breaking = false;
 }
 
-// `TerraShattererItem.onBlockStartBreak` / `breakOtherBlock`: with its area on, the blocks around
-// the one mined, on the face the player looks at, as wide as its rank.
-fn pick_break(game: &mut Game<'_>, tool: &ItemStack, pos: [i32; 3], block_state: BlockStateId) {
-    let data = pick_data(tool);
-    if !data.enabled {
-        return;
-    }
+// `TerraShattererItem.onBlockStartBreak`: the face the player looks at within 10 blocks, then
+// `breakOtherBlock` on it.
+fn pick_break(game: &mut Game<'_>, tool: &ItemStack, pos: [i32; 3]) {
     let Some(eye) = game.eye_position() else {
         return;
     };
@@ -1014,10 +996,30 @@ fn pick_break(game: &mut Game<'_>, tool: &ItemStack, pos: [i32; 3], block_state:
     let Some(hit) = game.clip_ray(eye, dir, weapons::PICK_REACH) else {
         return;
     };
+    pick_break_other(game, tool, pos, hit.face);
+}
+
+// `TerraShattererItem.breakOtherBlock`: with its area on, the blocks around the one at `pos` (not
+// yet broken), on `face`, as wide as its rank, which the rings change (`botania_tools::area_rings`:
+// Thor every axis and a rank more, Temperance rank B at most). The Ring of Loki's cursors break
+// theirs here too.
+pub(super) fn pick_break_other(
+    game: &mut Game<'_>,
+    tool: &ItemStack,
+    pos: [i32; 3],
+    face: [i32; 3],
+) {
+    let data = pick_data(tool);
+    if !data.enabled {
+        return;
+    }
+    let block_state = game.world.block(pos[0], pos[1], pos[2]);
     if !pick_can_mine(game, tool, block_state) || game.res.behaviours().is_air(block_state) {
         return;
     }
-    let Some((begin, end)) = weapons::pick_area(weapons::pick_level(data.mana), hit.face) else {
+    let rings = super::botania_tools::area_rings(game);
+    let level = weapons::pick_level(data.mana);
+    let Some((begin, end)) = botania_core::tools::pick_area_with(level, face, rings) else {
         return;
     };
     let targets = weapons::between_closed(pos, begin, end);
@@ -1061,7 +1063,7 @@ pub(super) fn destroy_block(
         return;
     }
     if pick {
-        pick_break(game, &tool, pos, block_state);
+        pick_break(game, &tool, pos);
     } else {
         shovel_break(game, &tool, pos, block_state);
     }

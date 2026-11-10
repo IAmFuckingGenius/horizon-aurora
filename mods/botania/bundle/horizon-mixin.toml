@@ -1,6 +1,7 @@
 # Botania for Horizon Aurora: a modified port of Vazkii's Botania mechanics (Botania License, see
 # LICENSE and NOTICE.md). A horizon-mixins bundle: named hook points only (NATIVE_HOOKS_API 416 has
-# them all), the game-side module `botania` in game.rs, and the mechanics in the `core` crate.
+# them all; the particles' controllers need API 417), the game-side module `botania` in game.rs, and
+# the mechanics in the `core` crate.
 # Blocks, items, textures and recipes come from the Botania content mod (.hmod).
 [mod]
 id = "botania"
@@ -567,6 +568,156 @@ bindings = [
   { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
   { name = "parts", ty = "&crate::game::native_mob_draw::NativeModelParts<'_>", value = "parts" },
   { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
+]
+
+# ---- Botania's own particles (particles.rs): the module `botania_particles` beside `botania` ------
+# Wisps and sparkles drawn on the client by compiled particle controllers with additive blending
+# (API 417). The server queues what its bursts, pools, flowers, beams and stars show, and sends
+# each nearby Horizon player one `botania:fx` mod message per level tick.
+
+[[module]]
+id = "particles"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_particles"
+source = "particles.rs"
+
+[[injection]]
+id = "zz_fx_flush"
+hook = "level_tick_post"
+hook_version = 1
+kind = "HEAD"
+helper = "fx_flush.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "dimension", ty = "&str", value = "dimension" },
+]
+
+[[injection]]
+id = "fx_from_server"
+hook = "net_from_server"
+hook_version = 1
+kind = "HEAD"
+helper = "fx_from_server.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "channel", ty = "&str", value = "channel" },
+  { name = "data", ty = "&[u8]", value = "data" },
+]
+
+[[injection]]
+id = "fx_tick"
+hook = "tick"
+hook_version = 1
+kind = "HEAD"
+helper = "fx_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+# ---- the remaining tools (`botania_tools`, tools.rs) ----------------------------------------------
+# The Terra Truncator's felling, the elementium axe's beheading, the elementium shears' area, the
+# elementium hoe's wet farmland, the Terra tools' model flags and the area tools' break events.
+
+[[module]]
+id = "tools"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_tools"
+source = "tools.rs"
+
+[[injection]]
+id = "tools_destroy_block"
+hook = "destroy_block"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_destroy_block.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "block_state", ty = "horizon_world::registry::BlockStateId", value = "state" },
+  { name = "canceled", ty = "bool", value = "*canceled" },
+]
+
+[[injection]]
+id = "tools_level_tick"
+hook = "level_tick_post"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_level_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "dimension", ty = "&str", value = "dimension" },
+]
+
+[[injection]]
+id = "tools_loot_drops"
+hook = "loot_drops"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_loot_drops.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "context", ty = "&horizon_client::mod_api::NativeLootDrops<'_>", value = "context" },
+  { name = "drops", ty = "&mut Vec<horizon_client::items::ItemStack>", value = "&mut *drops" },
+]
+
+[[injection]]
+id = "tools_use_duration"
+hook = "use_duration"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_use_duration.rs"
+bindings = [
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "duration", ty = "&mut i32", value = "&mut *duration" },
+]
+
+[[injection]]
+id = "tools_use_animation"
+hook = "use_animation"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_use_animation.rs"
+bindings = [
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "animation", ty = "&mut horizon_world::consumable::UseAnimation", value = "&mut *animation" },
+]
+
+[[injection]]
+id = "tools_use_tick"
+hook = "on_use_tick"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_use_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "entity", ty = "Option<i32>", value = "entity" },
+  { name = "remaining", ty = "i32", value = "remaining" },
+]
+
+[[injection]]
+id = "tools_use_on"
+hook = "use_item_on"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_use_on.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "face", ty = "[i32; 3]", value = "face" },
+  { name = "claimed", ty = "&mut bool", value = "&mut *claimed" },
+]
+
+[[injection]]
+id = "tools_inventory_tick"
+hook = "inventory_tick"
+hook_version = 1
+kind = "HEAD"
+helper = "tools_inventory_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "slot", ty = "i32", value = "slot" },
 ]
 
 # ---- the trinkets and the relic rings (baubles.rs): the module `botania_baubles` -----------------
