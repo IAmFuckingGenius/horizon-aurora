@@ -1,7 +1,8 @@
 # Status
 
 The port has been played in Waydroid (x86_64, Dev 25 APK, engine with the content packed in):
-see "In game" under Verified. It has not been played on a phone yet.
+see "In game" under Verified, the merged branches' weapons, mana and renderers too. It has not
+been played on a phone yet.
 
 ## Done
 
@@ -243,17 +244,46 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 (`equipment.py`), and recipes naming `minecraft:grass` never matched (port-pack now renames it to
 `minecraft:short_grass`, and `minecraft:scute` to `minecraft:turtle_scute`).
 
+### In game, merged branches (Waydroid x86_64, 2026-11-11)
+
+Engines of runs 42885776931 (bundle 16917714b1), 42890320899 (bundle 898349366a, aurora main
+861c9b5539) and a debug build, with `dist/botania.hmod` d0a8f774. All of these work:
+
+- Bows: the livingwood and crystal bows draw (pull models, first person), shoot and wear; mana pays
+  the wear when there is some.
+- Terra Blade: a swing at the air (nothing in reach, no block outline under the crosshair) shoots
+  the beam; it hit a pig 8 blocks away (10 → 2). Thundercaller: the lightning jumped from the
+  zombie hit to two zombies 3 blocks away (5–6 damage each; pigs aren't `Enemy`, as in Botania).
+  Starcaller: a star falls at night after a swing. Terra Shatterer: sneak-use with 2 000 000 mana
+  turns it on (`enabled`), a mined block takes the 3×3 around it, and the mana runs down while on.
+- Mana: a damaged manasteel pickaxe mends a point a tick from a tablet in the inventory (100 points
+  for 12 000 mana); an outputting pool fills a tablet at 1000 a tick and a normal one drains it;
+  full terrasteel heals a point every 80 ticks at food 5.
+- Botania's armour models on the player (third person), the armour bar (20).
+- Block entity renderers: a pool's mana (60% after `data merge … {mana:600000}`), the creative pool
+  full, the fabulous pool, the spreaders (mana, gaia) and their cores, the apothecary's water and
+  a petal in it.
+- Advancements: the tab and toast icons, and the tabs' backgrounds (livingwood).
+
+Found and fixed during the test:
+- the Android launcher started the game without registering native mods' standalone models and
+  model layers, so the spreaders and the fabulous pool drew nothing (aurora main 861c9b5539);
+- 1.20 advancement backgrounds named a texture file, which 26.3 doesn't read (port-pack, main
+  19a7d5e785);
+- 258 plain items stood on `minecraft:stick` with its `cooking_fuel`: they burned in a furnace and
+  an Endoflame burnt a tablet lying in a pool beside it (port-pack, main 123db71fc2).
+
 ## How to test on a phone
 
-1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42860962514 ›
+1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42895670428 ›
    artifact `native-engine-botania-arm64-v8a` (a ZIP holding `botania-arm64-v8a.hengine`; kept
-   14 days; `…-armeabi-v7a` for 32-bit phones). Or: `gh run download 42860962514 -R
+   14 days; `…-armeabi-v7a` for 32-bit phones). Or: `gh run download 42895670428 -R
    IAmFuckingGenius/horizon-aurora -n native-engine-botania-arm64-v8a`. Unzip it and copy the
    `.hengine` to the phone.
 2. In Horizon Aurora: **Settings › Engines › Import**, pick `botania-arm64-v8a.hengine`, then
    **Start** on "Aurora + Botania". The app restarts on that engine. Options › Mods should list
    "Botania 0.1.0".
-3. Nothing else to add: the engine carries `dist/botania.hmod` (sha256 `9a1935e1…`) and puts it
+3. Nothing else to add: the engine carries `dist/botania.hmod` (sha256 `d0a8f774…`) and puts it
    into the instance it plays.
 4. Make a new world (mystical flowers are placed when chunks generate; old chunks have none).
    Survival checklist:
@@ -285,26 +315,18 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 
 - Not played on a phone yet; the whole chain hasn't been crafted in survival (its recipes are
   registered: `/recipe give` unlocks each).
-- Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`; built in
-  run 42878996755, not played yet):
-  - mana is a stub (`// STUB: replaced by the mana items branch` in `weapons.rs`): a creative
-    player always pays, anyone else has no mana, so the crystal bow doesn't draw in survival and
-    mana tools wear as plain tools;
-  - engine-only: the third-person bow arm pose (`first_person.rs` `bow_like`) and the touch
-    projectile crosshair; no `enchantable/bow` tag in the content, so the table and anvil don't
-    enchant Botania's bows;
-  - the beam, stars and chain lightning hit mobs only (no PvP), drawn as vanilla dust (G2); a beam
-    or star is dropped when its owner leaves; the Starcaller's timer is per player, not per sword;
-    Unbreaking rolls twice when mana pays for wear;
+- Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`):
+  - engine-only: the third-person bow arm pose (`mobs/anim.rs` picks `ArmPose::Bow` by the id
+    `minecraft:bow`, not by the use animation) and the touch projectile crosshair;
+  - the beam, stars and chain lightning hit mobs only (no PvP), drawn as vanilla dust (G2): big
+    green squares for the beam; a beam or star is dropped when its owner leaves; the Starcaller's
+    timer is per player, not per sword; Unbreaking rolls twice when mana pays for wear;
   - Terra Shatterer: no pool charging, no rank in the tooltip, no enabled model; its NBT changes
     every tick while on;
   - not ported: Terra Truncator, axe beheading, hoes, the shears' area, the sword's pixies, the
-    rings (Thor, temperance, Loki), set bonuses, Botania's armour models.
-- Botania's bows (Livingwood, Crystal) can't be drawn: the game knows a bow by the id
-  `minecraft:bow`, not by its components.
-- Weapon and tool abilities are code in Botania and not ported: the Terra Blade's beam, the
-  Thundercaller's chain lightning, the Starcaller's stars, the Terra Shatterer's area mining and
-  its enabled toggle, Botania's armour models.
+    rings (Thor, temperance, Loki).
+- The blaze block isn't furnace fuel (Botania gives it 24 000 ticks in a Forge event; the port's
+  items carry no fuel).
 - Mana items, not ported: elementium armour's pixies (no pixie entity), manaweave's rod
   proficiency (no rods), the manaweave boots' powder snow walking, accessories (Horizon has no
   accessory inventory: a band works from the inventory only), bellows (pools charge at 1000), the
@@ -315,8 +337,9 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
   is paid in full (Botania rolls its own Unbreaking first: the same mana on average for tools,
   slightly more for armour); `stackInSlot == stack` is matched by value; a Mana Mirror bound to a
   pool in another dimension or an unloaded chunk is left as it is (Botania loads the chunk).
-- Advancement toasts show no icon; the function `botania:ender_air_release` doesn't load (no
-  `botania:ender_air` entity).
+- Ender air: the function `botania:ender_air_release` doesn't load (no `botania:ender_air`
+  entity, which the Pure Daisy leaves when it turns end stone and a glass bottle picks up), and
+  no ender air bottles outside the End.
 - Trail and beam (engine gap G2): server-sent vanilla dust, not Botania's wisps and sparkles:
   no additive blending, no wisp sprite, the dust's own motion; one particle packet per burst per
   tick to nearby players. Botania's full trail (2–5 wisps a tick) isn't offered.
@@ -329,7 +352,7 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 - Apothecary: buckets act in the main hand only; a fish bucket used by hand isn't handled; a
   burning item shows no fire; rain doesn't fill it.
 - Mystical flowers: Botania's 5% tall flowers are left out; mushrooms not touched.
-- Block entity renderers: not seen in game yet. Against Botania: the helpers draw opaque vertex
+- Block entity renderers, against Botania: the helpers draw opaque vertex
   colours and no shader of the mod's, so the pool's catalyst overlay doesn't fade in and out
   (Botania: alpha 0.2–0.8) and the `mana_pool` shader is imitated by tints per two texels, with
   the sprite placed in a nominal 2048 atlas for its bands; the apothecary's water is its biome's
@@ -337,24 +360,15 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
   `ticksInGame`; a spreader's lens, padding and scaffolding aren't drawn (not ported).
 - Not done in game yet: levelEvent 2001 when the daisy converts, floating flowers, Enchanted
   Soil's double tick, pool colour with petals, lenses, other generating flowers.
-- Mana items not played yet. To check: `/give @p botania:mana_tablet` thrown into an outputting
-  pool (wand sneak-click) fills at 1000/tick with a blue arc, into a normal pool drains;
-  `/give @p botania:mana_tablet[custom_data={creative:1b}]` (no bar, "Creative");
-  `/give @p botania:mana_ring[custom_data={mana:500000}]`; with a full tablet in the inventory,
-  `/give @p botania:manasteel_pick[damage=100]` mends a point a tick (120 mana each) and mining
-  doesn't wear it while mana lasts; full terrasteel armour + `/effect give @p instant_damage`
-  heals a heart every 4 s; `/give @p botania:mana_mirror`, sneak-use on a pool, then its bar
-  follows the pool and tools draw from the pool.
+- Mana items not played yet: the creative tablet, the bands, the Mana Mirror.
 - `native_blocks` can't fix the declarations from code: a block the content mod declares too is
   "declared twice" and the whole namespace is refused (`horizon_mods::Content::declare`).
 
 ## Next
 
-1. The device test above, on the run 42860962514 engine.
-2. Block entity renderers in game: a spreader facing where it shoots and turning with the wand,
-   its core spinning; a pool's mana rising as it fills (none when empty, full in a creative
-   pool), the rainbow fabulous pool, a catalyst's overlay; the apothecary's water or lava and
-   the petals going round in its water.
+1. The device test above, on the run 42895670428 engine.
+2. Block entity renderers on a phone: a spreader turning with the wand, its core spinning, the
+   fabulous pool's rainbow, a catalyst's overlay; the apothecary's lava.
 3. Burst particles drawn by the client (mod messages + `ParticleEngine::controlled` with colour
    and size) if the dust trail costs too much on phones or looks wrong.
 4. The wand's HUD and the bound-block outline (`native_hud`, `native_world_primitives`); mana
