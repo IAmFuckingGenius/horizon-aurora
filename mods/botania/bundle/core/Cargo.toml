@@ -1,0 +1,14 @@
+[package]
+name = "botania-core"
+version = "0.1.0"
+edition = "2024"
+description = "Botania's mana mechanics for Horizon, without the game: a modified port of Vazkii's Botania."
+# Botania License (../LICENSE, a copy of Botania's LICENSE.txt); not an SPDX license.
+license = "LicenseRef-Botania"
+publish = false
+
+# No dependencies: the crate builds alone for its tests and, staged by horizon-mixins as a bundle
+# crate, inside the game. A bundle crate may not carry [workspace], a Cargo.lock or a build script;
+# the repository's root Cargo.toml excludes `mods/botania` so `cargo test` here stands alone.
+[lib]
+path = "src/lib.rs"

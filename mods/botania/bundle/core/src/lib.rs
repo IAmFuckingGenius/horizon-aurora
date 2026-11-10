@@ -1,0 +1,9 @@
+//! Botania's mechanics for Horizon, kept apart from the game so they can be unit tested.
+//!
+//! This is a modified port of Botania by Vazkii (<https://github.com/VazkiiMods/Botania>, branch
+//! 1.20.x, commit 0c06dcf7ae), distributed under the Botania License (see `LICENSE` in the bundle).
+//! The numbers and rules follow Botania's source; the code is rewritten in Rust for Horizon.
+
+pub mod consts;
+pub mod json;
+pub mod mth;
