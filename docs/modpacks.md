@@ -470,7 +470,8 @@ same states (Macaw's garage doors, multi-part gates). An item of a vanilla tool 
 (`SwordItem`, `PickaxeItem`, `ArmorItem`, ...) gets the iron item of that class and slot as its
 template, and the oracle's durability, attribute modifiers, tool rules, enchantability and repair
 items as a component patch over it, minus what the template already has (`--resources` gives the
-template's components); other items keep `minecraft:stick`. Armour of the mod's own material gets a
+template's components); other items keep `minecraft:stick`, without its `cooking_fuel` (a mod's own item
+isn't furnace fuel because the stick is). Armour of the mod's own material gets a
 26.3 equipment asset (`assets/<ns>/equipment/<material>.json`) made from its 1.21.1 layers, their
 `textures/models/armor/<name>_layer_1.png` and `_layer_2.png` copied to
 `textures/entity/equipment/humanoid/` and `humanoid_leggings/`, and its `equippable` names that

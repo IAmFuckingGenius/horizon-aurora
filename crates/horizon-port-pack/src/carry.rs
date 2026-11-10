@@ -502,6 +502,14 @@ pub fn upgrade_advancement(v: &mut Value) -> bool {
     changed
 }
 
+/// A mod's item with no vanilla class to stand on: the stick, without the stick's
+/// `cooking_fuel`. Vanilla's fuel list names the stick; a mod's own item burns in a furnace
+/// only when the mod makes it fuel, so Botania's mana tablet, runes and petals didn't burn,
+/// and an Endoflame took a tablet lying in a pool beside it.
+pub(crate) fn plain_item() -> Value {
+    json!({"template": "minecraft:stick", "components": {"!minecraft:cooking_fuel": {}}})
+}
+
 /// The texture id of a texture's file path: `ns:textures/<path>.png` is
 /// `ns:<path>`, the namespace `minecraft` when it has none. None for anything else.
 fn texture_id_of_file(file: &str) -> Option<String> {
@@ -1620,10 +1628,10 @@ pub fn carry(
         // worn in its slot, one to a stack.
         let armor = tagged_armor(&inside);
         for m in item_models.iter().filter(|m| !blockstates.contains_key(*m)) {
-            let mut v = json!({"template": "minecraft:stick"});
+            let mut v = plain_item();
             if let Some(slot) = armor.get(&format!("{id}:{m}")) {
                 v["max_stack_size"] = json!(1);
-                v["components"] = json!({"minecraft:equippable": {"slot": slot}});
+                v["components"]["minecraft:equippable"] = json!({"slot": slot});
             }
             write_decl("item", m, &v)?;
             report.items += 1;
@@ -2863,13 +2871,14 @@ mod tests {
         };
         let worn = |slot: &str| {
             json!({"template": "minecraft:stick", "max_stack_size": 1,
-                "components": {"minecraft:equippable": {"slot": slot}}})
+                "components": {"!minecraft:cooking_fuel": {}, "minecraft:equippable": {"slot": slot}}})
         };
         let (hat, robe, gem) = (decl("hat"), decl("robe"), decl("gem"));
         fs::remove_dir_all(&dir).unwrap();
         assert_eq!(hat, worn("head"));
         assert_eq!(robe, worn("chest"));
-        assert_eq!(gem, json!({"template": "minecraft:stick"}));
+        // Not fuel, as the stick is.
+        assert_eq!(gem, plain_item());
     }
 
     /// A mod shipping its files under other names than its id: the

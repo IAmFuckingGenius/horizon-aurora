@@ -538,6 +538,10 @@ impl Facts {
         if let Some(food) = item.components.get("minecraft:food").or(item.food.as_ref()) {
             components.extend(food_26_3(food, &mut differences));
         }
+        // A plain item isn't fuel, as the stick it stands on is (`carry::plain_item`).
+        if template == "minecraft:stick" {
+            components.insert("!minecraft:cooking_fuel".into(), json!({}));
+        }
         if !components.is_empty() {
             decl["components"] = Value::Object(components);
         }
@@ -929,9 +933,9 @@ mod tests {
         assert_eq!(boots["template"], "minecraft:iron_boots");
         assert_eq!(boots["components"]["!minecraft:enchantable"], json!({}));
         assert_eq!(boots["components"]["!minecraft:repairable"], json!({}));
-        // Facts without components (exported before they were) keep the plain template.
+        // Facts without components (exported before they were) give the plain item.
         let (gem, _) = facts.item("m:gem", &["m"]).unwrap();
-        assert_eq!(gem, json!({"template": "minecraft:stick"}));
+        assert_eq!(gem, crate::carry::plain_item());
     }
 
     #[test]
