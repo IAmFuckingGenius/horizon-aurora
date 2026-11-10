@@ -4,6 +4,12 @@
 //! 1.20.x, commit 0c06dcf7ae), distributed under the Botania License (see `LICENSE` in the bundle).
 //! The numbers and rules follow Botania's source; the code is rewritten in Rust for Horizon.
 
+pub mod apothecary;
+pub mod burst;
 pub mod consts;
+pub mod daisy;
+pub mod flower;
 pub mod json;
 pub mod mth;
+pub mod pool;
+pub mod recipe;
