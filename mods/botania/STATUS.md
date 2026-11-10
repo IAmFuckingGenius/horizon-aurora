@@ -155,6 +155,70 @@ been played on a phone yet.
   - Terrasteel set worn: a heart every 80 ticks while hurt with food 1–17, 10 mana to the mana
     items every 10 ticks; knockback resistance 0.15/0.4/0.3/0.15 per piece (full set 1.0);
   - Band of Mana and Greater Band of Mana crafted as plain recipes (they start empty).
+- Trinkets and relic rings (`[[module]] botania_baubles`, `bundle/baubles.rs`; numbers in
+  `botania-core`'s `baubles`; hooks `player_tick`, `inventory_tick`, `item_dropped`,
+  `living_incoming_damage`, `right_click_block`, `destroy_block`, `use_item`,
+  `explosion_detonate`, `explosion_knockback`, `net_from_client`, `movement_input`, `tick`,
+  `hud`, `visuals`, `tooltip`, `modify_default_components`):
+  - the inventory rule: Horizon has no accessory slots (Curios, Trinkets), so a trinket works
+    while it is carried in the main inventory (hotbar first) or the off hand; the first stack of
+    each kind acts, a relic only for the player it is bound to (`canEquip`). Botania's own
+    fallback without Curios/Trinkets (`InventoryEquipmentHandler`) reads the hotbar alone;
+  - trinkets, relics and the Stone of Temperance stack to 1; relics are epic and survive fire,
+    the Ring of Chordata is rare (`modify_default_components`);
+  - relics (Thor, Odin, Loki, and the dice, Flügel eye, Fruit of Grisaia, King's key): bound to
+    the first player who carries one (`soulbindUUID` as `UUID.toString`), 2 `botania:relic_damage`
+    every 10 ticks to anyone else; tooltip "Relic, Unbound" / "Soulbound to <name>" / "not yours";
+  - Band of Aura / Greater: 5 mana to the mana items every 50 / 10 ticks;
+  - Ring of Magnetization / Greater: items within 6 / 16 blocks fly to the player's middle at
+    0.45 (at most 201 a tick, not mana items, relics, `#botania:magnet_ring_blacklist` items or
+    items on/over blacklisted blocks, not pickup delay ≥ 40); off while sneaking; 100 ticks off
+    after the player throws an item (`cooldown`);
+  - Ring of Chordata: in water or a bubble column, Conduit Power and Dolphin's Grace (not with an
+    active Stone of Temperance) as static effects for 3 mana a tick; out of mana they turn into
+    60-tick ones, out of water or with the ring gone they're taken off;
+  - Ring of Correction: while the player digs with one of Botania's tools, the best carried tool
+    for the block looked at (4.5 blocks) goes into the main hand (`getSortingPriority`: tier,
+    Terra Shatterer rank, Efficiency; shears 1000+; the Vitreous Pickaxe on glass);
+  - Ring of Dexterous Motion: a movement key pressed twice within 5 ticks (client) throws the
+    player 1.25 blocks a tick sideways/forward/back on the ground (`botania:dodge` message:
+    `botania:dash`, 0.3 exhaustion, `dodgeCooldown` 20); the cooldown bar under the crosshair;
+  - Ring of the Mantle: static Haste II while 5 mana are there, paid once a swing
+    (`attackAnim == 0.25`);
+  - Great Fairy Ring: the pixie chance (0.25, + elementium armour 0.11/0.17/0.15/0.09, up to 1)
+    rolled on each hit by an entity, with the pixie's damage (4, 6 with an Elementium Sword in a
+    hand) and, with a full elementium set, one of its four effects; the pixie itself is the
+    entities module's (call site `spawn_pixie` in `baubles.rs`);
+  - Ring of Far Reach: +3.5 `minecraft:block_interaction_range`;
+  - Ring of Thor: `thor_ring(game)` for the Terra Shatterer/Truncator areas (tools module);
+  - Ring of Odin: +20 max health, fire put out, immune to drowning, falling, suffocation,
+    starving, flying into a wall and `#minecraft:is_fire` (`#botania:ring_of_odin_immune`);
+  - Ring of Loki: sneak + empty main hand on a block starts a selection there, adds or removes
+    other blocks' offsets (1023 at most, "Selection limit reached"), the origin again ends it;
+    sneaking with an item, it is used on every cursor too, the clicked spot moved with it, for
+    `n > 10 ? n : min(n, (int) e^(n/4))` mana each copy that acts; sneaking with the Terra
+    Shatterer or Truncator, breaking the block looked at breaks every cursor's block too (the
+    tool's own area follows around each); a Loki ring other than the one in use leaves its
+    selection; the cursors (or the selection) drawn as rims in a colour cycling every 200 ticks,
+    the origin thicker;
+  - Stone of Temperance: right click toggles `active` (`botania:temperance_stone_configure`),
+    tooltip Active/Inactive; `temperance_active(game)` for the tools; it blocks the Ring of
+    Chordata's Dolphin's Grace;
+  - Sojourner's / Globetrotter's / Planestrider's Sash: with 1 mana and not sneaking, +0.65
+    step height (server); on the client a push of 0.035 / 0.085 / growing 0.00035 a tick to
+    0.25 when walking forward on the ground or flying, out of water, and +0.2 / 0.3 / 0.2 on a
+    jump; a fall is shortened by 2 / 4 / 2 blocks (times the amulet's jumps after an air jump);
+  - Tectonic Girdle: +1 knockback resistance, no explosion knockback;
+  - Pyroclast Pendant puts fire out; Crimson Pendant too, and the wearer is immune to fire;
+  - Cirrus / Nimbus Amulet: 1 / 2 more jumps in the air (client; `botania:jump` message: 0.3
+    exhaustion, the fall forgotten);
+  - Cloaks of Virtue / Sin / Balance (the first carried, 200 ticks of cooldown): Virtue takes
+    a hit that a witch doesn't resist, Sin deals a hit armour stops to the enemies within 6
+    blocks too, Balance halves it (never below 1 health) and deals the half to the attacker as
+    indirect magic; their sounds;
+  - Cloak of Invisibility: Invisibility for 2 mana a tick, taken off with the cloak or the mana;
+  - Benevolent Goddess' Charm: a blast within 8 blocks of a player carrying it breaks no blocks,
+    for 1000 mana.
 - `content/`: 55 corrected block declarations and the 16 mystical flower patches with
   `minecraft:simple_block` for the content `.hmod` (see README). The local
   `.local/modports/botania/botania-1.20.1-456-content.hmod` has both applied (sha256
@@ -179,6 +243,13 @@ been played on a phone yet.
   (`hsvToRgb` bars, `encode/decodeRelativeItemPosition`, the charging parabola, the
   `ManaItemImpl`s, `ManaItemHandlerImpl`'s loops, the pool's item transfer,
   `discountManaForTool`, `damageItemIfPossible`).
+- With the trinkets (`baubles`): 104 passed, 0 failed (18 of them `baubles`: relic binding and
+  `UUID.toString`/`fromString` as Java writes them, aura intervals, magnet cooldown and pull
+  vector (`setEntityMotionFromVector`), static effects, correction priorities, dodge double tap
+  and directions (`Vec3.cross`), the Mantle's swing, pixie chance, Odin's immunities, Loki's
+  selection, costs (`Math.pow(Math.E, n * 0.25)`) and hit points, sashes, air jumps, cloaks).
+  Expected values worked out by hand from Botania's code. `rustfmt --check` clean. The game
+  side (`baubles.rs`) is checked by the CI engine build only: not played yet.
 - All 25 bundle recipes unwrap into 26.3 form (scratch-only test, output checked by eye).
 - Engine runs (`android-native-engine.yml`, arm64-v8a, `publish=false`):
   - 42728593487, bundle 162df0be9c: failed in `plan`, `E_INVALID_HELPER` (helper `ticks`
@@ -323,13 +394,37 @@ Found and fixed during the test:
     timer is per player, not per sword; Unbreaking rolls twice when mana pays for wear;
   - Terra Shatterer: no pool charging, no rank in the tooltip, no enabled model; its NBT changes
     every tick while on;
-  - not ported: Terra Truncator, axe beheading, hoes, the shears' area, the sword's pixies, the
-    rings (Thor, temperance, Loki).
+  - not ported: Terra Truncator, axe beheading, hoes, the shears' area, the sword's pixies.
+- Trinkets (`bundle/baubles.rs`), not played yet; against Botania:
+  - no accessory slots: the inventory rule above, so one stack of each kind acts (two worn bands
+    of aura don't add up), and nothing is `onEquipped`/`onUnequipped` but the static effects
+    and modifiers kept in step each tick; a Loki ring put away keeps its cursors;
+  - the pixie isn't spawned yet: `spawn_pixie` in `baubles.rs` waits for the entities module's
+    `botania_entities::spawn_pixie(game, at, owner, target, damage, effect)`;
+  - Ring of Thor and Stone of Temperance on the Terra Shatterer/Truncator areas: the tools module
+    reads `thor_ring(game)` and `temperance_active(game)`;
+  - the damage hooks run without the game: Odin, the Crimson Pendant, the cloaks and the sashes
+    act on what the player carried at their last tick; a cloak's cooldown, sound and blows land
+    in the next tick; the Balance cloak's cap uses last tick's health; a sash's fall is taken off
+    the fall damage (the same for whole-block buffers);
+  - client-side, as Botania: dodges, air jumps and the sash's push and jump; the sash's 1 mana
+    every 10 ticks isn't paid (Botania pays it on the client only, which a server overwrites),
+    it only needs the mana; a sash jump is added a tick after the jump; the Planestrider's speed
+    is the client's, not in the stack;
+  - no Solegnolia (not ported), so nothing stops a magnet ring; no magnet sparkles; a dodge
+    without a ring is ignored (Botania disconnects); dodges are read each tick, not on key
+    events; with Loki the click itself still places beside the copies (as on Forge; Fabric spends
+    it) while a selection click is spent (as on Fabric); Loki breaks around the block looked at
+    only (not around the tool's area blocks); its rims are depth-tested and at most 256 (a mod's
+    rim budget);
+  - not ported: Flügel Tiara, Eye of the Ancients, Charm of the Diva, Manaseer Monocle,
+    Spectator, Tiny Planet, Tainted Blood Pendant, Snowflake Pendant, the cosmetics' models
+    (their tooltip line only), phantom ink, the accessories' models on the player, the
+    Stone of Temperance's right click in the inventory, advancements.
 - The blaze block isn't furnace fuel (Botania gives it 24 000 ticks in a Forge event; the port's
   items carry no fuel).
 - Mana items, not ported: elementium armour's pixies (no pixie entity), manaweave's rod
-  proficiency (no rods), the manaweave boots' powder snow walking, accessories (Horizon has no
-  accessory inventory: a band works from the inventory only), bellows (pools charge at 1000), the
+  proficiency (no rods), the manaweave boots' powder snow walking, bellows (pools charge at 1000), the
   ring recipes carrying the tablet's mana (`botania:mana_upgrade`: the crafting grid isn't
   reachable from a hook), the creative tablet's epic rarity, Botania's wisp sprites (dust instead),
   the tooltip bar's rank letters for the Terra Shatterer.
