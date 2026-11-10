@@ -1,0 +1,9 @@
+{
+  "replace": false,
+  "values": [
+    "botania:manasteel_boots",
+    "botania:manaweave_boots",
+    "botania:elementium_boots",
+    "botania:terrasteel_boots"
+  ]
+}

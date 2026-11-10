@@ -258,3 +258,189 @@ bindings = [
   { name = "who", ty = "Option<&crate::game::native_mob_draw::NativePlayerRender<'_>>", value = "who" },
   { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
 ]
+
+# Bows, weapons and tools (`weapons.rs`, the module `botania_weapons`).
+[[module]]
+id = "weapons"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_weapons"
+source = "weapons.rs"
+
+[[injection]]
+id = "weapons_use_duration"
+hook = "use_duration"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_use_duration.rs"
+bindings = [
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "duration", ty = "&mut i32", value = "&mut *duration" },
+]
+
+[[injection]]
+id = "weapons_use_animation"
+hook = "use_animation"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_use_animation.rs"
+bindings = [
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "animation", ty = "&mut horizon_world::consumable::UseAnimation", value = "&mut *animation" },
+]
+
+[[injection]]
+id = "weapons_use_start"
+hook = "living_entity_use_item_start"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_use_start.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "entity", ty = "Option<i32>", value = "entity" },
+  { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
+]
+
+[[injection]]
+id = "weapons_release"
+hook = "release_using"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_release.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "entity", ty = "Option<i32>", value = "entity" },
+  { name = "time_left", ty = "i32", value = "time_left" },
+  { name = "used", ty = "&mut bool", value = "&mut *used" },
+]
+
+[[injection]]
+id = "weapons_fov"
+hook = "compute_fov_modifier"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_fov.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "player", ty = "&horizon_client::camera::FovPlayer", value = "player" },
+  { name = "base", ty = "f32", value = "base" },
+  { name = "modifier", ty = "&mut f32", value = "&mut *modifier" },
+]
+
+[[injection]]
+id = "weapons_attack"
+hook = "attack_entity"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_attack.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "canceled", ty = "bool", value = "*canceled" },
+]
+
+[[injection]]
+id = "weapons_arm_swing"
+hook = "player_arm_swing"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_arm_swing.rs"
+bindings = [
+  { name = "player", ty = "u128", value = "player" },
+  { name = "hand", ty = "&str", value = "hand" },
+]
+
+[[injection]]
+id = "weapons_player_tick"
+hook = "player_tick"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_player_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "weapons_hurt_enemy"
+hook = "hurt_enemy"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_hurt_enemy.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "entity", ty = "u32", value = "entity" },
+]
+
+[[injection]]
+id = "weapons_inventory_tick"
+hook = "inventory_tick"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_inventory_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "slot", ty = "i32", value = "slot" },
+]
+
+[[injection]]
+id = "weapons_destroy_block"
+hook = "destroy_block"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_destroy_block.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "block_state", ty = "horizon_world::registry::BlockStateId", value = "state" },
+  { name = "canceled", ty = "bool", value = "*canceled" },
+]
+
+[[injection]]
+id = "weapons_item_damaged"
+hook = "item_damaged"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_item_damaged.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "player", ty = "u128", value = "player" },
+  { name = "item", ty = "&str", value = "item" },
+  { name = "amount", ty = "&mut i32", value = "&mut *amount" },
+  { name = "cancel", ty = "bool", value = "*cancel" },
+]
+
+[[injection]]
+id = "weapons_use_item"
+hook = "use_item"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_use_item.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "claimed", ty = "&mut bool", value = "&mut *claimed" },
+]
+
+[[injection]]
+id = "weapons_level_tick"
+hook = "level_tick_post"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_level_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "dimension", ty = "&str", value = "dimension" },
+]
+
+[[injection]]
+id = "weapons_loot_drops"
+hook = "loot_drops"
+hook_version = 1
+kind = "HEAD"
+helper = "weapons_loot_drops.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "context", ty = "&horizon_client::mod_api::NativeLootDrops<'_>", value = "context" },
+  { name = "drops", ty = "&mut Vec<horizon_client::items::ItemStack>", value = "&mut *drops" },
+]

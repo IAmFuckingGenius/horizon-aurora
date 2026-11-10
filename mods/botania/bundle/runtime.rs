@@ -33,7 +33,7 @@ pub(super) const NAME: &str = "Botania";
 pub(super) const VERSION: &str = "0.1.0";
 pub(super) const DESCRIPTION: &str = "A port of Vazkii's Botania 1.20.1 mechanics (work in progress): mana pools, \
      mana infusion, the Endoflame feeding mana spreaders, spreaders shooting bursts into pools, \
-     the Wand of the Forest, the Petal Apothecary and the Pure Daisy. Needs the Botania content \
+     the Wand of the Forest, the Petal Apothecary, the Pure Daisy, and the bows, weapons and tools. Needs the Botania content \
      mod. Botania License; not made or endorsed by Vazkii.";
 
 // Block entity ids, as Botania names its block entity types.
@@ -560,7 +560,7 @@ fn receiver_status(game: &Game<'_>, pos: [i32; 3]) -> Option<(i32, i32, bool)> {
 }
 
 // `receiveMana` on the pool or spreader at `pos`; what doesn't fit is lost.
-fn receive_mana(game: &mut Game<'_>, pos: [i32; 3], mana: i32) {
+pub(super) fn receive_mana(game: &mut Game<'_>, pos: [i32; 3], mana: i32) {
     let block = game.native_block(pos);
     let spreader_cap = SpreaderVariant::of_block(&block).map(|v| v.stats().capacity);
     game.native_with_mod_block_entity(pos, |m| {
@@ -1137,8 +1137,9 @@ fn is_spreader(game: &Game<'_>, pos: [i32; 3]) -> bool {
 
 // What a burst meets in the level: a pool is the slab a burst hits (`*_SHAPE_INTERACT`), any
 // other block its collision shape; leaves are passed; pools and spreaders take the mana.
-struct GameBursts<'a, 'g> {
-    game: &'a Game<'g>,
+// Also the Terra Blade's bursts' level (`botania_weapons`).
+pub(super) struct GameBursts<'a, 'g> {
+    pub(super) game: &'a Game<'g>,
 }
 
 impl BurstWorld for GameBursts<'_, '_> {
