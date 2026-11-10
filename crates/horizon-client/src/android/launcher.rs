@@ -589,7 +589,11 @@ impl Launcher {
                 } else {
                     String::new()
                 },
-                control_socket: (!crate::PUBLIC_BUILD).then(|| self.home.join("control.json")),
+                // Test builds always take horizon-ctl; a public one only when `control.enable` is in the
+                // app's private folder, where only the app itself or a root shell (Waydroid) can put it.
+                control_socket: (!crate::PUBLIC_BUILD
+                    || self.home.join("control.enable").is_file())
+                .then(|| self.home.join("control.json")),
                 extra_arguments,
                 open_gl: self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl,
                 gpu_batching: self.catalog.config.renderer == crate::catalog::RendererMode::Vulkan,
