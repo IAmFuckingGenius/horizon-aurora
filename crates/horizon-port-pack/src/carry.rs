@@ -460,9 +460,22 @@ pub fn renamed_assets(v: &mut Value) -> bool {
 /// A 1.21.1 advancement in 26.3's shape, in place: an `enter_block`
 /// criterion names its block as `blocks`, which 26.3 reads as a block list.
 /// 26.3 skips the old `block` field, so the criterion matched any block the
-/// player entered (Regions Unexplored's "Downer" on the first dive).
+/// player entered (Regions Unexplored's "Downer" on the first dive). A 1.20
+/// icon names its item as `item` (`id` since 1.20.5), which 26.3 skips, so
+/// the toast and the advancement screen showed no icon (Botania's); its
+/// `nbt` string has no 26.3 equivalent and goes.
 pub fn upgrade_advancement(v: &mut Value) -> bool {
     let mut changed = false;
+    if let Some(icon) = v
+        .pointer_mut("/display/icon")
+        .and_then(Value::as_object_mut)
+        .filter(|icon| !icon.contains_key("id"))
+        && let Some(item) = icon.remove("item")
+    {
+        icon.insert("id".into(), item);
+        icon.remove("nbt");
+        changed = true;
+    }
     let criteria = v.get_mut("criteria").and_then(Value::as_object_mut);
     for c in criteria.into_iter().flat_map(|o| o.values_mut()) {
         let trigger = c.get("trigger").and_then(Value::as_str);
@@ -985,6 +998,68 @@ fn without_comments(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// A bow's item definition in 26.3's form from its pre-1.21.4 `overrides`, as
+/// vanilla's own `items/bow.json`: `pulling` is `minecraft:using_item`, `pull`
+/// is `minecraft:use_duration` in seconds (scale 0.05). The last override whose
+/// thresholds all hold wins, as `ItemOverrides.resolve` picks; `pull` is 0
+/// while the item isn't used. `None` when the overrides test anything else
+/// (a crossbow's `charged`, a trim, `custom_model_data`): the plain model.
+fn pull_definition(base: &str, overrides: &[Value]) -> Option<Value> {
+    let mut list = Vec::new();
+    for o in overrides {
+        let predicate = o["predicate"].as_object()?;
+        let mut pulling = 0.0;
+        let mut pull = 0.0;
+        for (key, threshold) in predicate {
+            let threshold = threshold.as_f64()?;
+            match key.strip_prefix("minecraft:").unwrap_or(key) {
+                "pulling" => pulling = threshold,
+                "pull" => pull = threshold,
+                _ => return None,
+            }
+        }
+        list.push((pulling, pull, o["model"].as_str()?));
+    }
+    if list.is_empty() {
+        return None;
+    }
+    let model = |name: &str| json!({"type": "minecraft:model", "model": name});
+    let winner = |using: bool, value: f64| {
+        let (pulling, pull) = if using { (1.0, value) } else { (0.0, 0.0) };
+        list.iter()
+            .rev()
+            .find(|(p, q, _)| *p <= pulling && *q <= pull)
+            .map_or(base, |(_, _, m)| m)
+    };
+    let mut thresholds: Vec<f64> = list
+        .iter()
+        .map(|(_, q, _)| *q)
+        .filter(|q| *q > 0.0)
+        .collect();
+    thresholds.sort_by(f64::total_cmp);
+    thresholds.dedup();
+    let fallback = winner(true, 0.0);
+    let mut entries = Vec::new();
+    let mut last = fallback;
+    for t in thresholds {
+        let m = winner(true, t);
+        if m != last {
+            entries.push(json!({"threshold": t, "model": model(m)}));
+            last = m;
+        }
+    }
+    let on_true = if entries.is_empty() {
+        model(fallback)
+    } else {
+        json!({"type": "minecraft:range_dispatch", "property": "minecraft:use_duration",
+            "scale": 0.05, "entries": entries, "fallback": model(fallback)})
+    };
+    Some(
+        json!({"type": "minecraft:condition", "property": "minecraft:using_item",
+        "on_false": model(winner(false, 0.0)), "on_true": on_true}),
+    )
+}
+
 /// Item models another item's overrides reach: looks, not items; models that only reach each other stay items.
 fn variant_models(overrides: &BTreeMap<String, BTreeSet<String>>) -> BTreeSet<String> {
     let targets: BTreeSet<&String> = overrides.values().flatten().collect();
@@ -1054,6 +1129,8 @@ pub fn carry(
     let mut item_models = BTreeSet::new();
     // Models another item model's `overrides` switch to (trim looks, a bow's pull): variants, not items.
     let mut model_overrides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Each item model's `overrides` list, for its 26.3 item definition.
+    let mut override_lists: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut convention = BTreeSet::new();
     let mut block_loot = BTreeSet::new();
     let mut biome_conventions = BTreeSet::new();
@@ -1281,6 +1358,9 @@ pub fn carry(
             {
                 item_models.insert(m.to_owned());
                 let model: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+                if let Some(list) = model["overrides"].as_array() {
+                    override_lists.insert(m.to_owned(), list.clone());
+                }
                 for o in model["overrides"].as_array().into_iter().flatten() {
                     // A target without a namespace is vanilla's, not the mod's.
                     let target = o["model"].as_str().and_then(|t| t.split_once(':'));
@@ -1335,8 +1415,10 @@ pub fn carry(
     for m in &item_models {
         let def = inside.join(format!("assets/{id}/items/{m}.json"));
         if !def.exists() {
-            let model =
-                json!({"model": {"type": "minecraft:model", "model": format!("{id}:item/{m}")}});
+            let base = format!("{id}:item/{m}");
+            let overrides = override_lists.get(m).map_or(&[][..], Vec::as_slice);
+            let model = json!({"model": pull_definition(&base, overrides)
+                .unwrap_or_else(|| json!({"type": "minecraft:model", "model": base}))});
             write(&def, &serde_json::to_vec_pretty(&model).unwrap_or_default())?;
             report.item_definitions_added += 1;
         }
@@ -2230,6 +2312,56 @@ mod tests {
         // Already 26.3's: unchanged.
         assert!(!upgrade_advancement(&mut a));
         assert!(!upgrade_advancement(&mut json!({"parent": "m:root"})));
+    }
+
+    #[test]
+    fn a_bow_s_pull_overrides_become_vanilla_s_bow_definition() {
+        // Botania's livingwood bow (1.20.1): vanilla's bow overrides.
+        let overrides = [
+            json!({"predicate": {"minecraft:pulling": 1}, "model": "b:item/bow_pulling_1"}),
+            json!({"predicate": {"minecraft:pulling": 1, "minecraft:pull": 0.65},
+                "model": "b:item/bow_pulling_2"}),
+            json!({"predicate": {"minecraft:pulling": 1, "minecraft:pull": 0.9},
+                "model": "b:item/bow_pulling_3"}),
+        ];
+        let model = |m: &str| json!({"type": "minecraft:model", "model": m});
+        // As 26.3's own items/bow.json.
+        assert_eq!(
+            pull_definition("b:item/bow", &overrides),
+            Some(
+                json!({"type": "minecraft:condition", "property": "minecraft:using_item",
+                "on_false": model("b:item/bow"),
+                "on_true": {"type": "minecraft:range_dispatch", "property": "minecraft:use_duration",
+                    "scale": 0.05, "fallback": model("b:item/bow_pulling_1"), "entries": [
+                        {"threshold": 0.65, "model": model("b:item/bow_pulling_2")},
+                        {"threshold": 0.9, "model": model("b:item/bow_pulling_3")}]}})
+            )
+        );
+        // Only `pulling`: a model while used.
+        let held = [json!({"predicate": {"pulling": 1}, "model": "b:item/held"})];
+        assert_eq!(
+            pull_definition("b:item/rod", &held),
+            Some(
+                json!({"type": "minecraft:condition", "property": "minecraft:using_item",
+                "on_false": model("b:item/rod"), "on_true": model("b:item/held")})
+            )
+        );
+        // Anything else stays the plain model.
+        let crossbow = [json!({"predicate": {"charged": 1}, "model": "b:item/x_charged"})];
+        assert_eq!(pull_definition("b:item/x", &crossbow), None);
+        assert_eq!(pull_definition("b:item/x", &[]), None);
+    }
+
+    #[test]
+    fn a_1_20_icon_names_its_item_as_id() {
+        let mut a = json!({"display": {"icon": {"item": "botania:tiny_potato", "nbt": "{a:1b}"},
+            "frame": "task"}});
+        assert!(upgrade_advancement(&mut a));
+        assert_eq!(a["display"]["icon"], json!({"id": "botania:tiny_potato"}));
+        // A 1.20.5+ icon stays.
+        let mut new = json!({"display": {"icon": {"id": "m:gem", "count": 2}}});
+        assert!(!upgrade_advancement(&mut new));
+        assert_eq!(new["display"]["icon"], json!({"id": "m:gem", "count": 2}));
     }
 
     #[test]
