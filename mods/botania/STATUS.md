@@ -82,7 +82,8 @@ compiled with the bundle in CI, not that it works in play.
   - 42731705291, bundle d42992fccb (+ apothecary, Pure Daisy, spreaders, virtual bursts,
     `block_entity_container`, `place_block`): **success**; 11 injections, 1 module, 1 crate,
     1 data folder; release library in 15 min 31 s.
-  - RUN4: + mana infusion in the pool: RESULT PENDING.
+  - 42734189256, bundle 5cccde1e31 (+ mana infusion in the pool): **success**; 11 injections,
+    1 module, 1 crate, 1 data folder; release library in 13 min 52 s. This is the current bundle.
 
 ## Not verified / known gaps
 
@@ -105,7 +106,7 @@ compiled with the bundle in CI, not that it works in play.
 
 ## Next
 
-1. Get the bundle with mana infusion through an engine build (RUN4), then a device test.
+1. A device test of the run 42734189256 engine (see 4.) before building further on it.
 2. Bind generating flowers to spreaders as Botania does, once spreaders are seen working; burst
    particles on clients (spawn/death messages, `ParticleEngine::controlled`); the wand of the
    forest to aim spreaders (`use_item_on`, `aim_at`) and bind flowers.
