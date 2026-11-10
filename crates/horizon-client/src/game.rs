@@ -12919,9 +12919,7 @@ pub fn run_with() -> Result<()> {
         let game_dir = horizon_client::logging::player_dir();
         horizon_hooks::engine::started(&horizon_hooks::Started::new(&version, &game_dir));
     }
-    mods::register_components(&vanilla_root)?;
-    mods::register_standalone_models();
-    mods::register_layer_definitions();
+    mods::register_native(&vanilla_root)?;
     let mut early_settings = Settings::load(&Game::options_path());
     // The player's Polytone pack options (#11486), before any pack is read.
     horizon_client::packs::set_polytone_choices(horizon_client::packs::load_polytone_choices(

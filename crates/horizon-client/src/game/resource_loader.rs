@@ -318,6 +318,9 @@ pub(crate) fn android_game(arguments: Vec<String>) -> Result<Box<dyn Application
     horizon_client::spans::enable(options.spikes.is_some());
     let settings = Settings::load(&std::env::current_dir()?.join("options.txt"));
     let root = options.resources.clone();
+    // As `run_with` does before the resources first load: without them a native mod's
+    // standalone models (a block entity's turning parts) and model layers draw nothing.
+    super::mods::register_native(&root)?;
     horizon_threads::put_helpers_behind();
     Behaviours::set_cache_dir(std::env::current_dir()?.join(".horizon-cache"));
     Ok(Box::new(loading_app(
