@@ -575,6 +575,7 @@ impl Launcher {
                 // The game opens an existing world by folder name (game.rs `--world`).
                 extra_arguments.extend(["--world".into(), folder.clone()]);
             }
+            place_engine_content(&self.home, &game_home);
             let request = crate::game_launch::LaunchRequest {
                 resources: self
                     .home
@@ -1099,5 +1100,61 @@ impl Launcher {
             }
         }
         Ok(())
+    }
+}
+
+/// The content mods packed with the engine this code runs from (`engines::content_of`) go
+/// into the instance at `game_home` before its game starts, turned on, so that a new instance
+/// gets them too and its native mods find their blocks and items. Another copy of the same mod
+/// under another file name is set aside (`.hmod.replaced`): the first by name would load.
+fn place_engine_content(home: &std::path::Path, game_home: &std::path::Path) {
+    let Some(engine) = crate::engines::running() else {
+        return;
+    };
+    let packed = crate::engines::content_of(home, &engine);
+    if packed.is_empty() {
+        return;
+    }
+    let mods = game_home.join(horizon_client::mod_list::DIR);
+    let mut list = horizon_client::mod_list::ModList::load(game_home);
+    let mut changed = false;
+    for (source, content) in packed {
+        match crate::engines::place(&source, &content, &mods) {
+            Ok(true) => log::info!(
+                "Horizon: engine {engine} put {} into this instance's mods",
+                content.file
+            ),
+            Ok(false) => {}
+            Err(error) => {
+                log::warn!(
+                    "Horizon: engine {engine} could not put {}: {error}",
+                    content.file
+                );
+                continue;
+            }
+        }
+        let target = mods.join(&content.file);
+        let Ok(package) = horizon_mods::Package::read(&target) else {
+            continue;
+        };
+        let id = package.manifest.id;
+        for other in horizon_mods::find(&mods) {
+            if other != target
+                && horizon_mods::Package::read(&other).is_ok_and(|p| p.manifest.id == id)
+                && std::fs::rename(&other, other.with_extension("hmod.replaced")).is_ok()
+            {
+                log::info!(
+                    "Horizon: {} set aside for the engine's {}",
+                    other.display(),
+                    content.file
+                );
+            }
+        }
+        if !list.disabled.contains(&id) {
+            changed |= list.enabled.insert(id);
+        }
+    }
+    if changed {
+        list.save(game_home);
     }
 }

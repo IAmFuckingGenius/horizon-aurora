@@ -50,6 +50,7 @@ writes `.local/android/engines/<id>-<abi>.hengine`: a ZIP of `engine.json` and
 | `abi` | `arm64-v8a`, `armeabi-v7a`, `x86_64` or `x86`; must match the device |
 | `size`, `sha256` | Of the library, checked on import |
 | `shell` | The [shell level](#shell-levels) it needs |
+| `content` | Content mods packed with it: `file`, `size`, `sha256` of each `content/<file>.hmod` (`--content`) |
 
 On import the launcher checks the format, id, ABI, the ELF header's machine, the
 size and the SHA-256, then installs the library read-only (Android 14 requires
@@ -65,8 +66,11 @@ bundle with horizon-mixins, at the launcher's `MIXINS_REV`, then builds and pack
 above for arm64-v8a and armeabi-v7a. Its `bundle` input is `smoke` (a one-hook test bundle),
 `github:OWNER/REPO@<commit>[:folder]`, or a `.hnmod` URL with its `#sha256=`. The engines are run
 artifacts; `publish` adds them to a rolling `engines` pre-release, which the launcher's list does
-not read yet, so they are imported by hand. A mod's content (`.hmod`) goes in the same instance's
-mods.
+not read yet, so they are imported by hand. Its `content` input packs content mods (`.hmod`, a path in
+the bundle's repository or an https URL with its `#sha256=`) into the engine: on import the launcher
+checks and keeps them, and each time the engine starts an instance's game it puts them into that
+instance's `horizon-mods/`, turned on, so a new instance gets them too. Another copy of the same mod
+under another file name is set aside as `.hmod.replaced`.
 
 ## Engines from Aurora's releases
 

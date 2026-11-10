@@ -5,8 +5,10 @@ An engine is the full game (`libhorizon_android.so`, with any native mods compil
 that Horizon Android's launcher installs into `files/engines/<id>/` and starts in place
 of the APK's own engine, without reinstalling the app. The file is a ZIP:
 
-    engine.json              format, id, name, version, commit, ABI, size, SHA-256, shell
+    engine.json              format, id, name, version, commit, ABI, size, SHA-256, shell,
+                             and the content mods packed with it (file, size, SHA-256)
     libhorizon_android.so    the stripped engine library
+    content/<file>.hmod      content mods packed with it (--content)
 
 Usage:
     python3 tools/android_engine_pack.py --abi arm64-v8a --name "PvP build"
@@ -80,6 +82,9 @@ def main():
     parser.add_argument('--skip-build', action='store_true', help='Pack the library already built')
     parser.add_argument('--version', help='Version shown in the launcher (default: versionName in build.gradle)')
     parser.add_argument('--output', type=Path, help='Where to write the .hengine')
+    parser.add_argument('--content', type=Path, action='append', default=[],
+                        help='A content mod (.hmod) packed with the engine; the launcher puts it '
+                             'into an instance when the engine plays it (repeatable)')
     args = parser.parse_args()
 
     commit = git('rev-parse', '--short=12', 'HEAD') or 'unknown'
@@ -122,6 +127,17 @@ def main():
             'sha256': hashlib.sha256(data).hexdigest(),
             'shell': shell_level(),
         }
+        contents = []
+        for path in args.content:
+            if path.suffix != '.hmod' or not path.is_file():
+                sys.exit(f'{path}: not a .hmod file')
+            if path.stat().st_size > 32 << 20:
+                sys.exit(f'{path}: over 32 MiB, the launcher refuses it')
+            data_mod = path.read_bytes()
+            contents.append((path, {'file': path.name, 'size': len(data_mod),
+                                    'sha256': hashlib.sha256(data_mod).hexdigest()}))
+        if contents:
+            manifest['content'] = [entry for _, entry in contents]
         output = args.output or ROOT / '.local/android/engines' / f'{engine_id}-{args.abi}.hengine'
         output.parent.mkdir(parents=True, exist_ok=True)
         partial = output.with_suffix('.partial')
@@ -129,6 +145,9 @@ def main():
             archive.writestr('engine.json', json.dumps(manifest, indent=2) + '\n',
                              compress_type=zipfile.ZIP_DEFLATED)
             archive.write(library, LIBRARY, compress_type=zipfile.ZIP_DEFLATED)
+            for path, entry in contents:
+                # A .hmod is a ZIP already: stored, not compressed again.
+                archive.write(path, f"content/{entry['file']}", compress_type=zipfile.ZIP_STORED)
         partial.replace(output)
     print(f'Engine: {output} ({output.stat().st_size / 1e6:.1f} MB, id {engine_id})')
 

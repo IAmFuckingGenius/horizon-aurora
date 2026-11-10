@@ -38,6 +38,9 @@ on:
       mixins_rev:
         description: horizon-mixins commit (empty = MIXINS_REV in launcher/src/native_mods.rs)
         default: ''
+      content:
+        description: "Content mods packed in the engine, space-separated: a .hmod path in the github bundle's repository at its commit, or https://…/<file>.hmod#sha256=<64 hex>"
+        default: ''
       publish:
         description: Add the engines to the rolling `engines` pre-release and its engines.json (from main only)
         type: boolean
@@ -75,6 +78,7 @@ jobs:
           ENGINE_NAME: ${{ inputs.engine_name }}
           ABIS: ${{ inputs.abis }}
           MIXINS_REV: ${{ inputs.mixins_rev }}
+          CONTENT: ${{ inputs.content }}
         run: |
           python3 -I - <<'PY'
           import hashlib, io, json, os, re, shutil, subprocess, sys, tomllib, urllib.request, zipfile
@@ -209,6 +213,27 @@ jobs:
                           z.writestr(info.filename, archive.read(info))
           else:
               fail('bundle: smoke, github:OWNER/REPO@<40-hex commit>[:folder], or an https .hnmod/.hmod URL ending in #sha256=<64 hex>')
+
+          # Content mods packed in the engine (`content` input): the launcher puts them into an
+          # instance's mods when the engine plays it.
+          for item in os.environ.get('CONTENT', '').split():
+              if m := re.fullmatch(r'(https://\S+/([A-Za-z0-9_.-]+\.hmod))#sha256=([0-9a-f]{64})', item):
+                  url, name, digest = m.groups()
+                  with urllib.request.urlopen(url, timeout=60) as response:
+                      data = response.read((32 << 20) + 1)
+                  if hashlib.sha256(data).hexdigest() != digest:
+                      fail(f'{name} does not have the SHA-256 given')
+              elif spec.startswith('github:') and item.endswith('.hmod'):
+                  path = (src / item).resolve()
+                  if not path.is_relative_to(src.resolve()) or not path.is_file():
+                      fail(f'content {item}: no such file in the bundle\'s repository at its commit')
+                  name, data = path.name, path.read_bytes()
+              else:
+                  fail(f'content {item}: a .hmod path in the github bundle\'s repository, or an https .hmod URL with #sha256=')
+              if len(data) > 32 << 20 or not re.fullmatch(r'[A-Za-z0-9_.-]+\.hmod', name) or name.startswith('.'):
+                  fail(f'content {name}: a plain .hmod name, at most 32 MiB')
+              (out / 'content').mkdir(exist_ok=True)
+              (out / 'content' / name).write_bytes(data)
 
           hooks_api = int(re.search(r'const NATIVE_HOOKS_API: u32 = (\d+);',
                                     Path('crates/horizon-client/src/game/native_hooks.rs').read_text()).group(1))
@@ -424,9 +449,13 @@ jobs:
         run: |
           mkdir -p dist
           version=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" packaging/android/build.gradle | head -n 1)
+          content=()
+          for file in "$RUNNER_TEMP"/native-bundle/content/*.hmod; do
+            [ -f "$file" ] && content+=(--content "$file")
+          done
           python3 tools/android_engine_pack.py --abi "$ABI" --skip-build --profile release \
             --id "$ENGINE_ID" --name "$ENGINE_NAME" --version "$version+$LABEL" \
-            --output "dist/$ENGINE_ID-$ABI.hengine"
+            --output "dist/$ENGINE_ID-$ABI.hengine" "${content[@]}"
           python3 -I - <<'PY'
           import hashlib, json, os, shutil, subprocess, zipfile
           from pathlib import Path
@@ -451,7 +480,7 @@ jobs:
               summary.write(f'### {manifest["name"]} ({abi})\n\n`{engine.name}`: {engine.stat().st_size / 1e6:.1f} MB; '
                             f'library {manifest["size"] / 1e6:.1f} MB, SHA-256 `{manifest["sha256"]}`, shell {manifest["shell"]}.\n\n'
                             'On the phone: Settings › Engines › Import, pick the file, confirm, then Start '
-                            '(or give an instance this engine). Content mods (.hmod) go in that instance\'s Mods.\n')
+                            '(or give an instance this engine). Content mods packed in it go into the instance it plays.\n')
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
