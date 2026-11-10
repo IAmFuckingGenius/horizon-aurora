@@ -6,6 +6,7 @@
 
 pub mod apothecary;
 pub mod armor_model;
+pub mod baubles;
 pub mod burst;
 pub mod consts;
 pub mod daisy;

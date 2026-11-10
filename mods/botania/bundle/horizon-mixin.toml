@@ -906,3 +906,205 @@ bindings = [
   { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
   { name = "drawn", ty = "&mut bool", value = "&mut *drawn" },
 ]
+
+# ---- the trinkets and the relic rings (baubles.rs): the module `botania_baubles` -----------------
+# A trinket works while carried in the main inventory or the off hand (Horizon has no accessory
+# slots). Server: the players' ticks, the relics' binding, Loki's copies and cursors, the Stone of
+# Temperance, the damage, the blasts and the clients' dodges and air jumps. Client: the movement
+# keys, the client tick (dodges, air jumps, the sashes' push), the dodge bar and Loki's wireframes.
+
+[[module]]
+id = "baubles"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_baubles"
+source = "baubles.rs"
+
+[[injection]]
+id = "baubles_player_tick"
+hook = "player_tick"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_player_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "baubles_inventory_tick"
+hook = "inventory_tick"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_inventory_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "slot", ty = "i32", value = "slot" },
+]
+
+[[injection]]
+id = "baubles_item_dropped"
+hook = "item_dropped"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_item_dropped.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "player", ty = "u128", value = "player" },
+]
+
+[[injection]]
+id = "baubles_damage"
+hook = "living_incoming_damage"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_damage.rs"
+bindings = [
+  { name = "entity", ty = "i32", value = "entity" },
+  { name = "kind", ty = "&str", value = "kind" },
+  { name = "damage_type", ty = "&str", value = "damage_type" },
+  { name = "causing", ty = "i32", value = "causing" },
+  { name = "amount", ty = "&mut f32", value = "&mut *amount" },
+  { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
+]
+
+[[injection]]
+id = "baubles_right_click"
+hook = "right_click_block"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_right_click.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "face", ty = "[i32; 3]", value = "face" },
+  { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
+]
+
+[[injection]]
+id = "baubles_destroy_block"
+hook = "destroy_block"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_destroy_block.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "block_state", ty = "horizon_world::registry::BlockStateId", value = "state" },
+  { name = "canceled", ty = "bool", value = "*canceled" },
+]
+
+[[injection]]
+id = "baubles_use_item"
+hook = "use_item"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_use_item.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "claimed", ty = "&mut bool", value = "&mut *claimed" },
+]
+
+[[injection]]
+id = "baubles_explosion"
+hook = "explosion_detonate"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_explosion.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "dimension", ty = "&str", value = "dimension" },
+  { name = "center", ty = "[f64; 3]", value = "center" },
+  { name = "blocks", ty = "&mut Vec<[i32; 3]>", value = "&mut *blocks" },
+]
+
+[[injection]]
+id = "baubles_knockback"
+hook = "explosion_knockback"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_knockback.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "entity", ty = "Option<u32>", value = "entity" },
+  { name = "knockback_velocity", ty = "&mut [f64; 3]", value = "&mut *knockback_velocity" },
+]
+
+[[injection]]
+id = "baubles_net"
+hook = "net_from_client"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_net.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "player", ty = "u128", value = "player" },
+  { name = "channel", ty = "&str", value = "channel" },
+]
+
+[[injection]]
+id = "baubles_movement_input"
+hook = "movement_input"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_movement_input.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "forward", ty = "f32", value = "*forward" },
+  { name = "strafe", ty = "f32", value = "*strafe" },
+  { name = "jump", ty = "bool", value = "*jump" },
+]
+
+[[injection]]
+id = "baubles_tick"
+hook = "tick"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "baubles_hud"
+hook = "hud"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_hud.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+]
+
+[[injection]]
+id = "baubles_visuals"
+hook = "visuals"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_visuals.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "rims", ty = "&mut Vec<horizon_client::mod_api::NativeBlockRim>", value = "&mut *rims" },
+]
+
+[[injection]]
+id = "baubles_tooltip"
+hook = "tooltip"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_tooltip.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "lines", ty = "&mut Vec<(horizon_client::text::Text, u32)>", value = "&mut *lines" },
+]
+
+[[injection]]
+id = "baubles_defaults"
+hook = "modify_default_components"
+hook_version = 1
+kind = "HEAD"
+helper = "baubles_defaults.rs"
+bindings = [
+  { name = "item", ty = "&str", value = "item" },
+  { name = "components", ty = "&mut serde_json::Map<String, serde_json::Value>", value = "&mut *components" },
+]

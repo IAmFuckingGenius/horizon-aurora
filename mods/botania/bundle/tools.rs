@@ -127,12 +127,15 @@ fn custom_flag(stack: &ItemStack, k: &str) -> bool {
 
 // ---- the rings --------------------------------------------------------------------------------
 
-// What the player in place carries that changes an area tool: the Ring of Thor and an active
-// Stone of Temperance. Neither is ported yet: none. The rings' module answers here once they
-// are (Thor widens the Terra Shatterer's area, Temperance holds it to rank B and stops the Terra
-// Truncator felling).
-pub(super) fn area_rings(_game: &Game<'_>) -> AreaRings {
-    AreaRings::default()
+// What the player in place carries that changes an area tool, by the trinkets' inventory rule
+// (`botania_baubles`): a Ring of Thor bound to them, and an active Stone of Temperance. Thor
+// widens the Terra Shatterer's area, Temperance holds it to rank B and stops the Terra Truncator
+// felling.
+pub(super) fn area_rings(game: &Game<'_>) -> AreaRings {
+    AreaRings {
+        thor: super::botania_baubles::thor_ring(game),
+        temperance: super::botania_baubles::temperance_active(game),
+    }
 }
 
 // ---- break particles for the breaker -----------------------------------------------------------
