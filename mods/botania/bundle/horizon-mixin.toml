@@ -177,3 +177,50 @@ bindings = [
   { name = "pos", ty = "[i32; 3]", value = "pos" },
   { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
 ]
+
+# ---- block entity renderers (`botania_render`, renderers.rs) ----------------------------------
+# Botania's `ManaPoolBlockEntityRenderer`, `PetalApothecaryBlockEntityRenderer` and
+# `ManaSpreaderBlockEntityRenderer`, drawn with `native_block_entity_submit`.
+
+[[module]]
+id = "render"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_render"
+source = "renderers.rs"
+
+[[injection]]
+id = "submit"
+hook = "block_entity_submit"
+hook_version = 1
+kind = "HEAD"
+helper = "submit.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "block", ty = "&str", value = "block" },
+  { name = "state", ty = "horizon_world::registry::BlockStateId", value = "state" },
+  { name = "entity", ty = "&horizon_client::containers::ModBlockEntity", value = "&*entity" },
+  { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
+]
+
+[[injection]]
+id = "models"
+hook = "standalone_models"
+hook_version = 1
+kind = "HEAD"
+helper = "models.rs"
+bindings = [
+  { name = "models", ty = "&mut Vec<String>", value = "&mut *models" },
+]
+
+# Runs after `update_tag` (hooks on one site run by injection id, ascending) and adds to its tag.
+[[injection]]
+id = "update_tag_items"
+hook = "block_entity_update_tag"
+hook_version = 1
+kind = "HEAD"
+helper = "update_items.rs"
+bindings = [
+  { name = "entity", ty = "&horizon_client::containers::ModBlockEntity", value = "&*entity" },
+  { name = "tag", ty = "&mut Option<horizon_world::nbt::Compound>", value = "&mut *tag" },
+]

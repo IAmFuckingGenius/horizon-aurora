@@ -9,6 +9,11 @@ form, the Forge biome modifiers that place the mystical flowers), lays `content/
 (block shapes and properties, flower features, vanilla models for what Botania draws in code) and packs
 it with `cargo horizon-mod build`. Run from the repository root; it builds the two tools if needed.
 
+    python3 mods/botania/build_content.py --overlay
+
+lays `content/` over the committed `dist/botania.hmod` instead, without the jar or the tools: for a
+change to `content/` alone, or to bring a rebuilt archive (a merge) up to `content/` again.
+
 Botania is by Vazkii, under the Botania License (`LICENSE` here): its code and assets may be used and
 shared with credit, in an open source project, free of charge. This is a modified port.
 """
@@ -19,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -54,5 +60,24 @@ def main():
     shutil.rmtree(work)
 
 
+def overlay():
+    """`content/`'s files replace or join the archive's of the same paths; the rest stays as it is."""
+    out = HERE / 'dist/botania.hmod'
+    files = {
+        source.relative_to(HERE / 'content').as_posix(): source.read_bytes()
+        for source in sorted((HERE / 'content').rglob('*'))
+        if source.is_file()
+    }
+    staged = out.with_suffix('.hmod.tmp')
+    with zipfile.ZipFile(out) as old, zipfile.ZipFile(staged, 'w') as new:
+        for info in old.infolist():
+            data = files.pop(info.filename, None)
+            new.writestr(info, old.read(info) if data is None else data, compress_type=info.compress_type)
+        for name, data in files.items():
+            new.writestr(zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED)
+    staged.replace(out)
+    print(f'{out}: {out.stat().st_size / 1e6:.1f} MB, SHA-256 {hashlib.sha256(out.read_bytes()).hexdigest()}')
+
+
 if __name__ == '__main__':
-    main()
+    overlay() if sys.argv[1:] == ['--overlay'] else main()
