@@ -105,8 +105,9 @@ see "In game" under Verified. It has not been played on a phone yet.
 
 ## Verified
 
-- `cargo test` of `botania-core` (scratch copy, `CARGO_BUILD_JOBS=2`, nice/ionice): 44 passed,
-  0 failed, no warnings. Expected values are Botania's, not the port's: Endoflame coal → 1197/1200
+- `cargo test` of `botania-core` (scratch copy, `CARGO_BUILD_JOBS=2`, nice/ionice): 55 passed,
+  0 failed (11 of them `weapons`: bow charge, blade burst flight and strikes, chain order and
+  damage, star spawn and fall, Terra Shatterer ranks and area, mana costs). Expected values are Botania's, not the port's: Endoflame coal → 1197/1200
   mana by tick parity, Pure Daisy 1193 ticks (first position visited) to 1200, burst death on
   tick 99 after 19.8 blocks (elven 139, Gaia 151), gametest `spreader_pool_default_aim` (pool hit
   by tick 3 for all four variants), gametest `ApothecaryRecipeTest.testItemEnterPrevention`,
@@ -137,6 +138,10 @@ see "In game" under Verified. It has not been played on a phone yet.
     injections, 1 module, 1 crate, 1 data folder; release library in 16 min 55 s, no warnings
     from the bundle; `botania-arm64-v8a.hengine` 36.1 MB (artifact
     `native-engine-botania-arm64-v8a`, until 2026-11-24). This is the current bundle.
+  - 42878996755 (x86_64), bundle 122763f1c8 (branch `botania-weapons`: bows, Terra Blade,
+    Thundercaller, Starcaller, Terra Shatterer, elementium shovel and pickaxe, mana tools):
+    **success**; 29 injections, 2 modules (`botania`, `botania_weapons`), 1 crate, 1 data
+    folder; release library in 13 min 43 s, no warnings from the bundle. Not played yet.
 
 ### In game (Waydroid x86_64, 2026-11-10)
 
@@ -211,11 +216,21 @@ Found and fixed during the test: `dyed_color` made Horizon refuse the whole cont
 
 - Not played on a phone yet; the whole chain hasn't been crafted in survival (its recipes are
   registered: `/recipe give` unlocks each).
-- Botania's bows (Livingwood, Crystal) can't be drawn: the game knows a bow by the id
-  `minecraft:bow`, not by its components.
-- Weapon and tool abilities are code in Botania and not ported: the Terra Blade's beam, the
-  Thundercaller's chain lightning, the Starcaller's stars, the Terra Shatterer's area mining, mana
-  repair, set bonuses, Botania's armour models.
+- Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`; built in
+  run 42878996755, not played yet):
+  - mana is a stub (`// STUB: replaced by the mana items branch` in `weapons.rs`): a creative
+    player always pays, anyone else has no mana, so the crystal bow doesn't draw in survival and
+    mana tools wear as plain tools;
+  - engine-only: the third-person bow arm pose (`first_person.rs` `bow_like`) and the touch
+    projectile crosshair; no `enchantable/bow` tag in the content, so the table and anvil don't
+    enchant Botania's bows;
+  - the beam, stars and chain lightning hit mobs only (no PvP), drawn as vanilla dust (G2); a beam
+    or star is dropped when its owner leaves; the Starcaller's timer is per player, not per sword;
+    Unbreaking rolls twice when mana pays for wear;
+  - Terra Shatterer: no pool charging, no rank in the tooltip, no enabled model; its NBT changes
+    every tick while on;
+  - not ported: Terra Truncator, axe beheading, hoes, the shears' area, the sword's pixies, the
+    rings (Thor, temperance, Loki), set bonuses, Botania's armour models.
 - Advancement toasts show no icon; the function `botania:ender_air_release` doesn't load (no
   `botania:ender_air` entity).
 - Trail and beam (engine gap G2): server-sent vanilla dust, not Botania's wisps and sparkles:
