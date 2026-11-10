@@ -1,5 +1,5 @@
 // A mana pool's comparator level.
-fn output(
+fn botania_output(
     level: &crate::game::GameLevel<'_>,
     pos: horizon_core::position::BlockPos,
     state: horizon_world::registry::BlockStateId,
