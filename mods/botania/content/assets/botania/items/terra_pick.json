@@ -1,0 +1,33 @@
+{
+  "model": {
+    "index": 1,
+    "on_false": {
+      "index": 0,
+      "on_false": {
+        "model": "botania:item/terra_pick",
+        "type": "minecraft:model"
+      },
+      "on_true": {
+        "model": "botania:item/terra_pick_active",
+        "type": "minecraft:model"
+      },
+      "property": "minecraft:custom_model_data",
+      "type": "minecraft:condition"
+    },
+    "on_true": {
+      "index": 0,
+      "on_false": {
+        "model": "botania:item/terra_pick_tipped",
+        "type": "minecraft:model"
+      },
+      "on_true": {
+        "model": "botania:item/terra_pick_tipped_active",
+        "type": "minecraft:model"
+      },
+      "property": "minecraft:custom_model_data",
+      "type": "minecraft:condition"
+    },
+    "property": "minecraft:custom_model_data",
+    "type": "minecraft:condition"
+  }
+}

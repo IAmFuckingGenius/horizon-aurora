@@ -1,0 +1,15 @@
+{
+  "model": {
+    "index": 0,
+    "on_false": {
+      "model": "botania:item/terra_axe_active",
+      "type": "minecraft:model"
+    },
+    "on_true": {
+      "model": "botania:item/terra_axe",
+      "type": "minecraft:model"
+    },
+    "property": "minecraft:custom_model_data",
+    "type": "minecraft:condition"
+  }
+}

@@ -15,6 +15,7 @@ use botania_core::mana_gear::{self, ArmorSet};
 use botania_core::mana_handler::{self, Asker, DamagePayer};
 use botania_core::mana_item::{self, Bar, Kind, ManaStack, Nbt, PoolMode};
 use botania_core::pool::Pool;
+use botania_core::tools;
 use horizon_client::containers::BlockEntity;
 use horizon_client::effects::EffectAction;
 use horizon_client::hud::HudBatch;
@@ -37,6 +38,8 @@ const GRAY: u32 = 0xAAAAAA;
 const RED: u32 = 0xFF5555;
 // The tooltip's mana bar: a 3 pixel bar in a 1 pixel black frame (`ManaBarTooltipComponent`).
 const BAR_HEIGHT: f32 = 5.0;
+// The Terra Shatterer's rank letters, a line of text over its bar.
+const RANK_ROW: f32 = 10.0;
 // Dust drawn along a charging or draining wisp's path.
 const FLOW_POINTS: usize = 6;
 const FLOW_SCALE: f32 = 0.4;
@@ -795,13 +798,19 @@ pub(super) fn tooltip(game: &Game<'_>, stack: &ItemStack, lines: &mut Vec<(Text,
     state().tooltip_width = width;
 }
 
-// `native_tooltip_component`: `ManaBarTooltip`, a bar as wide as the tooltip.
+// `native_tooltip_component`: `ManaBarTooltip`, a bar as wide as the tooltip; the Terra
+// Shatterer's with its rank letters over it.
 pub(super) fn tooltip_component(_game: &Game<'_>, stack: &ItemStack, size: &mut Option<[f32; 2]>) {
-    if mana_stack(stack).is_none() {
+    let Some(m) = mana_stack(stack) else {
         return;
-    }
+    };
     let width = state().tooltip_width.max(24.0);
-    *size = Some([width, BAR_HEIGHT]);
+    let height = if m.kind == Kind::TerraPick {
+        RANK_ROW + BAR_HEIGHT
+    } else {
+        BAR_HEIGHT
+    };
+    *size = Some([width, height]);
 }
 
 // `ManaBarTooltipComponent.renderImage`: the fill in a pulsing light blue
@@ -816,6 +825,10 @@ pub(super) fn tooltip_component_draw(
     let Some(m) = mana_stack(stack) else {
         return;
     };
+    if m.kind == Kind::TerraPick {
+        rank_bar(game, &m, batch, origin, size);
+        return;
+    }
     let [x, y] = origin;
     let w = size[0];
     let fraction = m.tooltip_fraction().clamp(0.0, 1.0);
@@ -834,5 +847,62 @@ pub(super) fn tooltip_component_draw(
             [x + 1.0 + filled, y + 1.0, inner - filled, 3.0],
             0xFF55_5555,
         );
+    }
+}
+
+// A rank's name as the lang file has it (`botania.rank0` is `§cD`), in its runs of colour.
+fn rank_runs(level: usize) -> Vec<(String, u32)> {
+    let name = horizon_client::lang::get(&format!("botania.rank{level}"));
+    tools::legacy_runs(&name, 0xFFFFFF)
+}
+
+fn runs_width(game: &Game<'_>, runs: &[(String, u32)]) -> f32 {
+    runs.iter().map(|(t, _)| game.native_text_width(t)).sum()
+}
+
+fn draw_runs(game: &Game<'_>, batch: &mut HudBatch, runs: &[(String, u32)], at: [f32; 2]) {
+    let [mut x, y] = at;
+    for (text, rgb) in runs {
+        game.native_text(batch, text, [x, y], *rgb, true);
+        x += game.native_text_width(text);
+    }
+}
+
+// `ManaBarTooltipComponent` for the Terra Shatterer: its rank's letter over the start of the bar
+// and the next rank's over its end (none at SS), and the bar filled toward the next rank with a
+// rainbow drifting along it (`hsvToRgb((ticks * 0.01 + column / width) % 1, 1, 1)`), one column
+// short of full below SS.
+fn rank_bar(
+    game: &Game<'_>,
+    m: &ManaStack,
+    batch: &mut HudBatch,
+    origin: [f32; 2],
+    size: [f32; 2],
+) {
+    let [x, y] = origin;
+    let w = size[0];
+    let level = mana_item::terra_pick_level(m.nbt.mana);
+    let last = tools::rank_is_last(level);
+    draw_runs(game, batch, &rank_runs(level), [x, y]);
+    if !last {
+        let next = rank_runs(level + 1);
+        let right = x + w - runs_width(game, &next);
+        draw_runs(game, batch, &next, [right, y]);
+    }
+    let bar_y = y + RANK_ROW;
+    let total = (w - 2.0).max(0.0) as i32;
+    let filled = tools::rank_bar_width(total, m.tooltip_fraction(), last).max(0);
+    let ticks = (START.elapsed().as_secs_f64() * 20.0) as f32;
+    game.native_fill(batch, [x, bar_y, w, BAR_HEIGHT], 0xFF00_0000);
+    for i in 0..filled {
+        let hue = tools::rank_bar_hue(i, total, ticks);
+        let rgb = botania_core::wand::hsv_to_rgb(hue, 1.0, 1.0);
+        let at = [x + 1.0 + i as f32, bar_y + 1.0, 1.0, 3.0];
+        game.native_fill(batch, at, 0xFF00_0000 | rgb);
+    }
+    let rest = total - filled;
+    if rest > 0 {
+        let at = [x + 1.0 + filled as f32, bar_y + 1.0, rest as f32, 3.0];
+        game.native_fill(batch, at, 0xFF55_5555);
     }
 }
