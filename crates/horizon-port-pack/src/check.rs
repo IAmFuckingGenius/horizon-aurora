@@ -133,6 +133,9 @@ pub fn check_with(jar_path: &Path, out: &Path, old: bool) -> Result<Check, Strin
         crate::pipeline::write_json(&out.join("check.json"), &check)?;
         Ok(check)
     };
+    if old {
+        carry::UPGRADE_OLD_RESULTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     if carry::old_layout(&names) && !old {
         check.summary = carry::OLD_LAYOUT.into();
         return done(check);

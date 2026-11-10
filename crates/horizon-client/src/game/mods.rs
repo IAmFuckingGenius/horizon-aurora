@@ -146,6 +146,15 @@ fn content_root_at(
             } else {
                 enabled.contains(&m.id)
             } || dev.contains(path);
+            // Aurora: a mod that is there but off says so, which a phone's log can't show
+            // otherwise (the Mods page hides a content mod behind a native mod of its id).
+            if !on {
+                log::info!(
+                    "Horizon: content mod {} ({}) is installed but off",
+                    m.id,
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                );
+            }
             on && m.capabilities.contains(&Capability::Registries)
         })
         .collect();

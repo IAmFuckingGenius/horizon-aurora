@@ -12543,12 +12543,41 @@ impl Game<'_> {
     pub(super) fn list_native_mods(&mut self) {
         let mut mods = Vec::new();
         self.native_mods(&mut mods);
+        // Content mods of a native mod's id, whose rows the native row replaces below.
+        let hidden: Vec<String> = self
+            .settings
+            .mods
+            .installed
+            .iter()
+            .filter(|row| row.native.is_none() && mods.iter().any(|m| m.id == row.id))
+            .map(|row| row.id.clone())
+            .collect();
         // A WebAssembly mod of the same id doesn't run (`start_mods`): the
         // native row stands for it, and alone toggles its `mod.<id>` line.
         self.settings
             .mods
             .installed
             .retain(|row| row.native.is_none() && !mods.iter().any(|m| m.id == row.id));
+        // Aurora: a content mod of the same id (a native port's blocks and items, as Botania's)
+        // loads with it. The native mod is on by default, while the content loads only with a
+        // `mod.<id>:true` line, which the row writes only when switched: write it now. The
+        // content root is built before this, so it comes with the next start.
+        let mut follow = false;
+        for id in hidden {
+            if !self.settings.mods.disabled.contains(&id)
+                && self.settings.mods.enabled.insert(id.clone())
+            {
+                log::info!(
+                    "Horizon: mod {id}'s content follows its native mod from the next start"
+                );
+                follow = true;
+            }
+        }
+        if follow && let Some(dir) = Self::options_path().parent() {
+            self.settings
+                .mods
+                .save(&horizon_client::logging::shared_dir(dir));
+        }
         for m in mods {
             let mut buttons = Vec::new();
             self.native_settings(&m.id, &mut buttons);

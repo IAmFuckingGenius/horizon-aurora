@@ -36,7 +36,25 @@ pub struct Manifest {
     /// engines packed before levels existed.
     #[serde(default)]
     pub shell: u32,
+    /// Content mods packed with it (`content/<file>` in the `.hengine`): the blocks, items and
+    /// assets its native mods go with, put into an instance when the engine plays it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<Content>,
 }
+
+/// A content mod (`.hmod`) packed with an engine.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Content {
+    /// Its file name, in the engine's `content/` folder and in an instance's mods.
+    pub file: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// The folder of an engine's content mods, in the `.hengine` and in its installed folder.
+pub const CONTENT: &str = "content";
+/// The largest content mod accepted, in bytes (the launcher's own limit for a mod).
+const CONTENT_LIMIT: u64 = 32 << 20;
 
 /// An engine installed on this device.
 #[derive(Clone, Debug)]
@@ -115,7 +133,96 @@ fn check(manifest: &Manifest) -> Result<(), String> {
     if manifest.shell > shell() {
         return Err(NEEDS_NEWER_APP.into());
     }
+    for content in &manifest.content {
+        let plain = !content.file.starts_with('.')
+            && content.file.ends_with(".hmod")
+            && !content.file.contains(['/', '\\', '\0']);
+        if !plain || content.size == 0 || content.size > CONTENT_LIMIT || !checksum(&content.sha256)
+        {
+            return Err(format!(
+                "The engine's content mod {} is not valid.",
+                content.file
+            ));
+        }
+    }
     Ok(())
+}
+
+/// Copies `reader` to `path`, at most `size` bytes, checking that it is exactly `size` bytes
+/// with SHA-256 `sha256`.
+fn copy_checked(mut reader: impl Read, path: &Path, size: u64, sha256: &str) -> Result<(), String> {
+    let mut out = fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; 256 << 10];
+    let mut total = 0u64;
+    loop {
+        let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > size {
+            return Err("A file in the engine is larger than its manifest says.".into());
+        }
+        hash.update(&buffer[..n]);
+        out.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+    }
+    out.sync_all().map_err(|e| e.to_string())?;
+    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if total != size || !digest.eq_ignore_ascii_case(sha256) {
+        return Err("A file in the engine is damaged: its checksum does not match.".into());
+    }
+    Ok(())
+}
+
+/// A file's SHA-256 in lower-case hex, `None` when it can't be read.
+pub fn file_sha256(path: &Path) -> Option<String> {
+    let mut file = fs::File::open(path).ok()?;
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; 256 << 10];
+    loop {
+        let n = file.read(&mut buffer).ok()?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    Some(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The content mods packed with installed engine `id`: each file in its folder, with what
+/// its manifest says of it. Empty for the APK's engine and an engine without content.
+pub fn content_of(home: &Path, id: &str) -> Vec<(PathBuf, Content)> {
+    let dir = folder(home).join(id);
+    let Some(manifest) = fs::read(dir.join("engine.json"))
+        .ok()
+        .and_then(|text| serde_json::from_slice::<Manifest>(&text).ok())
+    else {
+        return Vec::new();
+    };
+    manifest
+        .content
+        .into_iter()
+        .map(|content| (dir.join(CONTENT).join(&content.file), content))
+        .collect()
+}
+
+/// Copies a packed content mod into an instance's mods folder `mods` unless a file with the
+/// same name and checksum is there. Whether it copied.
+pub fn place(source: &Path, content: &Content, mods: &Path) -> Result<bool, String> {
+    let target = mods.join(&content.file);
+    if file_sha256(&target).is_some_and(|sha| sha.eq_ignore_ascii_case(&content.sha256)) {
+        return Ok(false);
+    }
+    fs::create_dir_all(mods).map_err(|e| e.to_string())?;
+    let partial = mods.join(format!(".{}.partial", content.file));
+    let file = fs::File::open(source).map_err(|e| e.to_string())?;
+    let copied = copy_checked(file, &partial, content.size, &content.sha256)
+        .and_then(|()| fs::rename(&partial, &target).map_err(|e| e.to_string()));
+    if copied.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    copied.map(|()| true)
 }
 fn checksum(sha256: &str) -> bool {
     sha256.len() == 64 && sha256.chars().all(|c| c.is_ascii_hexdigit())
@@ -375,6 +482,22 @@ pub fn install(home: &Path, file: impl Read + Seek) -> Result<Manifest, String> 
             return Err("The engine library is not a library for this device.".into());
         }
         set_read_only(&path)?;
+        drop(entry);
+        if !manifest.content.is_empty() {
+            let dir = partial.join(CONTENT);
+            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            for content in &manifest.content {
+                let entry = zip
+                    .by_name(&format!("{CONTENT}/{}", content.file))
+                    .map_err(|_| format!("This engine has no {}.", content.file))?;
+                copy_checked(
+                    entry,
+                    &dir.join(&content.file),
+                    content.size,
+                    &content.sha256,
+                )?;
+            }
+        }
         fs::write(
             partial.join("engine.json"),
             serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
@@ -540,6 +663,7 @@ mod tests {
                 .map(|b| format!("{b:02x}"))
                 .collect(),
             shell: horizon_boot::SHELL,
+            content: Vec::new(),
         }
     }
     fn home(tag: &str) -> PathBuf {
@@ -548,6 +672,62 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+    fn sha(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn packed_content_is_installed_checked_and_placed_once() {
+        let lib = library(abi());
+        let hmod = b"a content mod".to_vec();
+        let content = Content {
+            file: "botania.hmod".into(),
+            size: hmod.len() as u64,
+            sha256: sha(&hmod),
+        };
+        let with = Manifest {
+            content: vec![content.clone()],
+            ..manifest(&lib)
+        };
+        let packed = |hmod_bytes: &[u8]| {
+            let mut out = Cursor::new(Vec::new());
+            let mut zip = zip::ZipWriter::new(&mut out);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("engine.json", options).unwrap();
+            zip.write_all(&serde_json::to_vec(&with).unwrap()).unwrap();
+            zip.start_file(LIBRARY, options).unwrap();
+            zip.write_all(&lib).unwrap();
+            zip.start_file("content/botania.hmod", options).unwrap();
+            zip.write_all(hmod_bytes).unwrap();
+            zip.finish().unwrap();
+            out.into_inner()
+        };
+        let home = home("content");
+        install(&home, Cursor::new(packed(&hmod))).unwrap();
+        let listed = content_of(&home, "pvp-1");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(fs::read(&listed[0].0).unwrap(), hmod);
+        // A damaged content mod refuses the whole engine.
+        let other = home.join("other");
+        fs::create_dir_all(&other).unwrap();
+        assert!(install(&other, Cursor::new(packed(b"a content moD"))).is_err());
+        assert!(content_of(&other, "pvp-1").is_empty());
+        // A content mod's name must be a plain .hmod file name.
+        let mut bad = with.clone();
+        bad.content[0].file = "../escape.hmod".into();
+        assert!(check(&bad).is_err());
+        // Placed into an instance's mods once; a changed copy there is put back.
+        let mods = home.join("instance/horizon-mods");
+        assert!(place(&listed[0].0, &content, &mods).unwrap());
+        assert!(!place(&listed[0].0, &content, &mods).unwrap());
+        fs::write(mods.join("botania.hmod"), b"edited").unwrap();
+        assert!(place(&listed[0].0, &content, &mods).unwrap());
+        assert_eq!(fs::read(mods.join("botania.hmod")).unwrap(), hmod);
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
