@@ -445,7 +445,7 @@ pub(super) fn use_on(
 // `elementium_axe_beheading`, the pool `LootHandler` adds to every entity's loot table: a mob
 // killed by a player holding an elementium axe in the main hand may drop its head, more likely
 // with the axe's Looting. Only when the mob's own table rolled, as the pool is part of it. A
-// player's killer isn't known where its drops are heard, so players don't drop theirs.
+// player's head is `botania_tool_uses`': its killer's hand is read after the level's tick.
 pub(super) fn loot_drops(
     game: &mut Game<'_>,
     context: &NativeLootDrops<'_>,

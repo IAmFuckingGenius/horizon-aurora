@@ -1024,6 +1024,7 @@ pub(super) fn pick_break_other(
     };
     let targets = weapons::between_closed(pos, begin, end);
     break_area(game, &targets, |g, s| pick_can_mine(g, tool, s));
+    super::botania_tool_uses::rank_ss_pick(game, level);
 }
 
 // `ElementiumShovelItem.onBlockStartBreak`: a falling block it mines fast takes the same blocks

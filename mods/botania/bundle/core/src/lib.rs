@@ -19,6 +19,7 @@ pub mod mth;
 pub mod pool;
 pub mod recipe;
 pub mod render;
+pub mod tool_uses;
 pub mod tools;
 pub mod wand;
 pub mod weapons;
