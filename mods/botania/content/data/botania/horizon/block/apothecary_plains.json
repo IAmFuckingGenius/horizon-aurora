@@ -1,7 +1,8 @@
 {
   "template": "minecraft:stone",
   "properties": {
-    "hardness": 3.5
+    "hardness": 3.5,
+    "occludes": false
   },
   "state_properties": {
     "fluid": {
@@ -82,6 +83,5 @@
         0.875
       ]
     ]
-  },
-  "occludes": false
+  }
 }

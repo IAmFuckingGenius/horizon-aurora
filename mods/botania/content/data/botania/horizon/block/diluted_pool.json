@@ -1,5 +1,8 @@
 {
   "template": "minecraft:stone",
+  "properties": {
+    "occludes": false
+  },
   "shapes": {
     "default": [
       [
@@ -43,6 +46,5 @@
         1.0
       ]
     ]
-  },
-  "occludes": false
+  }
 }
