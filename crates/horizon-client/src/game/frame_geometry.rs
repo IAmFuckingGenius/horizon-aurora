@@ -393,25 +393,12 @@ impl Game<'_> {
                     remaining: owner.use_item_remaining_ticks as f32,
                     partial: a,
                 },
-                _ if using => {
-                    let view = horizon_client::item_render::stack_view(&stack);
-                    let mut animation = self
-                        .pack
-                        .item_renderer
-                        .models
-                        .components_view(&view)
-                        .get("minecraft:consumable")
-                        .map_or(horizon_world::consumable::UseAnimation::None, |c| {
-                            horizon_client::first_person::consumable_animation(c)
-                        });
-                    self.native_use_animation(&stack, &mut animation);
-                    item_use::use_pose(
-                        animation,
-                        owner.use_item_remaining_ticks as f32,
-                        owner.use_duration as f32,
-                        a,
-                    )
-                }
+                _ if using => item_use::use_pose(
+                    self.use_animation(&stack),
+                    owner.use_item_remaining_ticks as f32,
+                    owner.use_duration as f32,
+                    a,
+                ),
                 _ if spinning => ItemPose::SpinAttack,
                 // ItemInHandRenderer: a STAB swing of this hand jabs.
                 _ if self

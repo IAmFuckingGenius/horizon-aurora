@@ -8257,13 +8257,22 @@ impl Game<'_> {
     pub(super) fn native_use_duration(&self, stack: &ItemStack, duration: &mut i32) {
         mod_api::dispatch_use_duration(self, mod_api::mods(), stack, duration);
     }
-    /// `Item.getUseAnimation` of `stack` in use, for the first person hand:
-    /// `animation` arrives with its consumable's (`eat`, `drink`), else
-    /// `None`. `Eat` and `Drink` bring the food to the mouth, `Bow` draws,
-    /// `Trident` raises, `Brush` sweeps; the rest hold the item still.
-    /// Asked each frame the hand draws an item in use, for an item with no
-    /// pose of its own (bows, crossbows, tridents, brushes and spears keep
-    /// theirs). Client-side. API 90.
+    /// `Item.getUseAnimation` of `stack` in use, for the first person hand and
+    /// the third person arm: `animation` arrives with vanilla's (the bow's,
+    /// crossbow's, trident's, spyglass's, goat horn's, brush's and bundles'
+    /// own, else the stack's consumable's, `Block` for an item that blocks
+    /// attacks, `Spear` for a spear), else `None`. In first person `Eat` and
+    /// `Drink` bring the food to the mouth, `Bow` draws, `Trident` raises,
+    /// `Brush` sweeps and the rest hold the item still; bows, crossbows,
+    /// tridents, brushes and spears keep their own pose there. A player seen
+    /// in third person (another one, this one in F5 or in the inventory)
+    /// takes the arm pose of the answer, as `AvatarRenderer.getArmPose`:
+    /// `Bow` draws, `Crossbow` charges, `Trident` raises, `Block`, `Spyglass`,
+    /// `TootHorn`, `Brush` and `Spear` have their own; a touch screen aims a
+    /// held `Bow`, `Crossbow` or `Trident` through the crosshair. Asked each
+    /// frame the hand draws an item in use, each tick a player uses one, and
+    /// each frame of a touch screen's tap mode for the held item: answer from
+    /// the stack alone. Client-side. API 90.
     pub(super) fn native_use_animation(&self, stack: &ItemStack, animation: &mut UseAnimation) {
         mod_api::dispatch_use_animation(self, mod_api::mods(), stack, animation);
     }

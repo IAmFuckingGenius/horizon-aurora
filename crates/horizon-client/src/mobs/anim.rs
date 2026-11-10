@@ -4,6 +4,7 @@
 use super::{Mob, Part, keyframes::AnimationState, living::wrap};
 use crate::fast_hash::{FxHashMap, FxHashSet};
 use horizon_core::geometry::trig::Mth;
+use horizon_world::consumable::UseAnimation;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_6, PI};
 
@@ -450,6 +451,53 @@ impl ArmPose {
     }
     fn affects_offhand(self) -> bool {
         self.two_handed() || self == Self::ThrowTrident
+    }
+    /// `AvatarRenderer.getArmPose`: the pose of an arm whose hand uses an item
+    /// of `animation`; None for the animations with no pose of their own
+    /// (none, eat, drink, bundle), whose arm holds the item as any other.
+    pub fn of_use(animation: UseAnimation) -> Option<Self> {
+        Some(match animation {
+            UseAnimation::Block => Self::Block,
+            UseAnimation::Bow => Self::Bow,
+            UseAnimation::Trident => Self::ThrowTrident,
+            UseAnimation::Crossbow => Self::CrossbowCharge,
+            UseAnimation::Spyglass => Self::Spyglass,
+            UseAnimation::TootHorn => Self::TootHorn,
+            UseAnimation::Brush => Self::Brush,
+            UseAnimation::Spear => Self::Spear,
+            UseAnimation::None | UseAnimation::Eat | UseAnimation::Drink | UseAnimation::Bundle => {
+                return None;
+            }
+        })
+    }
+}
+/// `AvatarRenderer.getArmPose` for a hand of a player that holds something: a
+/// charged crossbow held while not swinging (`crossbow_hold`), else the pose
+/// of the animation of the item this hand uses (`using`), else a spear's
+/// (`spear`), else the item's.
+pub fn player_hand_pose(crossbow_hold: bool, using: Option<UseAnimation>, spear: bool) -> ArmPose {
+    if crossbow_hold {
+        return ArmPose::CrossbowHold;
+    }
+    if let Some(pose) = using.and_then(ArmPose::of_use) {
+        return pose;
+    }
+    if spear { ArmPose::Spear } else { ArmPose::Item }
+}
+/// `ItemStack.getUseAnimation` of vanilla's own items, by the id `item`, for a
+/// model whose game did not work out the animation of the item in use
+/// (`Extra::use_animation`). `blocking`: the item blocks attacks.
+fn id_use_animation(item: &str, blocking: bool) -> UseAnimation {
+    match item {
+        _ if blocking => UseAnimation::Block,
+        "minecraft:bow" => UseAnimation::Bow,
+        "minecraft:crossbow" => UseAnimation::Crossbow,
+        "minecraft:trident" => UseAnimation::Trident,
+        "minecraft:spyglass" => UseAnimation::Spyglass,
+        "minecraft:goat_horn" => UseAnimation::TootHorn,
+        "minecraft:brush" => UseAnimation::Brush,
+        _ if crate::spear::Kinetic::of(item).is_some() => UseAnimation::Spear,
+        _ => UseAnimation::None,
     }
 }
 /// `AnimationUtils.animateCrossbowHold`.
@@ -942,43 +990,33 @@ fn vanilla_setup(
             };
             let (main_spear, off_spear) =
                 (spear_in(&m.extra.main_hand), spear_in(&m.extra.off_hand));
+            // ItemStack.getUseAnimation of the item a hand uses: the game's
+            // answer (a mod's bow draws), else that of vanilla's item of its id.
+            let use_animation = |using: bool, item: &str| {
+                using.then(|| {
+                    m.extra
+                        .use_animation
+                        .unwrap_or_else(|| id_use_animation(item, m.extra.blocking))
+                })
+            };
             let pose = if player {
                 match m.extra.main_hand.as_deref() {
-                    Some(_) if using_main && m.extra.blocking => ArmPose::Block,
-                    Some("minecraft:bow") if using_main => ArmPose::Bow,
-                    Some("minecraft:trident") if using_main => ArmPose::ThrowTrident,
-                    Some("minecraft:spyglass") if using_main => ArmPose::Spyglass,
-                    Some("minecraft:goat_horn") if using_main => ArmPose::TootHorn,
-                    Some("minecraft:crossbow") if using_main && !m.extra.charged => {
-                        ArmPose::CrossbowCharge
-                    }
-                    Some("minecraft:crossbow") if m.extra.charged && s.swing == 0.0 => {
-                        ArmPose::CrossbowHold
-                    }
-                    Some("minecraft:brush") if using_main => ArmPose::Brush,
-                    Some(_) if main_spear.is_some() => ArmPose::Spear,
-                    Some(_) => ArmPose::Item,
+                    // CrossbowItem.isCharged goes by the item: only vanilla's crossbow.
+                    Some(item) => player_hand_pose(
+                        item == "minecraft:crossbow" && m.extra.charged && s.swing == 0.0,
+                        use_animation(using_main, item),
+                        main_spear.is_some(),
+                    ),
                     None => ArmPose::Empty,
                 }
             } else {
                 right
             };
-            let off = if player && m.extra.off_hand.is_some() && !pose.affects_offhand() {
-                if off_spear.is_some() {
-                    ArmPose::Spear
-                } else if using_off && m.extra.blocking {
-                    ArmPose::Block
-                } else if using_off && m.extra.off_hand.as_deref() == Some("minecraft:spyglass") {
-                    ArmPose::Spyglass
-                } else if using_off && m.extra.off_hand.as_deref() == Some("minecraft:goat_horn") {
-                    ArmPose::TootHorn
-                } else if using_off && m.extra.off_hand.as_deref() == Some("minecraft:brush") {
-                    ArmPose::Brush
-                } else {
-                    ArmPose::Item
+            let off = match m.extra.off_hand.as_deref() {
+                Some(item) if player && !pose.affects_offhand() => {
+                    player_hand_pose(false, use_animation(using_off, item), off_spear.is_some())
                 }
-            } else {
-                ArmPose::Empty
+                _ => ArmPose::Empty,
             };
             let mut h = if m.main_arm_left() {
                 Hum::new(off, pose)
@@ -1632,6 +1670,107 @@ mod flight_pose_tests {
         assert_eq!(p.get("left_arm")[4], 0.0);
         assert!((p.get("right_arm")[3] + PI / 10.0).abs() < 1e-6);
         assert_eq!(p.get("right_arm")[4], 0.0);
+    }
+
+    #[test]
+    fn each_use_animation_has_the_arm_pose_vanilla_gives_it() {
+        use horizon_world::consumable::UseAnimation;
+        // AvatarRenderer.getArmPose's switch over ItemStack.getUseAnimation.
+        let poses = [
+            (UseAnimation::Block, Some(ArmPose::Block)),
+            (UseAnimation::Bow, Some(ArmPose::Bow)),
+            (UseAnimation::Trident, Some(ArmPose::ThrowTrident)),
+            (UseAnimation::Crossbow, Some(ArmPose::CrossbowCharge)),
+            (UseAnimation::Spyglass, Some(ArmPose::Spyglass)),
+            (UseAnimation::TootHorn, Some(ArmPose::TootHorn)),
+            (UseAnimation::Brush, Some(ArmPose::Brush)),
+            (UseAnimation::Spear, Some(ArmPose::Spear)),
+            (UseAnimation::None, None),
+            (UseAnimation::Eat, None),
+            (UseAnimation::Drink, None),
+            (UseAnimation::Bundle, None),
+        ];
+        for (animation, pose) in poses {
+            assert_eq!(ArmPose::of_use(animation), pose, "{animation:?}");
+        }
+        // A charged crossbow held still comes before any use; a hand using an
+        // item of no pose of its own holds it, or holds its spear out.
+        assert_eq!(
+            player_hand_pose(true, Some(UseAnimation::Crossbow), false),
+            ArmPose::CrossbowHold
+        );
+        assert_eq!(
+            player_hand_pose(false, Some(UseAnimation::Eat), false),
+            ArmPose::Item
+        );
+        assert_eq!(
+            player_hand_pose(false, Some(UseAnimation::Eat), true),
+            ArmPose::Spear
+        );
+        assert_eq!(player_hand_pose(false, None, false), ArmPose::Item);
+    }
+
+    #[test]
+    fn a_mod_bow_being_drawn_takes_the_bow_pose() {
+        use horizon_world::consumable::UseAnimation;
+        // AvatarRenderer.getArmPose goes by the use animation, not by the item:
+        // a mod's bow whose use animation is BOW is drawn as vanilla's bow is.
+        let state = State {
+            pos: 0.0,
+            speed: 0.0,
+            age: 0.0,
+            y_rot: 0.0,
+            x_rot: 0.0,
+            swing: 0.0,
+            baby: false,
+            partial: 0.0,
+        };
+        let make = || Poses {
+            map: ["head", "right_arm", "left_arm"]
+                .into_iter()
+                .map(|n| (key(n), [0.0; 9]))
+                .collect(),
+            dummy: [0.0; 9],
+            skipped: Default::default(),
+            hidden: Default::default(),
+            version: 0,
+        };
+        let mut m = player();
+        m.extra.main_hand = Some("botania:livingwood_bow".into());
+        m.extra.using_item = 20;
+        m.extra.use_animation = Some(UseAnimation::Bow);
+        let mut p = make();
+        setup(&m, &state, &mut p, &HashMap::new());
+        // HumanoidModel's BOW_AND_ARROW in the right hand: both arms level, the
+        // left one turned in toward the string.
+        assert!((p.get("right_arm")[3] + PI / 2.0).abs() < 1e-6);
+        assert!((p.get("left_arm")[3] + PI / 2.0).abs() < 1e-6);
+        assert!((p.get("right_arm")[4] + 0.1).abs() < 1e-6);
+        assert!((p.get("left_arm")[4] - 0.5).abs() < 1e-6);
+        // Vanilla's bow draws by its id where the game gave no animation.
+        m.extra.main_hand = Some("minecraft:bow".into());
+        m.extra.use_animation = None;
+        let mut by_id = make();
+        setup(&m, &state, &mut by_id, &HashMap::new());
+        assert_eq!(by_id.get("right_arm")[3], p.get("right_arm")[3]);
+        assert_eq!(by_id.get("left_arm")[4], p.get("left_arm")[4]);
+        // The mod's bow without the game's animation is held as an item.
+        m.extra.main_hand = Some("botania:livingwood_bow".into());
+        let mut held = make();
+        setup(&m, &state, &mut held, &HashMap::new());
+        assert!((held.get("right_arm")[3] + PI / 10.0).abs() < 1e-6);
+        // Drawn in the off hand, the bow takes the left arm's mirror of the
+        // pose over the main hand's item.
+        m.extra.main_hand = Some("minecraft:stick".into());
+        m.extra.off_hand = Some("botania:livingwood_bow".into());
+        m.extra.using_off_hand = true;
+        m.extra.use_animation = Some(UseAnimation::Bow);
+        let mut off = make();
+        setup(&m, &state, &mut off, &HashMap::new());
+        assert!((off.get("right_arm")[3] + PI / 2.0).abs() < 1e-6);
+        assert!((off.get("left_arm")[3] + PI / 2.0).abs() < 1e-6);
+        assert!((off.get("right_arm")[4] + 0.5).abs() < 1e-6);
+        assert!((off.get("left_arm")[4] - 0.1).abs() < 1e-6);
     }
 
     /// ModelPart.createPartLookup fills the name map with putIfAbsent, so of two

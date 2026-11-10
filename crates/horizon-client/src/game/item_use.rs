@@ -83,6 +83,43 @@ impl Game<'_> {
         self.native_use_duration(stack, &mut duration);
         duration
     }
+    /// `ItemStack.getUseAnimation`: the own animation of the bow, crossbow,
+    /// trident, spyglass, goat horn, brush and bundles, else the stack's
+    /// `consumable`'s, `BLOCK` for an item that blocks attacks and `SPEAR` for
+    /// a spear, then a mod's answer (`native_use_animation`). The first person
+    /// hand and the third person arm pose of a use follow it.
+    pub(super) fn use_animation(&self, stack: &ItemStack) -> UseAnimation {
+        let mut animation = match &*stack.item {
+            "minecraft:bow" => UseAnimation::Bow,
+            "minecraft:crossbow" => UseAnimation::Crossbow,
+            "minecraft:trident" => UseAnimation::Trident,
+            "minecraft:spyglass" => UseAnimation::Spyglass,
+            "minecraft:goat_horn" => UseAnimation::TootHorn,
+            "minecraft:brush" => UseAnimation::Brush,
+            _ if self.items().get(&stack.item).is_some_and(|i| i.bundle) => UseAnimation::Bundle,
+            _ => {
+                // Item.getUseAnimation reads the stack's components: the
+                // server's patch counts.
+                let view = horizon_client::item_render::stack_view(stack);
+                match self
+                    .pack
+                    .item_renderer
+                    .models
+                    .components_view(&view)
+                    .get("minecraft:consumable")
+                {
+                    Some(consumable) => {
+                        horizon_client::first_person::consumable_animation(consumable)
+                    }
+                    None if self.blocks_attacks(stack).is_some() => UseAnimation::Block,
+                    None if Kinetic::of(&stack.item).is_some() => UseAnimation::Spear,
+                    None => UseAnimation::None,
+                }
+            }
+        };
+        self.native_use_animation(stack, &mut animation);
+        animation
+    }
     /// Whether `stack` is a mod's item that only a mod uses over time: no
     /// `consumable`, `blocks_attacks` or kinetic weapon of vanilla's own, and
     /// a `native_use_duration` above 0. Its use is its own `Item.use`.

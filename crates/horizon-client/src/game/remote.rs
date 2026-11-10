@@ -6936,6 +6936,43 @@ impl Game<'_> {
         }
         self.guardian_look_scratch = looks;
     }
+    /// `AvatarRenderer.extractRenderState` of the item each other player
+    /// uses: its `ItemStack.getUseAnimation`, whose pose the arm takes
+    /// (`getArmPose`: a mod's bow draws), and `CrossbowItem.getChargeDuration`,
+    /// the time the crossbow pose charges over (`maxCrossbowChargeDuration`).
+    fn remote_player_uses(&mut self) {
+        let Some(r) = self.remote.as_ref() else {
+            return;
+        };
+        for i in 0..self.mobs.len() {
+            let m = &self.mobs[i];
+            if !r.level_players.contains_key(&(m.id as i32)) {
+                continue;
+            }
+            // The main hand's stack as the server sent it, the off hand's by its id.
+            let bare = |item: &str| ItemStack::new(item, 1);
+            let used = match (m.extra.using_item > 0, m.extra.using_off_hand) {
+                (false, _) => None,
+                (true, true) => m.extra.off_hand.as_deref().map(bare),
+                (true, false) => m
+                    .extra
+                    .main_hand_stack()
+                    .cloned()
+                    .or_else(|| m.extra.main_hand.as_deref().map(bare)),
+            };
+            let found = used.map(|stack| {
+                (
+                    self.use_animation(&stack),
+                    Self::charge_ticks(&stack).max(1) as i32,
+                )
+            });
+            let m = &mut self.mobs[i];
+            m.extra.use_animation = found.map(|(animation, _)| animation);
+            if let Some((_, charge)) = found {
+                m.extra.ints[5] = charge;
+            }
+        }
+    }
     fn tick_remote_entities(&mut self, running: bool) {
         if running {
             self.tick_text_displays();
@@ -7105,6 +7142,7 @@ impl Game<'_> {
                     .collect()
             })
             .unwrap_or_default();
+        self.remote_player_uses();
         // Shulker.onPeekAmountChange: the box of this client's own player, which
         // an opening lid pushes (EntitySelector.NO_SPECTATORS).
         let shulker_pushes = self

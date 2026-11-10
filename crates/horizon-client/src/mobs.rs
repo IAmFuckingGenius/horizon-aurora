@@ -1219,6 +1219,10 @@ pub struct Extra {
     pub armor: [Option<crate::items::ItemStack>; 4],
     pub using_item: i32,
     pub using_off_hand: bool,
+    /// `ItemStack.getUseAnimation` of the item a drawn player uses, as the
+    /// game works it out (a mod's answer included): the arm's pose follows it
+    /// (`AvatarRenderer.getArmPose`). None leaves the pose to the held item's id.
+    pub use_animation: Option<horizon_world::consumable::UseAnimation>,
     /// `LivingEntity.recentKineticEnemies`: when the entities this mob's
     /// spear stabbed in the current use were stabbed (game time). It exists
     /// only while a kinetic weapon is in use.

@@ -475,15 +475,17 @@ impl Game<'_> {
         let using_off_hand = self
             .using
             .is_some_and(|(slot, _)| slot == super::shield::OFFHAND_SLOT);
-        let blocking = self
-            .using
-            .and_then(|(slot, _)| self.stack_in(slot))
-            .is_some_and(|stack| self.blocks_attacks(stack).is_some());
+        let used = self.using.and_then(|(slot, _)| self.stack_in(slot));
+        let blocking = used.is_some_and(|stack| self.blocks_attacks(stack).is_some());
+        // AvatarRenderer.getArmPose: the arm takes the pose of the used item's
+        // use animation (a mod's bow draws).
+        let use_animation = used.map(|stack| self.use_animation(stack));
         let charged = self.inventory[self.selected]
             .as_ref()
             .is_some_and(|s| s.data().is_some_and(|d| !d.charged.is_empty()));
-        let charge_duration = self.inventory[self.selected]
-            .as_ref()
+        // CrossbowItem.getChargeDuration of the used item (`maxCrossbowChargeDuration`).
+        let charge_duration = used
+            .or(self.inventory[self.selected].as_ref())
             .map_or(25, |s| Self::charge_ticks(s).max(1)) as i32;
         let attack = (self.swing.old_animation, self.swing.animation);
         let swinging = self.swing.swinging();
@@ -622,6 +624,7 @@ impl Game<'_> {
         m.extra.spectator = spectator;
         m.extra.using_item = using;
         m.extra.using_off_hand = using_off_hand;
+        m.extra.use_animation = use_animation;
         m.extra.blocking = blocking;
         m.extra.charged = charged;
         m.extra.ints[5] = charge_duration;

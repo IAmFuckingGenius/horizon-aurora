@@ -3472,17 +3472,26 @@ impl Game<'_> {
             .map(|b| std::array::from_fn(|i| base[i % 3] + b[i]))
             .collect()
     }
-    /// Whether a world hold should use the held item instead of mining.
+    /// Whether the held item aims through the crosshair on a touch screen:
+    /// vanilla's bows, crossbows, tridents and thrown items, and any item whose
+    /// use animation draws, charges or raises it as they do (a mod's bow).
     #[cfg(target_os = "android")]
     pub(super) fn touch_projectile_crosshair(&self) -> bool {
-        self.held()
-            .is_some_and(|s| horizon_client::touch::projectile_crosshair(&s.item))
+        self.held().is_some_and(|s| {
+            horizon_client::touch::projectile_crosshair(&s.item)
+                || horizon_client::touch::projectile_animation(self.use_animation(s))
+        })
     }
+    /// Whether a world hold should use the held item instead of mining.
     #[cfg(target_os = "android")]
     pub(super) fn touch_item_held_use(&self) -> bool {
         self.held().is_some_and(|stack| {
             if horizon_client::touch::item_uses_on_tap(&stack.item) {
                 return false;
+            }
+            // A mod's own item used over time (a mod's bow): held, as vanilla's bow.
+            if self.mod_use(stack) {
+                return true;
             }
             let Some(info) = self.items().get(&stack.item) else {
                 return false;

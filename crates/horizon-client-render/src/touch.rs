@@ -80,6 +80,16 @@ pub fn projectile_crosshair(item: &str) -> bool {
             | "minecraft:fishing_rod"
     )
 }
+/// An item drawn, charged or raised to shoot as a bow, a crossbow or a trident
+/// is (its `ItemStack.getUseAnimation`, a mod's bow too) aims through the
+/// crosshair as they do.
+pub fn projectile_animation(animation: horizon_world::consumable::UseAnimation) -> bool {
+    use horizon_world::consumable::UseAnimation;
+    matches!(
+        animation,
+        UseAnimation::Bow | UseAnimation::Crossbow | UseAnimation::Trident
+    )
+}
 /// Equal physical drags turn equally on either axis, including portrait screens.
 pub fn camera_delta(delta: [f32; 2], width: u32, height: u32, s: &Settings) -> [f32; 2] {
     let scale = width.max(height).max(1) as f32;
@@ -1588,6 +1598,31 @@ mod tests {
             let id = format!("minecraft:{id}");
             assert!(!item_uses_on_tap(&id));
             assert!(projectile_crosshair(&id));
+        }
+        // A use animation that draws, charges or raises the item aims as
+        // vanilla's bow, crossbow and trident do: a mod's bow among them.
+        {
+            use horizon_world::consumable::UseAnimation;
+            for animation in [
+                UseAnimation::Bow,
+                UseAnimation::Crossbow,
+                UseAnimation::Trident,
+            ] {
+                assert!(projectile_animation(animation), "{animation:?}");
+            }
+            for animation in [
+                UseAnimation::None,
+                UseAnimation::Eat,
+                UseAnimation::Drink,
+                UseAnimation::Block,
+                UseAnimation::Spyglass,
+                UseAnimation::TootHorn,
+                UseAnimation::Brush,
+                UseAnimation::Bundle,
+                UseAnimation::Spear,
+            ] {
+                assert!(!projectile_animation(animation), "{animation:?}");
+            }
         }
         let mut t = TouchControls::default();
         t.settings.mode = Mode::Tap;
