@@ -9,6 +9,7 @@ pub mod armor_model;
 pub mod burst;
 pub mod consts;
 pub mod daisy;
+pub mod entities;
 pub mod flower;
 pub mod json;
 pub mod mana_gear;
