@@ -308,7 +308,12 @@ pub struct NativeLootDrops<'a> {
     /// the player's id and `minecraft:player`, `player` them, `table` empty,
     /// `origin` where the items leave, `used` false); `drops` empty means
     /// the mod took the whole inventory. Not heard with keepInventory. API
-    /// 405.
+    /// 405. Before it, with the `mob_drops` rule on (keepInventory or not),
+    /// the dying player's own table is a call too: `table`
+    /// `minecraft:entities/player`, `entity` the player, `player` the player
+    /// credited with the kill when one is, `origin` their feet. Vanilla's
+    /// table holds nothing and isn't rolled, so `drops` starts empty, and
+    /// what a mod adds drops at the player's feet.
     pub used: bool,
 }
 

@@ -3806,6 +3806,10 @@ Changing loot a mod didn't make, as NeoForge's `LootTableLoadEvent` and global l
   A dying player's inventory is a call of its own: after vanishing-curse items are gone and before the rest is thrown from
   the player's eyes, with `entity` the player's id and `minecraft:player`, `player` them, no table and `used` false (take every
   stack out of `drops` to keep the inventory for a grave or a soulbound rule). It is not heard with `keep_inventory` on.
+  Before it, with `mob_drops` on (and `keep_inventory` on or off), the dying player's own loot table is a call of its own:
+  `table` `minecraft:entities/player`, `entity` the player, `player` the player credited with the kill (none for a death
+  no player caused), `origin` their feet. Vanilla's table holds nothing and isn't rolled, so `drops` starts empty; what a
+  mod adds (a player's head) drops at the player's feet. A spectator's death is told neither call.
 
 ### A block's items
 

@@ -4529,8 +4529,9 @@ impl Game<'_> {
                     game.post_game_event("minecraft:entity_die", at, ctx);
                 });
             }
-            // `getKillCredit`, as the death finds it.
+            // `getKillCredit`, as the death finds it, and the player it names.
             let killer = self.guest_kill_credit_type(host, conn);
+            let killer_player = self.guest_kill_credit_player(host, conn);
             self.native_player_died(uuid, cause.as_deref());
             // ServerPlayer.die: the neutral mobs near a guest in this level
             // forget their anger at them.
@@ -4611,6 +4612,7 @@ impl Game<'_> {
             // timers it resets.
             self.as_guest(host, conn, |game| {
                 if let Some(eyes) = drops {
+                    game.drop_player_loot(at, id, killer_player);
                     game.drop_inventory(eyes, (uuid, id));
                 }
                 game.score_player_died();
@@ -4758,6 +4760,29 @@ impl Game<'_> {
             .as_ref()
             .filter(|d| d.id == id)
             .map(|_| "minecraft:ender_dragon".into())
+    }
+
+    /// The player `guest_kill_credit_type` credits with the dying guest's
+    /// death: the player in place or another guest.
+    fn guest_kill_credit_player(&mut self, host: &LanHost, conn: u32) -> Option<u128> {
+        let id = self
+            .guest_combat
+            .get(&conn)?
+            .kill_credit(self.world.game_time)?;
+        let in_place = self.lan_acting.is_none()
+            && self
+                .player
+                .as_ref()
+                .is_some_and(|p| p.entity_id as u32 == id);
+        if in_place {
+            let uuid = self.acting_player_uuid();
+            return Some(horizon_client::lan::playerdata::ints_uuid(uuid));
+        }
+        host.hub
+            .guests
+            .iter()
+            .find(|g| g.entity_id as u32 == id)
+            .map(|g| g.uuid)
     }
 
     /// The dying guest's last blow (`LivingEntity.getLastDamageSource`), its

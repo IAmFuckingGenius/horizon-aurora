@@ -596,6 +596,36 @@ impl Game<'_> {
         }
     }
 
+    /// `LivingEntity.dropFromLootTable` for a dying player, before
+    /// `drop_inventory` throws the inventory (`Player.dropEquipment`): their
+    /// own table, `minecraft:entities/player`, with the `mob_drops` rule on,
+    /// keepInventory or not. Vanilla's table holds nothing, so it isn't
+    /// rolled; the mods hear it with `killer`, the player credited with the
+    /// kill, and what they add drops at the player's feet
+    /// (`Entity.spawnAtLocation`).
+    pub(super) fn drop_player_loot(&mut self, at: [f64; 3], entity: i32, killer: Option<u128>) {
+        if !self.ui.rules.bool("mob_drops") {
+            return;
+        }
+        let context = horizon_client::mod_api::NativeLootDrops {
+            table: "minecraft:entities/player",
+            dimension: self.dim.id(),
+            origin: at,
+            block: None,
+            entity: Some((entity as u32, "minecraft:player")),
+            player: killer,
+            tool: None,
+            explosion: None,
+            used: false,
+        };
+        let mut stacks = Vec::new();
+        self.native_loot_drops(&context, &mut stacks);
+        stacks.retain(|stack| stack.count > 0 && &*stack.item != "minecraft:air");
+        for stack in stacks {
+            self.spawn_item_own(stack, at, 10);
+        }
+    }
+
     /// `Player.dropEquipment` for the player who died: unless keep_inventory
     /// is on, `destroyVanishingCursedItems`, then `Inventory.dropAll` from
     /// `at` (the eyes less 0.3): slots 0..36, armor feet to head (36..39),
