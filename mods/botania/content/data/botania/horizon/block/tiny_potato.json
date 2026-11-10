@@ -1,0 +1,17 @@
+{
+  "template": "minecraft:carved_pumpkin",
+  "properties": {
+    "hardness": 0.25,
+    "explosion_resistance": 0.25,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 20,
+    "sounds": "minecraft:stone",
+    "occludes": false
+  },
+  "shapes": {
+    "default": [
+      [0.375, 0.0, 0.375, 0.625, 0.375, 0.625]
+    ]
+  }
+}

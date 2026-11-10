@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:cobblestone_wall",
+  "properties": {
+    "hardness": 2.0,
+    "explosion_resistance": 2.0,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 14,
+    "sounds": "minecraft:oak_planks"
+  }
+}

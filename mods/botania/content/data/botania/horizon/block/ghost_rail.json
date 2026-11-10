@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:activator_rail",
+  "properties": {
+    "hardness": 0.7,
+    "explosion_resistance": 0.7,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 0,
+    "sounds": "minecraft:iron_block",
+    "occludes": false
+  }
+}

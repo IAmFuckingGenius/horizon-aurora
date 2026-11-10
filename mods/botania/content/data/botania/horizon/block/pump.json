@@ -1,0 +1,32 @@
+{
+  "template": "minecraft:carved_pumpkin",
+  "properties": {
+    "hardness": 2.0,
+    "explosion_resistance": 10.0,
+    "light": 0,
+    "requires_tool": true,
+    "map_color": 36,
+    "sounds": "minecraft:stone",
+    "occludes": false
+  },
+  "shapes": {
+    "property": "facing",
+    "values": {
+      "east": [
+        [0.0, 0.0, 0.25, 1.0, 0.5, 0.75]
+      ],
+      "west": [
+        [0.0, 0.0, 0.25, 1.0, 0.5, 0.75]
+      ],
+      "north": [
+        [0.25, 0.0, 0.0, 0.75, 0.5, 1.0]
+      ],
+      "south": [
+        [0.25, 0.0, 0.0, 0.75, 0.5, 1.0]
+      ]
+    }
+  },
+  "components": {
+    "!minecraft:equippable": {}
+  }
+}

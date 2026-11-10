@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:stone",
+  "properties": {
+    "hardness": 2.0,
+    "explosion_resistance": 2.0,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 48,
+    "sounds": "minecraft:oak_planks",
+    "occludes": false
+  }
+}

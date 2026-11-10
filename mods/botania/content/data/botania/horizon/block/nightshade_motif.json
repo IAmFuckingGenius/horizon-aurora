@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:poppy",
+  "properties": {
+    "hardness": 0.0,
+    "explosion_resistance": 0.0,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 7,
+    "sounds": "minecraft:grass_block",
+    "occludes": false
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "template": "minecraft:poppy",
+  "properties": {
+    "hardness": 0.0,
+    "explosion_resistance": 0.0,
+    "light": 4,
+    "requires_tool": false,
+    "map_color": 7,
+    "sounds": "minecraft:moss_block",
+    "occludes": false,
+    "render_shape": "INVISIBLE"
+  },
+  "shapes": {
+    "default": [
+      [0.0, 0.0, 0.0, 1.0, 0.1, 1.0]
+    ]
+  },
+  "collision_shapes": {
+    "default": []
+  }
+}

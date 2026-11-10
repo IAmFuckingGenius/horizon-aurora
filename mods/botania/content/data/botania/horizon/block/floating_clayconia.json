@@ -1,0 +1,17 @@
+{
+  "template": "minecraft:stone",
+  "properties": {
+    "hardness": 0.5,
+    "explosion_resistance": 0.5,
+    "light": 15,
+    "requires_tool": false,
+    "map_color": 7,
+    "sounds": "minecraft:gravel",
+    "occludes": false
+  },
+  "shapes": {
+    "default": [
+      [0.1, 0.1, 0.1, 0.9, 0.9, 0.9]
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:glass_pane",
+  "properties": {
+    "hardness": 0.3,
+    "explosion_resistance": 0.3,
+    "light": 15,
+    "requires_tool": false,
+    "map_color": 0,
+    "sounds": "minecraft:glass",
+    "occludes": false
+  }
+}

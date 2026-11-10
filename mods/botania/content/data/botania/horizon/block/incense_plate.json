@@ -1,0 +1,32 @@
+{
+  "template": "minecraft:carved_pumpkin",
+  "properties": {
+    "hardness": 2.0,
+    "explosion_resistance": 2.0,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 48,
+    "sounds": "minecraft:oak_planks",
+    "occludes": false
+  },
+  "shapes": {
+    "property": "facing",
+    "values": {
+      "east": [
+        [0.375, 0.0, 0.125, 0.625, 0.0625, 0.875]
+      ],
+      "west": [
+        [0.375, 0.0, 0.125, 0.625, 0.0625, 0.875]
+      ],
+      "north": [
+        [0.125, 0.0, 0.375, 0.875, 0.0625, 0.625]
+      ],
+      "south": [
+        [0.125, 0.0, 0.375, 0.875, 0.0625, 0.625]
+      ]
+    }
+  },
+  "components": {
+    "!minecraft:equippable": {}
+  }
+}

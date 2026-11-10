@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:vine",
+  "properties": {
+    "hardness": 0.2,
+    "explosion_resistance": 0.2,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 7,
+    "sounds": "minecraft:vine",
+    "occludes": false,
+    "random_ticks": true
+  }
+}

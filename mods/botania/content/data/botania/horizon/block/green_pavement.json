@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:stone",
+  "properties": {
+    "hardness": 2.0,
+    "explosion_resistance": 10.0,
+    "light": 0,
+    "requires_tool": true,
+    "map_color": 49,
+    "sounds": "minecraft:stone"
+  }
+}

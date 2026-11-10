@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:stone",
+  "properties": {
+    "hardness": 0.4,
+    "explosion_resistance": 0.4,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 28,
+    "sounds": "minecraft:moss_block"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "template": "minecraft:stone",
+  "properties": {
+    "hardness": 0.0,
+    "explosion_resistance": 0.0,
+    "light": 3,
+    "requires_tool": false,
+    "map_color": 7,
+    "sounds": "minecraft:grass_block",
+    "occludes": false
+  },
+  "shapes": {
+    "default": [
+      [0.3, 0.0, 0.3, 0.8, 1.0, 0.8]
+    ]
+  },
+  "collision_shapes": {
+    "default": []
+  }
+}

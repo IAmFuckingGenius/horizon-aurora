@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:oak_log",
+  "properties": {
+    "hardness": 2.0,
+    "explosion_resistance": 2.0,
+    "light": 12,
+    "requires_tool": false,
+    "map_color": 14,
+    "sounds": "minecraft:oak_planks"
+  }
+}

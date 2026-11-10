@@ -1,0 +1,14 @@
+{
+  "template": "minecraft:carved_pumpkin",
+  "properties": {
+    "hardness": 1.0,
+    "explosion_resistance": 1.0,
+    "light": 0,
+    "requires_tool": false,
+    "map_color": 15,
+    "sounds": "minecraft:oak_planks"
+  },
+  "components": {
+    "!minecraft:equippable": {}
+  }
+}
