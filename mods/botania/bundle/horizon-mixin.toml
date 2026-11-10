@@ -224,3 +224,37 @@ bindings = [
   { name = "entity", ty = "&horizon_client::containers::ModBlockEntity", value = "&*entity" },
   { name = "tag", ty = "&mut Option<horizon_world::nbt::Compound>", value = "&mut *tag" },
 ]
+
+# ---- Botania's armour models (`botania_armour`, armour.rs) ---------------------------------------
+# Manasteel, manaweave, elementium and terrasteel pieces drawn with Botania's own meshes on players
+# and humanoid mobs (`native_mob_layer`); the content items wear no equipment asset.
+
+[[module]]
+id = "armour"
+file = "crates/horizon-client/src/game.rs"
+name = "botania_armour"
+source = "armour.rs"
+
+[[injection]]
+id = "armour_listened"
+hook = "player_render_listened"
+hook_version = 1
+kind = "HEAD"
+helper = "armour_listened.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "listened", ty = "&mut bool", value = "&mut *listened" },
+]
+
+[[injection]]
+id = "armour_layer"
+hook = "mob_layer"
+hook_version = 1
+kind = "HEAD"
+helper = "armour_layer.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "mob", ty = "&crate::game::native_mob_draw::NativeMobRender<'_>", value = "mob" },
+  { name = "who", ty = "Option<&crate::game::native_mob_draw::NativePlayerRender<'_>>", value = "who" },
+  { name = "draw", ty = "&mut crate::game::native_block_entity_draw::BlockEntityDraw", value = "&mut *draw" },
+]

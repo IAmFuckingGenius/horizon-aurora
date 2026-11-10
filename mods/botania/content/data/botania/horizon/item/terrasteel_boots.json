@@ -24,6 +24,10 @@
         "slot": "feet"
       }
     ],
+    "minecraft:equippable": {
+      "slot": "feet",
+      "equip_sound": "minecraft:item.armor.equip_diamond"
+    },
     "!minecraft:damage_resistant": {}
   }
 }

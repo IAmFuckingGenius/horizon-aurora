@@ -24,6 +24,10 @@
         "slot": "chest"
       }
     ],
+    "minecraft:equippable": {
+      "slot": "chest",
+      "equip_sound": "minecraft:item.armor.equip_diamond"
+    },
     "!minecraft:damage_resistant": {}
   }
 }
