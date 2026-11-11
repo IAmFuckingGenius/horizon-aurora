@@ -550,15 +550,15 @@ Found and fixed during the test (Aurora engine):
 
 ## How to test on a phone
 
-1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42895670428 ›
+1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42930822542 ›
    artifact `native-engine-botania-arm64-v8a` (a ZIP holding `botania-arm64-v8a.hengine`; kept
-   14 days; `…-armeabi-v7a` for 32-bit phones). Or: `gh run download 42895670428 -R
+   14 days; `…-armeabi-v7a` for 32-bit phones). Or: `gh run download 42930822542 -R
    IAmFuckingGenius/horizon-aurora -n native-engine-botania-arm64-v8a`. Unzip it and copy the
    `.hengine` to the phone.
 2. In Horizon Aurora: **Settings › Engines › Import**, pick `botania-arm64-v8a.hengine`, then
    **Start** on "Aurora + Botania". The app restarts on that engine. Options › Mods should list
    "Botania 0.1.0".
-3. Nothing else to add: the engine carries `dist/botania.hmod` (sha256 `d0a8f774…`) and puts it
+3. Nothing else to add: the engine carries `dist/botania.hmod` (sha256 `29a99661…`) and puts it
    into the instance it plays.
 4. Make a new world (mystical flowers are placed when chunks generate; old chunks have none).
    Survival checklist:
@@ -707,7 +707,7 @@ Found and fixed during the test (Aurora engine):
 
 ## Next
 
-1. The device test above, on the run 42895670428 engine.
+1. The device test above, on the run 42930822542 engine (Aurora main db9793d3e8, bundle b2f0644bec).
 2. Block entity renderers on a phone: a spreader turning with the wand, its core spinning, the
    fabulous pool's rainbow, a catalyst's overlay; the apothecary's lava.
 3. Botania's own particles on a phone: bursts, the wand's beam, pools charging, the Pure Daisy,
