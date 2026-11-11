@@ -397,7 +397,7 @@ been played on a phone yet.
   and directions (`Vec3.cross`), the Mantle's swing, pixie chance, Odin's immunities, Loki's
   selection, costs (`Math.pow(Math.E, n * 0.25)`) and hit points, sashes, air jumps, cloaks).
   Expected values worked out by hand from Botania's code. `rustfmt --check` clean. The game
-  side (`baubles.rs`) is checked by the CI engine build only: not played yet. Merged with the
+  side (`baubles.rs`) was built by the CI engine build, then played (below). Merged with the
   particles and the remaining tools: 129 passed, 0 failed.
 - All 25 bundle recipes unwrap into 26.3 form (scratch-only test, output checked by eye).
 - With the tool uses: 116 passed, 0 failed (5 of them `tool_uses`: Java's `TORCH_PATTERN` and
@@ -436,7 +436,7 @@ been played on a phone yet.
   - 42878996755 (x86_64), bundle 122763f1c8 (branch `botania-weapons`: bows, Terra Blade,
     Thundercaller, Starcaller, Terra Shatterer, elementium shovel and pickaxe, mana tools):
     **success**; 29 injections, 2 modules (`botania`, `botania_weapons`), 1 crate, 1 data
-    folder; release library in 13 min 43 s, no warnings from the bundle. Not played yet.
+    folder; release library in 13 min 43 s, no warnings from the bundle.
   - 42879206886 (x86_64, engine id `botania-mana`), bundle 3db3aa1e87 (branch `botania-mana`:
     + mana items, `ManaItemHandler`, mana instead of durability, set bonuses): **success**; 22
     injections, 2 modules, 1 crate, 1 data folder; no warnings from the bundle. An earlier
@@ -445,7 +445,7 @@ been played on a phone yet.
   - 42912044970 (x86_64, engine id `botania-px`, `aurora_ref=engine-tinted-particles`: hook
     points API 417), bundle 998ead857f (branch `botania-particles`: Botania's own wisps and
     sparkles, module `botania_particles`): **success**; 46 injections, 6 modules, 1 crate, 1 data
-    file; release library in 15 min 35 s, no warnings from the bundle. Not played yet.
+    file; release library in 15 min 35 s, no warnings from the bundle.
 
 ### In game (Waydroid x86_64, 2026-11-10)
 
@@ -508,6 +508,46 @@ Found and fixed during the test:
 - 258 plain items stood on `minecraft:stick` with its `cooking_fuel`: they burned in a furnace and
   an Endoflame burnt a tablet lying in a pool beside it (port-pack, main 123db71fc2).
 
+### In game, everything merged (Waydroid x86_64, 2026-11-11)
+
+Engines of runs 42915511723 (Aurora `merge-engine`, bundle 21d24ca73b), 42921930985 (Aurora
+`engine-botania-blocks` ef47e35f39, bundle fdddf5376d) and 42927677966 (Aurora
+`engine-damage-hooks` 04ee8939a1, the same bundle). All of these work:
+
+- Botania's own particles: the pools' rising wisps, the Terra Blade's beam as a glowing green
+  trail of wisps (no more dust squares).
+- The livingwood bow drawn in third person (F5, front view): both arms up, the bow's pose.
+- The blaze block: 24 000 ticks in a furnace (`lit_total_time`), 12 000 in a blast furnace; it
+  gives light 15, glimmering livingwood 12.
+- Terra Truncator: one mined log of an oak felled the whole tree, its drops on the ground.
+- Elementium hoe: tilled dirt is `farmland[moisture=7]`. Elementium shears held near three
+  sheep sheared all three. Elementium axe with Looting III: 4 heads from 20 zombies and 46
+  rotten flesh (Looting counts as with an iron axe or a sword).
+- The manasteel pickaxe placed a wall torch from the inventory on a right click.
+- Creative tablet (`[custom_data={creative:1b}]`): mended a manasteel pickaxe 100 points in 5 s
+  and stayed creative; in an empty pool it filled the pool by about 1000 a tick.
+- Band of Mana: mended 50 points for 4720 mana (96 a point with the terrasteel helmet's 20%
+  discount, less the helmet's own 10 every 10 ticks).
+- Mana Mirror: a sneak-use on a pool bound it (`pos`, the pool's mana and `maxMana` shown); a
+  pickaxe mended 50 points from it and the pool lost 4800.
+- Ender Air: a thrown bottle turned 64 blocks of stone around the hit into end stone (Botania's
+  cap: 25 of a placed wall, 39 underground); the Pure Daisy turned the 8 end stone around it into
+  cobbled deepslate; a glass bottle used beside a cloud became a Bottle of Ender Air. No warning
+  about `botania:ender_air_release` at load.
+- Trinkets: the Ring of Odin's +20 health, binding and immunities (fall, fire, drowning; a real
+  13-block fall did nothing), the Ring of Far Reach (block reach 8), the Ring of Magnetization
+  (a dropped emerald flew to the player), the Cloak of Virtue (the first hit taken, the next in
+  the cooldown not), the Crimson Pendant (fire and lava), the Sojourner's Sash (a 6-block fall
+  1.0 instead of 3.0).
+- Pixies: in full elementium, a zombie's hits brought 4 pixies in about 6 hits; they struck it
+  (20 → 16.1 → 12.1 → 8.2).
+
+Found and fixed during the test (Aurora engine):
+- the Android start (`android_game`) never installed the engine's damage, knockback, block
+  contact, trampling, player move and server packet hooks (`install_server_hooks`), so on Android
+  no mod heard a player or mob being hurt;
+- a mob's melee hit on a player named no causing entity to the damage hooks.
+
 ## How to test on a phone
 
 1. Download the engine: GitHub › IAmFuckingGenius/horizon-aurora › Actions › run 42895670428 ›
@@ -550,12 +590,12 @@ Found and fixed during the test:
 
 - Not played on a phone yet; the whole chain hasn't been crafted in survival (its recipes are
   registered: `/recipe give` unlocks each).
-- The third-person bow pose, the touch crosshair and hold for the bows, and the blaze block as
-  fuel haven't been played yet: engine run 42910291134 (x86_64, Aurora `engine-use-poses`
-  05b46ec689, bundle 8be0122234, `publish=false`) only built them.
-- The block properties, the tool uses, the advancements and players' heads haven't been played
-  yet: engine run 42921930985 (x86_64, Aurora `engine-botania-blocks` ef47e35f39, bundle
-  fdddf5376d, `publish=false`) only built them.
+- The touch crosshair and the long press for the bows haven't been tried on a touch screen
+  (the test is in `touch.rs`; `horizon-client-render`'s test build doesn't compile on Aurora
+  main for older reasons, so it hasn't run).
+- Not played yet: a player's head from the elementium axe (needs two players), the axes'
+  saplings, and the advancements granted from code (`rank_ss_pick`, `tiny_potato_pet`,
+  `lexicon_use`); of the trinkets, the rest beyond those above.
 - Bows, weapons and tools (`bundle/weapons.rs`, rules in `botania-core` `weapons`):
   - the beam, stars and chain lightning hit mobs only (no PvP); a beam or star is dropped when
     its owner leaves;
@@ -564,7 +604,7 @@ Found and fixed during the test:
     (`canReceiveManaFromPool`, `canExportManaToPool`, `mana_item`);
   - Unbreaking rolls once: the mana pays the wear left after vanilla's roll (see the mana items'
     approximations);
-- Tool uses (`bundle/tool_uses.rs`), against Botania; none of it played yet:
+- Tool uses (`bundle/tool_uses.rs`), against Botania:
   - the torch or sapling is used through the game's whole right click, so the clicked block has
     its own use first as if it were in hand (a composter takes the sapling, a flower pot pots
     it), where Botania calls only the item's `useOn`; the right-click hooks hear it a second time;
@@ -581,7 +621,7 @@ Found and fixed during the test:
 - Block properties: the red string blocks and the metamorphic swamp bricks stay on the carved
   pumpkin, so they face the four horizontal ways only (Botania: six); the potted flowers are
   stone with the pot's outline; `alfheim_portal` isn't in the content `.hmod`.
-- The remaining tools (`bundle/tools.rs`), against Botania; none of it played yet:
+- The remaining tools (`bundle/tools.rs`), against Botania:
   - beheading: in 26.3 Looting goes on `#enchantable/melee_weapon` only, so an axe gets it
     from `/give … [enchantments={…}]` or an anvil with a book, not the enchanting table;
   - shears: a leashed mob is skipped (the shears the server shears with would cut its lead);
@@ -590,7 +630,7 @@ Found and fixed during the test:
     at the break; a dropped Truncator keeps the model it had when carried;
   - item models: the flags live in `minecraft:custom_model_data`, which a pack or `/give` with
     its own model data would override.
-- Trinkets (`bundle/baubles.rs`), not played yet; against Botania:
+- Trinkets (`bundle/baubles.rs`), against Botania:
   - no accessory slots: the inventory rule above, so one stack of each kind acts (two worn bands
     of aura don't add up), and nothing is `onEquipped`/`onUnequipped` but the static effects
     and modifiers kept in step each tick; a Loki ring put away keeps its cursors;
@@ -621,7 +661,7 @@ Found and fixed during the test:
   is paid in full (Botania rolls its own Unbreaking first: the same mana on average for tools,
   slightly more for armour); `stackInSlot == stack` is matched by value; a Mana Mirror bound to a
   pool in another dimension or an unloaded chunk is left as it is (Botania loads the chunk).
-- Ender Air and pixies (`bundle/entities.rs`), not played yet; against Botania:
+- Ender Air and pixies (`bundle/entities.rs`), against Botania:
   - a cloud is a marker, so `/summon botania:ender_air` doesn't exist and the cloud has no
     entity type of its own on the network; its particles come from the server;
   - the thrown bottle's ghast tears get no item particles; the `isClearFromDragonBreath` check
@@ -639,9 +679,8 @@ Found and fixed during the test:
   - the item tooltips' "Pixie Spawn Chance" attribute line isn't shown; Gaia's and Bottled
     Mana's pixies aren't ported (`spawn_pixie` is ready for them); the window doesn't know a
     dark pixie from a plain one (only Gaia makes those).
-- Botania's own particles (`bundle/particles.rs`): not seen in game yet. They need an engine with
-  hook points API 417 (branch `engine-tinted-particles`): on an older one the bundle doesn't
-  build. Against Botania: the Thundercaller's bolt is a line of glowing wisp-sprite dots per
+- Botania's own particles (`bundle/particles.rs`) need an engine with hook points API 417: on an
+  older one the bundle doesn't build. Against Botania: the Thundercaller's bolt is a line of glowing wisp-sprite dots per
   segment, not `BoltRenderer`'s quads; no particle ignores depth (Botania's do only with the
   Manaseer Monocle); the apothecary's lava smoke and pops, a flower's block offset and bellows
   aren't drawn; several infusions in one pool tick give one burst of 25 sparkles; a client
@@ -663,7 +702,6 @@ Found and fixed during the test:
   `ticksInGame`; a spreader's lens, padding and scaffolding aren't drawn (not ported).
 - Not done in game yet: floating flowers, Enchanted
   Soil's double tick, pool colour with petals, lenses, other generating flowers.
-- Mana items not played yet: the creative tablet, the bands, the Mana Mirror.
 - `native_blocks` can't fix the declarations from code: a block the content mod declares too is
   "declared twice" and the whole namespace is refused (`horizon_mods::Content::declare`).
 
