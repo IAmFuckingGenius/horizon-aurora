@@ -3497,6 +3497,7 @@ mod scroll_tests {
             knockback_resistance: 0.0,
             jump_strength: 0.7,
             attributes: Default::default(),
+            item_stack_limits: Default::default(),
             gravity: 0.08,
             safe_fall_distance: 3.0,
             fall_damage_multiplier: 1.0,
